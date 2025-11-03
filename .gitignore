@@ -1,3 +1,11 @@
+assets/external/
+.states
+*.db
+.web
+# ---> Pants
+# Daemon
+.pants.d/
+
 # ---> Python
 # Byte-compiled / optimized / DLL files
 __pycache__/

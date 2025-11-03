@@ -1,0 +1,63 @@
+[build-system]
+requires = ["setuptools >= 61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "orbitlab"
+version = "0.0.1"
+dependencies = [
+    "httpx",
+    "pydantic==2.12.3",
+    "pydantic-settings==2.11.0",
+    "PyYAML==6.0.3",
+    "reflex==0.8.16",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest==8.3.4",
+    "pytest-cov==6.0.0",
+]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+extend-exclude = ["tests"]
+
+[tool.ruff.lint]
+fixable = ["ALL"]
+select = ["A", "B", "C", "D", "E", "F", "G", "I", "N", "Q", "S", "T", "W", "ANN", "ARG", "BLE", "COM", "DJ", "DTZ",
+    "EM", "ERA", "EXE", "FBT", "ICN", "INP", "ISC", "NPY", "PD", "PGH", "PIE", "PL", "PT", "PTH", "PYI", "RET", "RSE",
+    "RUF", "SIM", "SLF", "TCH", "TID", "TRY", "UP", "YTT"]
+ignore = ["ANN101", "ANN102", "D203", "D212", "T201", "G004", "S507", "S202", "PTH207"]
+
+[tool.ruff.lint.pylint]
+max-args = 6
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.pytest.ini_options]
+pythonpath = "src"
+addopts = "--capture=no --cov=pws --cov-report=term-missing"
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_functions = ["test_*"]
+
+[tool.coverage.run]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+]
+omit = [
+    "*setup.py",
+    "*tests/*",
+    "*__global_coverage__/*",
+]

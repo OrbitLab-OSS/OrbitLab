@@ -1,0 +1,1 @@
+"""Vault secrets service package."""
