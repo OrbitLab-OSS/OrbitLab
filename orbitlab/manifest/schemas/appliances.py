@@ -21,6 +21,7 @@ class BaseApplianceMetadata(Metadata):
         checksum: The checksum for verifying the template integrity.
         url: The URL to download the template.
     """
+
     turnkey: bool
     section: str
     info: str
@@ -39,6 +40,7 @@ class BaseApplianceSpec(Spec):
         version: The version of the template.
         os_type: The operating system type.
     """
+
     node: str
     template: str
     storage: str
@@ -51,7 +53,6 @@ class BaseApplianceManifest(BaseManifest[BaseApplianceMetadata, BaseApplianceSpe
     kind: Annotated[ManifestKind, SerializeEnum] = ManifestKind.BASE_APPLIANCE
 
 
-
 class CustomApplianceMetadata(Metadata):
     name: str
     base_appliance: str
@@ -61,8 +62,24 @@ class CustomApplianceMetadata(Metadata):
 
 class Step(BaseModel):
     type: CustomApplianceStepType
+    name: str = ""
     script: Annotated[str | None, Field(default=None)]
     files: Annotated[list[Path] | None, Field(default=None)]
+    secrets: Annotated[list[str] | None, Field(default=None)]
+
+    def valid(self) -> bool:
+        """Check if the step is valid based on its type and required fields.
+
+        Returns:
+            bool: True if the step has the necessary data for its type, False otherwise.
+        """
+        if not self.name:
+            return False
+        if self.type == CustomApplianceStepType.FILES:
+            return bool(self.files)
+        if self.type == CustomApplianceStepType.SCRIPT:
+            return bool(self.script)
+        return bool(self.secrets)
 
 
 class CustomApplianceSpec(Spec):

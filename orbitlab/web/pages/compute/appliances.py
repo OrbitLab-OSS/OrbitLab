@@ -2,9 +2,8 @@ import reflex as rx
 
 from orbitlab.data_types import ManifestKind
 from orbitlab.manifest.client import ManifestClient
-from orbitlab.web.components import Buttons, Card, PageHeader, Menu
 from orbitlab.manifest.schemas.appliances import BaseApplianceManifest
-from orbitlab.web.components.progress_panels import ProgressPanels
+from orbitlab.web.components import Buttons, Card, Menu, PageHeader
 
 from .dialogs import DialogStateManager, DownloadApplianceDialog
 from .dialogs.create_appliance import CreateApplianceDialog, create_appliance_from_base
@@ -13,7 +12,7 @@ from .dialogs.create_appliance import CreateApplianceDialog, create_appliance_fr
 def get_base_appliances() -> list[BaseApplianceManifest]:
     client = ManifestClient()
     return [
-        client.load(name, kind=ManifestKind.BASE_APPLIANCE, model=BaseApplianceManifest)
+        client.load(name, kind=ManifestKind.BASE_APPLIANCE)
         for name in client.get_existing_by_kind(kind=ManifestKind.BASE_APPLIANCE)
     ]
 
@@ -43,14 +42,14 @@ class BaseApplianceTable:
                         class_name=(
                             "bg-[#36E2F4]/15 text-[#36E2F4] border border-[#36E2F4]/30 "
                             "dark:bg-[#36E2F4]/20 dark:text-[#36E2F4]"
-                        )
+                        ),
                     ),
                     rx.badge(
                         "System",
                         class_name=(
                             "bg-[#1E63E9]/15 text-[#1E63E9] border border-[#1E63E9]/30 "
                             "dark:bg-[#1E63E9]/20 dark:text-[#1E63E9]"
-                        )
+                        ),
                     ),
                 ),
                 class_name="px-6 py-4 whitespace-nowrap text-sm text-gray-700 dark:text-gray-300",
@@ -78,7 +77,7 @@ class BaseApplianceTable:
             rx.el.td(
                 Menu(
                     Buttons.Icon("ellipsis-vertical"),
-                    Menu.Item("Create Custom Appliance", on_click=lambda: create_appliance_from_base(appliance.name))
+                    Menu.Item("Create Custom Appliance", on_click=lambda: create_appliance_from_base(appliance.name)),
                 ),
                 class_name="px-6 py-4 whitespace-nowrap text-sm text-gray-700 dark:text-gray-300",
             ),
@@ -91,7 +90,9 @@ class BaseApplianceTable:
 
     def __new__(cls) -> rx.Component:
         """Create and return the appliance templates table component."""
-        header_class = "px-6 py-3 text-left text-xs font-semibold tracking-wider uppercase text-gray-600 dark:text-[#AEB9CC]"
+        header_class = (
+            "px-6 py-3 text-left text-xs font-semibold tracking-wider uppercase text-gray-600 dark:text-[#AEB9CC]"
+        )
         return Card(
             rx.el.div(
                 rx.el.table(
@@ -135,8 +136,8 @@ class BaseApplianceTable:
                 rx.el.div(
                     rx.el.h3("Base Appliances"),
                     Buttons.Icon("refresh-ccw", on_click=refresh_base_appliances),
-                    class_name="w-full flex justify-between"
-                )
+                    class_name="w-full flex justify-between",
+                ),
             ),
             class_name="w-full mt-6",
         )
@@ -150,7 +151,7 @@ class Appliances:
                 Buttons.Secondary(
                     "Create Custom Appliance",
                     icon="pen",
-                    on_click=DialogStateManager.toggle(CreateApplianceDialog.dialog_id)
+                    on_click=DialogStateManager.toggle(CreateApplianceDialog.dialog_id),
                 ),
                 Buttons.Primary(
                     "Download Base Appliance",

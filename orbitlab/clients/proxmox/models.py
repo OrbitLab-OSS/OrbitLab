@@ -5,15 +5,15 @@ with appropriate type annotations and field aliases for serialization and valida
 """
 
 import ipaddress
-from typing import Annotated
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field, computed_field
+from pydantic import BaseModel, Field, RootModel, computed_field
 
 from orbitlab import data_types
 from orbitlab.manifest.schemas.serialization import PveBool, PveContentList, PveStorageType
 
 
-class ProxmoxNode(BaseModel):
+class NodeInfo(BaseModel):
     """Represents a Proxmox node with its status and resource information.
 
     Attributes:
@@ -26,6 +26,7 @@ class ProxmoxNode(BaseModel):
         total_memory (int | None): The total memory in bytes (aliased as "maxmem").
         used_memory (int | None): The used memory in bytes (aliased as "mem").
     """
+
     name: Annotated[str, Field(alias="node")]
     status: data_types.NodeStatus
     uptime: int | None = None
@@ -43,7 +44,10 @@ class ProxmoxNode(BaseModel):
         Returns:
             int: The total memory converted from bytes to gigabytes.
         """
-        return int(self.total_memory / (1024 ** 3))
+        return int(self.total_memory / (1024**3))
+
+
+ProxmoxNodes = RootModel[list[NodeInfo]]
 
 
 class ProxmoxSDNZone(BaseModel):
@@ -56,6 +60,7 @@ class ProxmoxSDNZone(BaseModel):
         mtu (int): The MTU size for the zone.
         controller (str | None): The controller for the zone, if any.
     """
+
     zone_type: Annotated[data_types.ZoneTypes, Field(alias="type")]
     zone_name: Annotated[str, Field(alias="zone")]
     mac: str
@@ -70,6 +75,7 @@ class DHCPRange(BaseModel):
         start (ipaddress.IPv4Address): The starting IPv4 address of the DHCP range.
         end (ipaddress.IPv4Address): The ending IPv4 address of the DHCP range.
     """
+
     start: Annotated[ipaddress.IPv4Address, Field(alias="start-address")]
     end: Annotated[ipaddress.IPv4Address, Field(alias="end-address")]
 
@@ -83,13 +89,14 @@ class ProxmoxSDNSubnet(BaseModel):
         cidr_block (ipaddress.IPv4Network): The CIDR block of the subnet.
         dhcp_ranges (list[DHCPRange]): List of DHCP ranges within the subnet.
     """
+
     dns_prefix: Annotated[str, Field(alias="dnszoneprefix")]
     gateway: ipaddress.IPv4Address
     cidr_block: Annotated[ipaddress.IPv4Network, Field(alias="cidr")]
     dhcp_ranges: Annotated[list[DHCPRange], Field(alias="dhcp-range")]
 
 
-class ProxmoxNetwork(BaseModel):
+class Network(BaseModel):
     """Represents a Proxmox network interface and its configuration.
 
     Attributes:
@@ -107,6 +114,7 @@ class ProxmoxNetwork(BaseModel):
         comment (str): Any comments associated with the network.
         bridge_ports (str | None): Bridge ports if applicable.
     """
+
     active: PveBool | None = None
     autostart: PveBool | None = None
     interface_type: Annotated[data_types.NetworkTypes, Field(alias="type")]
@@ -122,7 +130,10 @@ class ProxmoxNetwork(BaseModel):
     bridge_ports: str | None = None
 
 
-class ProxmoxStorage(BaseModel):
+ProxmoxNetworks = RootModel[list[Network]]
+
+
+class Storage(BaseModel):
     """
     Represents a storage resource in Proxmox.
 
@@ -138,6 +149,7 @@ class ProxmoxStorage(BaseModel):
         used_bytes (int): Used bytes (aliased as 'used').
         utilization (float): Utilization ratio.
     """
+
     type: PveStorageType
     active: PveBool
     content: PveContentList
@@ -150,7 +162,10 @@ class ProxmoxStorage(BaseModel):
     utilization: Annotated[float, Field(alias="used_fraction")]
 
 
-class ProxmoxApplianceInfo(BaseModel):
+ProxmoxStorages = RootModel[list[Storage]]
+
+
+class ApplianceInfo(BaseModel):
     """Represents information about a Proxmox appliance.
 
     Attributes:
@@ -200,6 +215,9 @@ class ProxmoxApplianceInfo(BaseModel):
         return bool(self.manage_url)
 
 
+ProxmoxAppliances = RootModel[list[ApplianceInfo]]
+
+
 class ProxmoxTaskStatus(BaseModel):
     """Represents the status of a Proxmox task.
 
@@ -215,6 +233,7 @@ class ProxmoxTaskStatus(BaseModel):
         user (str): The user who initiated the task.
         exit_status (str | None): The exit status of the task (aliased as 'exitstatus').
     """
+
     start_time: Annotated[int, Field(alias="starttime")]
     pid: int
     node: str
@@ -225,3 +244,26 @@ class ProxmoxTaskStatus(BaseModel):
     id: str
     user: str
     exit_status: Annotated[str | None, Field(alias="exitstatus", default=None)]
+
+
+class NodeStatus(BaseModel):
+    node_id: Annotated[int, Field(alias="nodeid")]
+    local: PveBool
+    online: PveBool
+    type: Literal["node"]
+    ip: ipaddress.IPv4Address | None = None
+    name: str
+
+
+class ClusterStatus(BaseModel):
+    name: str
+    quorate: PveBool
+    type: Literal["cluster"]
+    quorate: bool
+    version: int
+    nodes: int
+
+
+ClusterItem = Annotated[ClusterStatus | NodeStatus, Field(discriminator="type")]
+
+ProxmoxClusterStatus = RootModel[list[ClusterItem]]

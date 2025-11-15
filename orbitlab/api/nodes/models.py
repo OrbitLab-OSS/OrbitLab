@@ -9,4 +9,5 @@ class ListNodesResponse(BaseModel):
     Attributes:
         nodes (list[ListedNode]): The list of nodes returned in the response.
     """
+
     nodes: list[str]

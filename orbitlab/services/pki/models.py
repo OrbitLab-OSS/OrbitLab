@@ -43,7 +43,6 @@ class LeafCertificate(BaseModel):
             usages.append(KeyUsageTypes.KEY_ENCIPHERMENT)
         return usages
 
-
     def get_x509_san(self) -> x509.SubjectAlternativeName | None:
         """
         Returns an x509.SubjectAlternativeName object if DNS or IP SANs are present, otherwise returns None.
@@ -67,6 +66,7 @@ class IntermediateCA(BaseModel):
         root_ca (str): The root CA associated with this intermediate CA.
         domain_constraint (str): The domain constraint for certificates issued by this CA.
     """
+
     common_name: Annotated[str, Field(pattern=r"^[A-Za-z0-9_.\-\* ]{1,64}(?:\.[A-Za-z0-9_.\-\* ]{1,64})*$")]
     root_ca: Annotated[str, Field(pattern=r"^[A-Za-z0-9_.\-\* ]{1,64}(?:\.[A-Za-z0-9_.\-\* ]{1,64})*$")]
     domain_constraint: Annotated[
@@ -100,11 +100,13 @@ class Subject(BaseModel):
         Returns:
             x509.Name: The X.509 Name representation of the subject.
         """
-        return x509.Name([
-            x509.NameAttribute(NameOID.COUNTRY_NAME, self.country),
-            x509.NameAttribute(NameOID.STATE_OR_PROVINCE_NAME, self.state_or_province),
-            x509.NameAttribute(NameOID.LOCALITY_NAME, self.locality),
-            x509.NameAttribute(NameOID.ORGANIZATION_NAME, self.org),
-            x509.NameAttribute(NameOID.ORGANIZATIONAL_UNIT_NAME, self.org_unit),
-            x509.NameAttribute(NameOID.COMMON_NAME, self.common_name),
-        ])
+        return x509.Name(
+            [
+                x509.NameAttribute(NameOID.COUNTRY_NAME, self.country),
+                x509.NameAttribute(NameOID.STATE_OR_PROVINCE_NAME, self.state_or_province),
+                x509.NameAttribute(NameOID.LOCALITY_NAME, self.locality),
+                x509.NameAttribute(NameOID.ORGANIZATION_NAME, self.org),
+                x509.NameAttribute(NameOID.ORGANIZATIONAL_UNIT_NAME, self.org_unit),
+                x509.NameAttribute(NameOID.COMMON_NAME, self.common_name),
+            ],
+        )

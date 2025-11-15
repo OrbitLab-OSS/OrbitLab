@@ -34,7 +34,7 @@ class Certificates:
         self.manifest = ManifestClient()
         self.vault = SecretVault()
         self.existing_certificates = self.manifest.get_existing_by_kind(kind=ManifestKind.CERTIFICATE)
-        self.existing_csrs = self.manifest.get_existing_by_kind(kind=ManifestKind.CSR)
+        self.existing_requests = self.manifest.get_existing_by_kind(kind=ManifestKind.CSR)
 
     def __load_private_key__(self, pem: str) -> rsa.RSAPrivateKey:
         """Load a private RSA key from a PEM-encoded string."""
@@ -94,7 +94,6 @@ class Certificates:
         intermediate_manifest = self.manifest.load(
             name=intermediate_ca,
             kind=ManifestKind.CERTIFICATE,
-            model=schemas.CertificateManifest,
         )
         if intermediate_manifest.metadata.type != CertificateTypes.INTERMEDIATE:
             raise exceptions.CertificateTypeError(
@@ -182,7 +181,7 @@ class Certificates:
                 not_before=not_before,
                 not_after=not_after,
                 fingerprint=self.__generate_fingerprint__(cert_pem),
-                serial_number=serial_number,
+                serial_number=str(serial_number),
                 certificate=cert_pem,
                 key_usage=key_usage,
             ),
@@ -211,10 +210,9 @@ class Certificates:
         if intermediate_ca.root_ca not in self.existing_certificates:
             raise exceptions.CertificateExistsError(name=intermediate_ca.root_ca, exists=False)
 
-        root_manifest = self.manifest.load(
+        root_manifest: schemas.CertificateManifest = self.manifest.load(
             name=intermediate_ca.root_ca,
             kind=ManifestKind.CERTIFICATE,
-            model=schemas.CertificateManifest,
         )
         if root_manifest.metadata.type != CertificateTypes.ROOT:
             raise exceptions.CertificateTypeError(common_name=intermediate_ca.root_ca, cert_type=CertificateTypes.ROOT)
@@ -276,7 +274,7 @@ class Certificates:
         )
         version = self.vault.create(secret_name=secret_name, value=key_pem)
 
-        manifest =schemas. CertificateManifest(
+        manifest = schemas.CertificateManifest(
             name=subject.common_name,
             metadata=schemas.CertificateMetadata(
                 type=CertificateTypes.INTERMEDIATE,
@@ -290,7 +288,7 @@ class Certificates:
                 not_before=not_before,
                 not_after=not_after,
                 fingerprint=self.__generate_fingerprint__(cert_pem),
-                serial_number=serial_number,
+                serial_number=str(serial_number),
                 certificate=cert_pem,
                 key_usage=root_manifest.metadata.key_usage,
                 domain_constraint=intermediate_ca.domain_constraint,
@@ -322,7 +320,7 @@ class Certificates:
 
         private_key = self.__generate_rsa_key__()
         csr_der = self.create_csr(self.__key_to_pem__(private_key), leaf_certificate)
-        self.existing_csrs = self.manifest.get_existing_by_kind(ManifestKind.CSR) # Reload CSRs
+        self.existing_requests = self.manifest.get_existing_by_kind(ManifestKind.CSR)  # Reload CSRs
         csr_manifest = self.sign_csr(csr_der)
 
         # Store private key in vault
@@ -376,7 +374,7 @@ class Certificates:
         Raises:
             CSRExistsError: If a CSR with the given common name already exists.
         """
-        if lc.common_name in self.existing_csrs:
+        if lc.common_name in self.existing_requests:
             raise exceptions.CSRExistsError(name=lc.common_name, exists=True)
 
         private_key = self.__load_private_key__(key)
@@ -445,10 +443,10 @@ class Certificates:
         if not common_name:
             raise exceptions.CSRSigningError(msg="Common Name not found in CSR.")
 
-        if common_name not in self.existing_csrs:
+        if common_name not in self.existing_requests:
             raise exceptions.CSRExistsError(name=common_name, exists=False)
 
-        csr_manifest = self.manifest.load(name=common_name, kind=ManifestKind.CSR, model=schemas.CSRManifest)
+        csr_manifest = self.manifest.load(name=common_name, kind=ManifestKind.CSR)
         csr_manifest = self.__verify_csr_signing_request__(manifest=csr_manifest, csr=csr)
         if csr_manifest.spec.status != CSRStatus.PENDING:
             return csr_manifest
@@ -481,7 +479,7 @@ class Certificates:
         cert = builder.sign(private_key=signing_key, algorithm=hashes.SHA256())
         cert_pem = self.__cert_to_pem__(cert)
 
-        csr_manifest.metadata.serial_number = serial_number
+        csr_manifest.metadata.serial_number = str(serial_number)
         csr_manifest.metadata.not_before = not_before
         csr_manifest.metadata.not_after = not_after
         csr_manifest.metadata.fingerprint = self.__generate_fingerprint__(cert_pem)
@@ -532,7 +530,7 @@ class SSHKey:
         """
         if name not in self.existing_keys:
             raise exceptions.SSHKeyExistsError(name=name, exists=False)
-        manifest = self.manifest.load(name=name, kind=ManifestKind.SSH_KEY, model=schemas.SSHKeyManifest)
+        manifest: schemas.SSHKeyManifest = self.manifest.load(name=name, kind=ManifestKind.SSH_KEY)
         return manifest.metadata.public_key
 
     def get_private_key(self, name: str) -> str:
@@ -549,7 +547,7 @@ class SSHKey:
         """
         if name not in self.existing_keys:
             raise exceptions.SSHKeyExistsError(name=name, exists=False)
-        manifest = self.manifest.load(name=name, kind=ManifestKind.SSH_KEY, model=schemas.SSHKeyManifest)
+        manifest: schemas.SSHKeyManifest = self.manifest.load(name=name, kind=ManifestKind.SSH_KEY)
         secret = self.vault.get(secret_name=Path(manifest.spec.secret_name), version=manifest.spec.version)
         return secret.secret_string.get_secret_value()
 
@@ -575,7 +573,7 @@ class SSHKey:
         if name in self.existing_keys:
             raise exceptions.SSHKeyExistsError(name=name, exists=True)
 
-        match (key_type):
+        match key_type:
             case SSHKeyTypes.ED25519:
                 private_key = ed25519.Ed25519PrivateKey.generate()
             case _:
@@ -586,9 +584,7 @@ class SSHKey:
                 )
 
         encryption = (
-            serialization.BestAvailableEncryption(passphrase.encode())
-            if passphrase else
-            serialization.NoEncryption()
+            serialization.BestAvailableEncryption(passphrase.encode()) if passphrase else serialization.NoEncryption()
         )
         private_key_pem = private_key.private_bytes(
             encoding=serialization.Encoding.PEM,
@@ -599,10 +595,14 @@ class SSHKey:
         secret_name = Path(f"ssh/key/{key_type}/{hashlib.sha256(name.encode()).hexdigest()}")
         version = self.vault.create(secret_name=secret_name, value=private_key_pem)
 
-        public_key = private_key.public_key().public_bytes(
-            encoding=serialization.Encoding.OpenSSH,
-            format=serialization.PublicFormat.OpenSSH,
-        ).decode()
+        public_key = (
+            private_key.public_key()
+            .public_bytes(
+                encoding=serialization.Encoding.OpenSSH,
+                format=serialization.PublicFormat.OpenSSH,
+            )
+            .decode()
+        )
 
         manifest = schemas.SSHKeyManifest(
             name=name,

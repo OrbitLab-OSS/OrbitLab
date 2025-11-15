@@ -11,11 +11,11 @@ class ManifestKind(StrEnum):
     CLUSTER = auto()
     NODE = auto()
     SDN = auto()
-    STORAGE = auto()
     LXC = auto()
     SECRET = auto()
     CERTIFICATE = auto()
     CSR = auto()
+    SETTINGS = auto()
     SSH_KEY = auto()
 
 
@@ -163,3 +163,4 @@ class TaskStatus(StrEnum):
 class CustomApplianceStepType(StrEnum):
     SCRIPT = auto()
     FILES = auto()
+    SECRETS = auto()

@@ -1,13 +1,10 @@
 import uuid
+
 import reflex as rx
 
 from orbitlab.web.states.managers import ProgressPanelStateManager
+
 from .buttons import Buttons
-
-
-@rx.event
-async def foo(state: ProgressPanelStateManager):
-    pass
 
 
 class ProgressStep:
@@ -15,9 +12,9 @@ class ProgressStep:
         self.name = name
         self.children = children
         self.validate = validate
-    
+
     def __apply_form__(self, component: rx.Component, form: str) -> None:
-        if hasattr(component, "name") and isinstance(component.name, rx.vars.LiteralStringVar):
+        if hasattr(component, "name") and isinstance(component.name, str | rx.vars.LiteralStringVar):
             component.custom_attrs["form"] = form
         for child in component.children:
             self.__apply_form__(child, form)
@@ -47,13 +44,13 @@ class ProgressStep:
                     rx.fragment(
                         cancel_button,
                         Buttons.Secondary("Previous", on_click=ProgressPanelStateManager.previous(progress_id)),
-                        Buttons.Primary("Next", form=form)
+                        Buttons.Primary("Next", form=form),
                     ),
                 ),
-                class_name="w-full flex justify-end space-x-2"
+                class_name="w-full flex justify-end space-x-2",
             ),
             data_active=ProgressPanelStateManager.registered.get(progress_id, 0) == index,
-            class_name="w-full flex flex-col data-[active=false]:hidden"
+            class_name="w-full flex flex-col data-[active=false]:hidden",
         )
 
 
@@ -77,7 +74,7 @@ class ProgressPanels:
             rx.cond(
                 ProgressPanelStateManager.registered.get(progress_id, 0) == index,
                 rx.el.div(
-                    f"{index+1}",
+                    f"{index + 1}",
                     class_name=(
                         "flex items-center justify-center w-6 h-6 rounded-full "
                         "text-white font-semibold "
@@ -86,16 +83,16 @@ class ProgressPanels:
                     ),
                 ),
                 rx.el.div(
-                    f"{index+1}",
+                    f"{index + 1}",
                     class_name=(
                         "flex items-center justify-center w-6 h-6 rounded-full "
                         "text-gray-400 dark:text-gray-600 "
                         "bg-gray-200/70 dark:bg-white/[0.05]"
                     ),
                 ),
-            )
+            ),
         )
-    
+
     @classmethod
     def __step_panel__(cls, progress_id: str, title: str, step_count: int, index: int) -> rx.Component:
         return rx.fragment(
@@ -156,11 +153,16 @@ class ProgressPanels:
             ),
             rx.el.div(
                 *[
-                    step.get_component(progress_id=progress_id, index=index, steps=len(steps), cancel_button=cancel_button)
+                    step.get_component(
+                        progress_id=progress_id,
+                        index=index,
+                        steps=len(steps),
+                        cancel_button=cancel_button,
+                    )
                     for index, step in enumerate(steps)
                 ],
-                class_name="px-6 py-3"
+                class_name="px-6 py-3",
             ),
             on_mount=ProgressPanelStateManager.register(progress_id),
-            class_name="min-w-[600px]"
+            class_name="min-w-[600px]",
         )

@@ -18,6 +18,7 @@ class Secret(BaseModel):
         updated_at (datetime | None): The last update timestamp.
         metadata (dict[str, str]): Additional metadata for the secret.
     """
+
     name: str
     secret_string: SecretStr
     created_at: datetime

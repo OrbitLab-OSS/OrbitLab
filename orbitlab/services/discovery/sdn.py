@@ -1,7 +1,7 @@
 """Networks Discovery Service."""
 
 from orbitlab.clients.proxmox.client import Proxmox
-from orbitlab.clients.proxmox.models import ProxmoxNode, ProxmoxSDNSubnet, ProxmoxSDNZone
+from orbitlab.clients.proxmox.models import NodeInfo, ProxmoxSDNSubnet, ProxmoxSDNZone
 from orbitlab.data_types import ManifestKind
 from orbitlab.manifest.schemas.sdns import SDNManifest
 from orbitlab.services.discovery.base import DiscoveryService
@@ -9,6 +9,7 @@ from orbitlab.services.discovery.base import DiscoveryService
 
 class SDN(DiscoveryService):
     """Service for discovering Software Defined Networks in a Proxmox cluster."""
+
     def __init__(self, proxmox: Proxmox | None = None) -> None:
         """Initialize the SDN discovery service."""
         super().__init__(kind=ManifestKind.SDN, proxmox=proxmox)
@@ -18,11 +19,11 @@ class SDN(DiscoveryService):
         """Run the SDN discovery process."""
         self.__discover_sdns__()
 
-    def get_sdns_for_node(self, node: ProxmoxNode) -> list[SDNManifest]:
+    def get_sdns_for_node(self, node: NodeInfo) -> list[SDNManifest]:
         """Retrieve SDN manifests for a given Proxmox node.
 
         Args:
-            node (ProxmoxNode): The Proxmox node to retrieve SDN manifests for.
+            node (NodeInfo): The Proxmox node to retrieve SDN manifests for.
 
         Returns:
             list[SDNManifest]: A list of SDNManifest objects associated with the node.
@@ -33,7 +34,7 @@ class SDN(DiscoveryService):
             zone_name = item["zone"]
             if zone_name in self.existing:
                 manifests.append(
-                    self.manifests.load(zone_name, self._kind, SDNManifest),
+                    self.manifests.load(zone_name, self._kind),
                 )
         return manifests
 
@@ -65,9 +66,11 @@ class SDN(DiscoveryService):
                                 {
                                     "start": dhcp.start,
                                     "end": dhcp.end,
-                                } for dhcp in subnet.dhcp_ranges
+                                }
+                                for dhcp in subnet.dhcp_ranges
                             ],
-                        } for subnet in subnets
+                        }
+                        for subnet in subnets
                     ],
                 },
             }

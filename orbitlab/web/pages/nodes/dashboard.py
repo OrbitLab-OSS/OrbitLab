@@ -2,16 +2,15 @@
 
 import asyncio
 from collections.abc import AsyncGenerator
-from datetime import UTC, datetime
 from typing import Any
 
 import reflex as rx
 from reflex.utils.prerequisites import get_and_validate_app
 
-from orbitlab.clients.proxmox.models import ProxmoxNode
 from orbitlab.data_types import NodeStatus
-from orbitlab.web.components import Card, ProgressBars, SideBar
-from orbitlab.web.states.nodes import ProxmoxNodesState
+from orbitlab.manifest.schemas.nodes import NodeManifest
+from orbitlab.web.components import Card, SideBar
+from orbitlab.web.states.cluster import ProxmoxNodesState
 
 
 @rx.event(background=True)
@@ -46,7 +45,7 @@ class Dashboard:
     """
 
     @classmethod
-    def _node_table_row(cls, node: ProxmoxNode) -> rx.Component:
+    def _node_table_row(cls, node: NodeManifest) -> rx.Component:
         return rx.el.tr(
             rx.el.td(
                 node.name,
@@ -54,28 +53,28 @@ class Dashboard:
             ),
             rx.el.td(
                 rx.match(
-                    node.status,
+                    node.metadata.status,
                     (NodeStatus.ONLINE, rx.badge("Online", color_scheme="green")),
                     (NodeStatus.ONLINE, rx.badge("Online", color_scheme="green")),
                 ),
                 class_name="px-6 py-4 whitespace-nowrap",
             ),
-            rx.el.td(
-                rx.moment(datetime.now(UTC).timestamp() - node.uptime, unix=True, from_now=True),
-                class_name="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-800 dark:text-gray-200",
-            ),
-            rx.el.td(
-                ProgressBars.Basic(node.cpu_utilization * 100, start_label="0%", end_label="100%"),
-                class_name="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-800 dark:text-gray-200",
-            ),
-            rx.el.td(
-                ProgressBars.Basic(
-                    node.used_memory / node.total_memory * 100,
-                    start_label="0GB",
-                    end_label=f"{node.total_mem_gb}GB",
-                ),
-                class_name="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-800 dark:text-gray-200",
-            ),
+            # rx.el.td(
+            #     rx.moment(datetime.now(UTC).timestamp() - node.uptime, unix=True, from_now=True),
+            #     class_name="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-800 dark:text-gray-200",
+            # ),
+            # rx.el.td(
+            #     ProgressBars.Basic(node.cpu_utilization * 100, start_label="0%", end_label="100%"),
+            #     class_name="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-800 dark:text-gray-200",
+            # ),
+            # rx.el.td(
+            #     ProgressBars.Basic(
+            #         node.used_memory / node.total_memory * 100,
+            #         start_label="0GB",
+            #         end_label=f"{node.total_mem_gb}GB",
+            #     ),
+            #     class_name="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-800 dark:text-gray-200",
+            # ),
             class_name=(
                 "transition-colors duration-200 "
                 "hover:bg-gray-100/60 dark:hover:bg-white/[0.06] "
@@ -106,27 +105,27 @@ class Dashboard:
                                         "uppercase text-gray-600 dark:text-[#AEB9CC]"
                                     ),
                                 ),
-                                rx.el.th(
-                                    "Uptime",
-                                    class_name=(
-                                        "px-6 py-3 text-left text-xs font-semibold tracking-wider "
-                                        "uppercase text-gray-600 dark:text-[#AEB9CC]"
-                                    ),
-                                ),
-                                rx.el.th(
-                                    "CPU Utilization",
-                                    class_name=(
-                                        "px-6 py-3 text-left text-xs font-semibold tracking-wider "
-                                        "uppercase text-gray-600 dark:text-[#AEB9CC]"
-                                    ),
-                                ),
-                                rx.el.th(
-                                    "Memory Utilization",
-                                    class_name=(
-                                        "px-6 py-3 text-left text-xs font-semibold tracking-wider "
-                                        "uppercase text-gray-600 dark:text-[#AEB9CC]"
-                                    ),
-                                ),
+                                # rx.el.th(
+                                #     "Uptime",
+                                #     class_name=(
+                                #         "px-6 py-3 text-left text-xs font-semibold tracking-wider "
+                                #         "uppercase text-gray-600 dark:text-[#AEB9CC]"
+                                #     ),
+                                # ),
+                                # rx.el.th(
+                                #     "CPU Utilization",
+                                #     class_name=(
+                                #         "px-6 py-3 text-left text-xs font-semibold tracking-wider "
+                                #         "uppercase text-gray-600 dark:text-[#AEB9CC]"
+                                #     ),
+                                # ),
+                                # rx.el.th(
+                                #     "Memory Utilization",
+                                #     class_name=(
+                                #         "px-6 py-3 text-left text-xs font-semibold tracking-wider "
+                                #         "uppercase text-gray-600 dark:text-[#AEB9CC]"
+                                #     ),
+                                # ),
                             ),
                             class_name="bg-white/60 dark:bg-white/[0.03] backdrop-blur-sm",
                         ),
@@ -158,7 +157,7 @@ class Dashboard:
 
 
 @rx.page("/nodes", on_load=on_load)
-def nodes() -> rx.Component:
+def nodes_page() -> rx.Component:
     """Proxmox Nodes Page."""
     side_bar, sidebar_id = SideBar(
         SideBar.NavItem(icon="layout-dashboard", text="Dashboard"),
@@ -175,7 +174,7 @@ def nodes() -> rx.Component:
             ),
             class_name=(
                 "min-h-screen w-full flex flex-col p-4 "
-                "bg-gradient-to-b from-white to-gray-100 "
+                "bg-gradient-to-b from-gray-200 to-gray-400 "
                 "dark:from-[#111317] dark:to-[#151820] "
                 "text-gray-800 dark:text-[#E8F1FF] "
                 "selection:bg-[#36E2F4]/40 selection:text-white "

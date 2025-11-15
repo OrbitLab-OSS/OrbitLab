@@ -36,7 +36,6 @@ class LXCSpec(Spec):
         return self
 
 
-
 class LXCManifest(BaseManifest[LXCMetadata, LXCSpec]):
     """Manifest schema for LXC containers in OrbitLab.
 
@@ -53,4 +52,5 @@ class LXCManifest(BaseManifest[LXCMetadata, LXCSpec]):
         memory (int): Amount of memory allocated to the container.
         swap (int): Amount of swap space allocated to the container.
     """
-    kind=ManifestKind.LXC
+
+    kind: ManifestKind = ManifestKind.LXC

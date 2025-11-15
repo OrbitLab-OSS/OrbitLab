@@ -32,6 +32,7 @@ class BridgeNetworks(BaseModel):
         gateway (ipaddress.IPv4Address): The gateway address for the bridge.
         ports (list[str] | None): The list of ports associated with the bridge.
     """
+
     active: bool
     autostart: bool
     interface_type: Annotated[NetworkTypes, SerializeEnum]

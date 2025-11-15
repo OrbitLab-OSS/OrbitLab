@@ -1,4 +1,5 @@
 """Sidebar component module for the OrbitLab web application."""
+
 import uuid
 from types import SimpleNamespace
 from typing import TypedDict
@@ -17,6 +18,7 @@ class SideBarStatus(BaseModel):
         collapsed (bool): Whether the sidebar is collapsed. Defaults to False.
         show_settings_menu (bool): Whether the settings menu is shown. Defaults to False.
     """
+
     active_page: str
     collapsed: bool = False
     show_settings_menu: bool = False
@@ -28,8 +30,8 @@ class SideBarStateManager(rx.State):
     Attributes:
         registered (dict[str, SideBarStatus]): A dictionary mapping sidebar identifiers to their open/closed state.
     """
-    registered: dict[str, SideBarStatus] = rx.field(default_factory=dict)
 
+    registered: dict[str, SideBarStatus] = rx.field(default_factory=dict)
 
     @rx.event
     async def register(self, sidebar_id: str, default_page: str) -> None:
@@ -69,14 +71,18 @@ class SideBarStateManager(rx.State):
         self.registered[sidebar_id].show_settings_menu = not self.registered[sidebar_id].show_settings_menu
 
 
+class NavItemHref(TypedDict, total=False):
+    href: str
 
-class NavItem(TypedDict):
+
+class NavItem(NavItemHref):
     """A navigation item for the sidebar.
 
     Attributes:
         icon (str): The icon identifier for the navigation item.
         text (str): The display text for the navigation item.
     """
+
     icon: str
     text: str
 
@@ -87,6 +93,7 @@ class SectionHeader(TypedDict):
 
 class SideBarRoot:
     """A collapsible sidebar component with navigation items and settings menu."""
+
     sidebar_id: str
 
     @classmethod
@@ -165,6 +172,7 @@ class SideBarRoot:
 
         Args:
             header: The section header configuration containing the title.
+
         Returns:
             A component representing the section header.
         """
@@ -192,6 +200,10 @@ class SideBarRoot:
         Returns:
             A button component representing the navigation item.
         """
+        on_click = lambda: SideBarStateManager.set_active_page(cls.sidebar_id, nav_item["text"])  # noqa: E731
+        if "href" in nav_item:
+            on_click = rx.redirect(nav_item["href"])
+
         return rx.el.button(
             rx.el.div(
                 rx.icon(nav_item["icon"], size=20, class_name="transition-colors duration-200"),
@@ -202,7 +214,7 @@ class SideBarRoot:
                 ),
                 class_name="flex items-center gap-3",
             ),
-            on_click=lambda: SideBarStateManager.set_active_page(cls.sidebar_id, nav_item["text"]),
+            on_click=on_click,
             data_active=SideBarStateManager.registered.get(cls.sidebar_id).active_page == nav_item["text"],
             data_collapsed=SideBarStateManager.registered.get(cls.sidebar_id).collapsed,
             class_name=(
@@ -216,7 +228,12 @@ class SideBarRoot:
             ),
         )
 
-    def __new__(cls, *nav_items: NavItem | SectionHeader, default_page: str, title: str = "OrbitLab") -> tuple[rx.Component, str]:
+    def __new__(
+        cls,
+        *nav_items: NavItem | SectionHeader,
+        default_page: str,
+        title: str = "OrbitLab",
+    ) -> tuple[rx.Component, str]:
         """Create a new sidebar component instance.
 
         Parameters:
@@ -229,8 +246,8 @@ class SideBarRoot:
         Raises:
             RuntimeError: If the default_page is not found in the nav_items.
         """
-        pages = [item["text"] for item in nav_items if "text" in item]
-        if default_page not in pages:
+        pages = [item["text"] for item in nav_items if "text" in item and "href" not in item]
+        if pages and default_page not in pages:
             msg = f"Default page {default_page} not one of: {pages}"
             raise RuntimeError(msg)
 
@@ -245,7 +262,7 @@ class SideBarRoot:
                                 title,
                                 data_collapsed=SideBarStateManager.registered.get(cls.sidebar_id).collapsed,
                                 class_name=(
-                                    "text-lg font-bold text-gray-800 dark:text-gray-100 data-[collapsed=true]:hidden"
+                                    "text-lg font-bold text-nowrap text-gray-800 dark:text-gray-100 data-[collapsed=true]:hidden"
                                 ),
                             ),
                             href="/",
@@ -304,6 +321,7 @@ class SideBarNamespace(SimpleNamespace):
         NavItem: TypedDict for navigation item structure.
         Manager: State manager for sidebar registration and control.
     """
+
     __call__ = staticmethod(SideBarRoot)
     SectionHeader = staticmethod(SectionHeader)
     NavItem = staticmethod(NavItem)

@@ -16,6 +16,7 @@ from .serialization import SerializeEnum, SerializeIP
 
 class SDNMetadata(Metadata):
     """Metadata for SDN configuration."""
+
     zone_type: Annotated[ZoneTypes, SerializeEnum]
     zone_name: str
     mac: str
@@ -24,12 +25,14 @@ class SDNMetadata(Metadata):
 
 class DHCPRange(BaseModel):
     """Represents a DHCP IP address range with a start and end address."""
+
     start: Annotated[ipaddress.IPv4Address, SerializeIP]
     end: Annotated[ipaddress.IPv4Address, SerializeIP]
 
 
 class Subnet(BaseModel):
     """Represents a network subnet with DNS prefix, gateway, CIDR block, and DHCP ranges."""
+
     dns_prefix: str
     gateway: Annotated[ipaddress.IPv4Address, SerializeIP]
     cidr_block: Annotated[ipaddress.IPv4Network, SerializeIP]
@@ -43,6 +46,7 @@ class SDNSpec(Spec):
         subnets (list[Subnet]): List of network subnets.
         mtu (int): Maximum Transmission Unit size.
     """
+
     subnets: list[Subnet]
     mtu: int
 
@@ -53,4 +57,5 @@ class SDNManifest(BaseManifest[SDNMetadata, SDNSpec]):
     Attributes:
         kind (ManifestKind): The kind of manifest, set to SDN.
     """
+
     kind: Annotated[ManifestKind, SerializeEnum] = ManifestKind.SDN

@@ -1,7 +1,9 @@
 """Exception classes for Proxmox."""
 
+
 class PVECommandError(Exception):
     """Raised when a pvesh command fails."""
+
     def __init__(self, cmd: str, stderr: str) -> None:
         """Initialize PVECommandError with the command and its stderr output.
 
@@ -16,6 +18,7 @@ class PVECommandError(Exception):
 
 class HTTPConfigError(Exception):
     """Raised when the HTTP configuration is invalid."""
+
     def __init__(self, msg: str) -> None:
         """Initialize HTTPConfigError with an error message.
 

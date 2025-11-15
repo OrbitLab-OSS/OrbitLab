@@ -4,17 +4,25 @@ Provides functionality to list, load, save, and delete manifest files using YAML
 """
 
 from pathlib import Path
-from typing import TypeVar
+from typing import Literal, TypeVar, overload
 
 import yaml
 
 from orbitlab.constants import MANIFEST_ROOT
 from orbitlab.data_types import ManifestKind
+from orbitlab.manifest.schemas.appliances import BaseApplianceManifest, CustomApplianceManifest
+from orbitlab.manifest.schemas.cluster import ClusterManifest
+from orbitlab.manifest.schemas.lxcs import LXCManifest
+from orbitlab.manifest.schemas.nodes import NodeManifest
+from orbitlab.manifest.schemas.sdns import SDNManifest
+from orbitlab.manifest.schemas.secrets import CertificateManifest, CSRManifest, SecretManifest, SSHKeyManifest
+from orbitlab.manifest.schemas.settings import OrbitLabSettingsManifest
 
 from .exceptions import ManifestNotFoundError, ManifestWriteError
 from .schemas.base import BaseManifest
 
 T = TypeVar("T", bound=BaseManifest)
+
 
 class ManifestClient:
     """Handles loading and saving OrbitLab manifests stored in the Proxmox Cluster Filesystem."""
@@ -27,13 +35,45 @@ class ManifestClient:
         """Return all manifest filenames (without extension)."""
         return [p.stem for p in MANIFEST_ROOT.glob("**/*.yaml")]
 
-    def load(self, name: str, kind: ManifestKind, model: type[T]) -> T:
+    @overload
+    def load(self, name: str, kind: Literal[ManifestKind.BASE_APPLIANCE]) -> BaseApplianceManifest: ...
+
+    @overload
+    def load(self, name: str, kind: Literal[ManifestKind.CERTIFICATE]) -> CertificateManifest: ...
+
+    @overload
+    def load(self, name: str, kind: Literal[ManifestKind.CLUSTER]) -> ClusterManifest: ...
+
+    @overload
+    def load(self, name: str, kind: Literal[ManifestKind.CSR]) -> CSRManifest: ...
+
+    @overload
+    def load(self, name: str, kind: Literal[ManifestKind.CUSTOM_APPLIANCE]) -> CustomApplianceManifest: ...
+
+    @overload
+    def load(self, name: str, kind: Literal[ManifestKind.LXC]) -> LXCManifest: ...
+
+    @overload
+    def load(self, name: str, kind: Literal[ManifestKind.NODE]) -> NodeManifest: ...
+
+    @overload
+    def load(self, name: str, kind: Literal[ManifestKind.SDN]) -> SDNManifest: ...
+
+    @overload
+    def load(self, name: str, kind: Literal[ManifestKind.SECRET]) -> SecretManifest: ...
+
+    @overload
+    def load(self, name: str, kind: Literal[ManifestKind.SETTINGS]) -> OrbitLabSettingsManifest: ...
+
+    @overload
+    def load(self, name: str, kind: Literal[ManifestKind.SSH_KEY]) -> SSHKeyManifest: ...
+
+    def load(self, name: str, kind: ManifestKind) -> BaseManifest:
         """Load a manifest file of a given kind and validate it against the provided model.
 
         Args:
             name (str): The name of the manifest to load.
             kind (ManifestKind): The kind/category of the manifest.
-            model (type[BaseManifest]): The model class to validate the manifest data against.
 
         Raises:
             ManifestNotFoundError: If the manifest file does not exist.
@@ -45,8 +85,10 @@ class ManifestClient:
         if not path.exists():
             raise ManifestNotFoundError(name=name, kind=kind)
 
+        model = BaseManifest.get_manifest_model(kind=kind)
+
         with path.open("r", encoding="utf-8") as f:
-             return model.model_validate(yaml.safe_load(f))
+            return model.model_validate(yaml.safe_load(f))
 
     def save(self, manifest: BaseManifest, *, overwrite: bool = True) -> None:
         """Save a manifest file to disk.
@@ -62,9 +104,11 @@ class ManifestClient:
             raise ManifestWriteError(manifest=manifest, reason="No overwrite permissions.")
 
         manifest.manifest_path.parent.mkdir(parents=True, exist_ok=True)
+        data: dict = manifest.model_dump(exclude_none=True, by_alias=True)
+        print(data)
 
         with manifest.manifest_path.open("wt", encoding="utf-8") as f:
-            yaml.safe_dump(manifest.model_dump(exclude_none=True, by_alias=True), f, sort_keys=False)
+            yaml.safe_dump(data, f, sort_keys=False)
 
     def delete(self, manifest: BaseManifest) -> None:
         """Delete the manifest file from disk if it exists.

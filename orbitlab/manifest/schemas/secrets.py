@@ -2,10 +2,11 @@
 
 This module defines Pydantic models for secrets, certificates, and SSH keys,
 including their metadata and specifications.
-"""  # noqa: A005
+"""
+
 import hashlib
-from datetime import datetime
-from typing import Annotated, Self
+from datetime import UTC, datetime, timedelta
+from typing import Annotated, Literal, Self
 
 from pydantic import Field, model_validator
 
@@ -24,6 +25,7 @@ class SecretSpec(Spec):
         version (int): The current version of the secret. Must be greater than or equal to 1.
         previous_versions (set[int]): A set of previous version numbers for the secret.
     """
+
     secret_name: Annotated[str, Field(pattern="^/?(?:[A-Za-z0-9]+(?:/[A-Za-z0-9]+)*)?/?$")]
     version: Annotated[int, Field(ge=1)]
     previous_versions: Annotated[list[int], Field(default_factory=list)]
@@ -31,11 +33,13 @@ class SecretSpec(Spec):
 
 class SecretMetadata(Metadata):
     """Metadata for a secret, including an optional description."""
+
     description: Annotated[str | None, Field(default=None)]
 
 
 class SecretManifest(BaseManifest[SecretMetadata, SecretSpec]):
     """Manifest class for storing secret metadata and specification."""
+
     kind: Annotated[ManifestKind, SerializeEnum] = ManifestKind.SECRET
 
 
@@ -57,6 +61,7 @@ class CertificateMetadata(Metadata):
         key_usage (list[str]): Key usage extensions.
         serial_number (int): The serial number of the certificate.
     """
+
     type: Annotated[CertificateTypes, SerializeEnum]
     common_name: str
     issuer: str
@@ -70,7 +75,7 @@ class CertificateMetadata(Metadata):
     certificate: str
     fingerprint: str
     key_usage: Annotated[list[KeyUsageTypes], SerializeEnumList]
-    serial_number: int
+    serial_number: str
 
     # Intermediate CAs
     domain_constraint: Annotated[str | None, Field(default=None)]
@@ -79,6 +84,21 @@ class CertificateMetadata(Metadata):
     san_dns: Annotated[list[str] | None, Field(default=None)]
     san_ips: Annotated[list[str] | None, Field(default=None)]
     chain: Annotated[str | None, Field(default=None)]
+
+    @property
+    def status(self) -> Literal["valid", "warning", "expired"]:
+        """Return the current status of the certificate based on its validity period.
+
+        Returns:
+            "expired" if the certificate has passed its not_after date,
+            "warning" if the certificate expires within 30 days,
+            "valid" otherwise.
+        """
+        if self.not_after < datetime.now(UTC):
+            return "expired"
+        if self.not_after - timedelta(days=30) < datetime.now(UTC):
+            return "warning"
+        return "valid"
 
     @model_validator(mode="after")
     def check_fingerprint(self) -> Self:
@@ -94,6 +114,7 @@ class CertificateMetadata(Metadata):
 
 class CertificateManifest(BaseManifest[CertificateMetadata, SecretSpec]):
     """Manifest class for storing certificate metadata and specification."""
+
     kind: Annotated[ManifestKind, SerializeEnum] = ManifestKind.CERTIFICATE
 
 
@@ -119,6 +140,7 @@ class CSRMetadata(Metadata):
         chain (str | None): Certificate chain after issuance.
         fingerprint (str | None): Certificate fingerprint after issuance.
     """
+
     type: Annotated[CertificateTypes, SerializeEnum] = CertificateTypes.LEAF
     common_name: str
     issuer: str
@@ -132,7 +154,7 @@ class CSRMetadata(Metadata):
     san_ips: Annotated[list[str] | None, Field(default=None)]
 
     # After issuance
-    serial_number: Annotated[int | None, Field(default=None)]
+    serial_number: Annotated[str | None, Field(default=None)]
     not_before: Annotated[datetime | None, Field(default=None)]
     not_after: Annotated[datetime | None, Field(default=None)]
     certificate: Annotated[str | None, Field(default=None)]
@@ -150,6 +172,7 @@ class CSRSpec(Spec):
         signed_at (datetime | None): The datetime when the CSR was signed, if applicable.
         status (CSRStatus): The current status of the CSR.
     """
+
     key_fingerprint: str
     csr_fingerprint: str
     submitted_at: datetime
@@ -161,6 +184,7 @@ class CSRSpec(Spec):
 
 class CSRManifest(BaseManifest[CSRMetadata, CSRSpec]):
     """Manifest class for storing Certificate Signing Request (CSR) metadata and specification."""
+
     kind: Annotated[ManifestKind, SerializeEnum] = ManifestKind.CSR
 
 
@@ -173,6 +197,7 @@ class SSHKeyMetadata(Metadata):
         key_type (SSHKeyTypes): The type of SSH key.
         passphrase (bool): Indicates if the key is protected by a passphrase.
     """
+
     public_key: str
     fingerprint: str
     key_type: Annotated[SSHKeyTypes, SerializeEnum]
@@ -181,4 +206,5 @@ class SSHKeyMetadata(Metadata):
 
 class SSHKeyManifest(BaseManifest[SSHKeyMetadata, SecretSpec]):
     """Manifest class for storing SSH key metadata and specification."""
+
     kind: Annotated[ManifestKind, SerializeEnum] = ManifestKind.SSH_KEY

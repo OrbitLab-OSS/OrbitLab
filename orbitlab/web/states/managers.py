@@ -12,6 +12,10 @@ class DialogStateManager(rx.State):
     async def toggle(self, dialog_id: str) -> None:
         self.registered[dialog_id] = not self.registered[dialog_id]
 
+    @rx.event
+    async def close(self, dialog_id: str) -> None:
+        self.registered[dialog_id] = False
+
 
 class ProgressPanelStateManager(rx.State):
     registered: dict[str, int] = rx.field(default_factory=dict)

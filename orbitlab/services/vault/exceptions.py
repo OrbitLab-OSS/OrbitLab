@@ -18,6 +18,7 @@ class SecretNotFoundError(Exception):
         secret (str): The secret whose file path was not found.
         version (int): The version of the secret.
     """
+
     def __init__(self, secret_name: Path, version: int) -> None:
         """Initialize the SecretNotFoundError with the secret and version whose file path was not found.
 
@@ -36,6 +37,7 @@ class InvalidChecksumError(Exception):
     Attributes:
         secret (Secret): The Secret object with an invalid checksum.
     """
+
     def __init__(self, secret: "Secret", checksum: str) -> None:
         """Initialize the InvalidChecksumError with the secret that has an invalid checksum.
 
@@ -53,6 +55,7 @@ class SecretExistsError(Exception):
     Attributes:
         secret_name (Path): The name/path of the secret that already exists.
     """
+
     def __init__(self, secret_name: Path) -> None:
         """Initialize the SecretExistsError with the secret name that already exists.
 
@@ -69,6 +72,7 @@ class SecretRollbackError(Exception):
     Attributes:
         msg (str): The error message describing the rollback issue.
     """
+
     def __init__(self, msg: str) -> None:
         """Initialize the SecretRollbackError with a message.
 

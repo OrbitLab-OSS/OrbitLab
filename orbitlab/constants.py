@@ -3,12 +3,14 @@ Constants for OrbitLab.
 
 This module defines file system paths and other immutable values used throughout the application.
 """
+
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Final
 
-ORBITLAB_ROOT: Final = Path("./TEST_ROOT") # TODO: Change to "/etc/pve/orbitlab"
+ORBITLAB_ROOT: Final = Path("./TEST_ROOT")  # TODO: Change to "/etc/pve/orbitlab"
 MANIFEST_ROOT: Final = ORBITLAB_ROOT / "manifests"
+WORKFLOW_FILES_ROOT: Final = ORBITLAB_ROOT / "workflow-files"
 
 DNS_ROOT: Final = ORBITLAB_ROOT / "dns"
 DNS_ZONE_ROOT: Final = DNS_ROOT / "zones"
@@ -27,6 +29,7 @@ class PKI(SimpleNamespace):
         INTERMEDIATE_CA_DAYS_VALID (int): Number of days the intermediate CA certificate is valid.
         LEAF_CA_DAYS_VALID (int): Number of days the leaf CA certificate is valid.
     """
+
     RSA_PUBLIC_EXPONENT: Final = 65537
     RSA_KEY_SIZE: Final = 4096
 

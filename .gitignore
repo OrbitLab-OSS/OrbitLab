@@ -2,6 +2,7 @@ assets/external/
 .states
 *.db
 .web
+TEST_ROOT/
 # ---> Pants
 # Daemon
 .pants.d/

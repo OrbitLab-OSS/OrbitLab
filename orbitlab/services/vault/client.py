@@ -155,7 +155,7 @@ class SecretVault:
         """
         string_path = secret_name.as_posix()
         digest = hashlib.sha256(string_path.encode()).hexdigest()
-        secret_path = "/".join([digest[i:i+2] for i in range(0, len(string_path.split("/"))*2, 2)])
+        secret_path = "/".join([digest[i : i + 2] for i in range(0, len(string_path.split("/")) * 2, 2)])
         full_path = SECRETS_ROOT / Path(secret_path) / f"{digest[-10:]}.v{version}.enc"
         full_path.parent.mkdir(parents=True, exist_ok=True)
         return full_path
@@ -187,7 +187,7 @@ class SecretVault:
             secret_string=value,
             created_at=datetime.now(UTC),
             version=version,
-            checksum="", # Checksum is computed and updated on __save__()
+            checksum="",  # Checksum is computed and updated on __save__()
             metadata=metadata,
         )
         self.__save__(filepath=filepath, secret=secret)

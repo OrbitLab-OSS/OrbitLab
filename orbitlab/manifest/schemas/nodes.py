@@ -4,7 +4,7 @@ from typing import Annotated
 
 from pydantic import Field
 
-from orbitlab.clients.proxmox.models import ProxmoxStorage
+from orbitlab.clients.proxmox.models import ProxmoxStorages
 from orbitlab.data_types import ManifestKind, NodeStatus
 from orbitlab.manifest.schemas.networks import BridgeNetworks
 
@@ -21,6 +21,7 @@ class NodeMetadata(Metadata):
         address (str): The network address of the node.
         status (NodeStatus): The current status of the node.
     """
+
     hostname: str
     status: Annotated[NodeStatus, SerializeEnum]
     maintenance_mode: bool
@@ -28,11 +29,13 @@ class NodeMetadata(Metadata):
 
 class NodeSpec(Spec):
     """Specification for a Proxmox cluster node, including its network configurations."""
+
     bridges: Annotated[list[BridgeNetworks], Field(default_factory=list)]
     sdns: Annotated[list[Ref | SDNManifest], Field(default_factory=list)]
-    storage: Annotated[list[ProxmoxStorage], Field(default_factory=list)]
+    storage: Annotated[ProxmoxStorages, Field(default_factory=list)]
 
 
 class NodeManifest(BaseManifest[NodeMetadata, NodeSpec]):
     """OrbitLab manifest representing a Proxmox cluster node."""
+
     kind: Annotated[ManifestKind, SerializeEnum] = ManifestKind.NODE

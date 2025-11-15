@@ -10,6 +10,16 @@ backend_packages = [
 [anonymous-telemetry]
 enabled = false
 
+[system-binaries]
+system_binary_paths = [
+  "/usr/bin",
+  "/bin",
+  "/usr/local/bin",
+  "/opt/homebrew/bin",
+  "/home/*/.nvm/versions/node/*/bin",
+  "/Users/*/.nvm/versions/node/*/bin",
+]
+
 [cli.alias]
 all = "::"
 lock = "generate-lockfiles"
@@ -18,7 +28,6 @@ dev = ":reflex -- run"
 
 [source]
 root_patterns = [
-  "src",
   "/",
 ]
 
@@ -31,3 +40,6 @@ use_coverage = true
 
 [pytest]
 install_from_resolve = "python-default"
+
+[ruff]
+version = "0.11.5"

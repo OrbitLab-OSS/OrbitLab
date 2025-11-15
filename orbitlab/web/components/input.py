@@ -22,13 +22,15 @@ class Input:
         icon = props.pop("icon", None)
         error = props.pop("error", None)
         description = props.pop("description", None)
-        wrapper_class_name = props.pop("wrapper_class_name", "w-full")
+        wrapper_class_name = props.pop("wrapper_class_name", "w-full grow")
 
         icon_component = (
             rx.el.div(
                 rx.icon(icon, size=16, class_name="text-gray-400 dark:text-gray-500"),
                 class_name="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3",
-            ) if icon else rx.fragment()
+            )
+            if icon
+            else rx.fragment()
         )
 
         return rx.el.div(
@@ -46,7 +48,7 @@ class Input:
                         "placeholder-gray-400 dark:placeholder-gray-500 "
                         "hover:ring-1 hover:ring-[#36E2F4]/30 "
                         "focus:ring-2 focus:ring-[#36E2F4]/40 "
-                        "shadow-[inset_0_0_0.5px_rgba(255,255,255,0.10)] "                        
+                        "shadow-[inset_0_0_0.5px_rgba(255,255,255,0.10)] "
                     ),
                     data_icon=bool(icon),
                     **props,

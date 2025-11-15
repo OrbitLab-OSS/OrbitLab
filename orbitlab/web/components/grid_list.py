@@ -1,4 +1,5 @@
 """Grid list components for displaying items in a responsive grid layout."""
+
 from types import SimpleNamespace
 
 import reflex as rx
@@ -10,7 +11,8 @@ class GridListItem:
     This class creates individual items for use within a GridList, featuring a content area
     for child components and an optional actions section.
     """
-    def __new__(cls, *children: rx.Component, actions: rx.Component | None = None) -> rx.Component:
+
+    def __new__(cls, *children: rx.Component, actions: rx.Component | None = None, **props: dict) -> rx.Component:
         """Create a new grid list item component.
 
         Args:
@@ -20,12 +22,13 @@ class GridListItem:
         Returns:
             A Reflex component representing a grid list item.
         """
+        class_name = props.pop("class_name", "flex flex-1 flex-col justify-between p-8")
         if not actions:
             actions = rx.fragment()
         return rx.el.li(
             rx.el.div(
                 *children,
-                class_name="flex flex-1 flex-col justify-between p-8",
+                class_name=f"flex flex-1 flex-col justify-between p-8 {class_name}",
             ),
             actions,
             class_name=(
@@ -41,8 +44,9 @@ class GridListItem:
                 "hover:shadow-[0_0_10px_rgba(54,226,244,0.15)] "
                 # Motion & feel
                 "transition-all duration-300 ease-in-out "
-                "outline outline-1 outline-transparent -outline-offset-1 "
+                "outline outline-1 outline-transparent -outline-offset-1"
             ),
+            **props,
         )
 
 
@@ -52,6 +56,7 @@ class GridListRoot:
     Creates a responsive grid layout that displays GridListItem components in a grid pattern
     that adapts from 1 column on mobile to 4 columns on large screens.
     """
+
     def __new__(cls, *items: GridListItem, **props: dict) -> rx.Component:
         """Create a new grid list root component.
 
@@ -66,7 +71,8 @@ class GridListRoot:
             *items,
             role=props.pop("role", "list"),
             class_name=(
-                f"grid grid-cols-1 gap-6 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 {props.pop('class_name', '')}"
+                "grid grid-cols-1 gap-6 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 "
+                f"{props.pop('class_name', '')}"
             ),
             **props,
         )
@@ -82,6 +88,7 @@ class GridListNamespace(SimpleNamespace):
         __call__ (GridListRoot): Callable that creates the root grid list component.
         Item (GridListItem):  Component class for individual grid list items.
     """
+
     __call__ = staticmethod(GridListRoot)
     Item = staticmethod(GridListItem)
 

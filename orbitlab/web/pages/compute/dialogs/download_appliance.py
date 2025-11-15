@@ -1,14 +1,16 @@
 from typing import Final
+
 import reflex as rx
 from pydantic import BaseModel, Field
 
 from orbitlab.clients.proxmox.client import Proxmox
-from orbitlab.clients.proxmox.models import ProxmoxApplianceInfo
+from orbitlab.clients.proxmox.models import ApplianceInfo
 from orbitlab.data_types import ApplianceType, ManifestKind
 from orbitlab.manifest.client import ManifestClient
 from orbitlab.manifest.schemas.appliances import BaseApplianceManifest, BaseApplianceMetadata, BaseApplianceSpec
 from orbitlab.manifest.schemas.nodes import NodeManifest
-from orbitlab.web.components import RadioGroup, Buttons, Input, GridList, OrbitLabLogo, Select
+from orbitlab.web.components import Buttons, GridList, Input, OrbitLabLogo, RadioGroup, Select
+from orbitlab.web.states.cluster import OrbitLabSettings
 from orbitlab.web.states.managers import DialogStateManager
 
 
@@ -28,20 +30,24 @@ class DownloadApplianceState(rx.State):
     )
 
     @rx.var
-    def available_appliances(self) -> list[ProxmoxApplianceInfo]:
-        node = next(iter(ManifestClient().get_existing_by_kind(kind=ManifestKind.NODE).keys()))
+    def available_appliances(self) -> list[ApplianceInfo]:
         appliances = []
-        download_configs = {}
-        for appliance in Proxmox().list_appliances(node=node):
-            if appliance.template in self.existing:
-                continue
-            appliances.append(appliance)
-            download_configs[appliance.template] = ApplianceItemDownload()
-        self.download_configs = download_configs
+        try:
+            node = next(iter(ManifestClient().get_existing_by_kind(kind=ManifestKind.NODE).keys()))
+        except StopIteration:
+            return appliances
+        else:
+            download_configs = {}
+            for appliance in Proxmox().list_appliances(node=node).root:
+                if appliance.template in self.existing:
+                    continue
+                appliances.append(appliance)
+                download_configs[appliance.template] = ApplianceItemDownload()
+            self.download_configs = download_configs
         return sorted(appliances, key=lambda apl: apl.template)
 
     @rx.var
-    def available_system_appliances(self) -> list[ProxmoxApplianceInfo]:
+    def available_system_appliances(self) -> list[ApplianceInfo]:
         system_appliances = []
         for apl in self.available_appliances:
             if apl.is_turnkey:
@@ -52,7 +58,7 @@ class DownloadApplianceState(rx.State):
         return system_appliances
 
     @rx.var
-    def available_turnkey_appliances(self) -> list[ProxmoxApplianceInfo]:
+    def available_turnkey_appliances(self) -> list[ApplianceInfo]:
         turnkey_appliances = []
         for apl in self.available_appliances:
             if not apl.is_turnkey:
@@ -69,10 +75,10 @@ class DownloadApplianceState(rx.State):
 
 @rx.event
 async def set_node(state: DownloadApplianceState, template: str, node: str):
-    node_manifest = ManifestClient().load(node, kind=ManifestKind.NODE, model=NodeManifest)
+    node_manifest: NodeManifest = ManifestClient().load(node, kind=ManifestKind.NODE)
     state.download_configs[template].node = node
     state.download_configs[template].available_storage = [
-        store.name for store in node_manifest.spec.storage if "vztmpl" in store.content
+        store.name for store in node_manifest.spec.storage.root if "vztmpl" in store.content
     ]
 
 
@@ -88,7 +94,7 @@ async def wait_for_download(state: DownloadApplianceState, manifest: BaseApplian
     finally:
         async with state:
             state.download_configs[manifest.name].downloading = False
-            state.existing = list(ManifestClient().get_existing_by_kind(kind=ManifestKind.APPLIANCE).keys())
+            state.existing = list(ManifestClient().get_existing_by_kind(kind=ManifestKind.BASE_APPLIANCE).keys())
 
 
 @rx.event
@@ -138,16 +144,14 @@ class DownloadApplianceDialog:
     form_id: Final = "download-appliance-form"
 
     @classmethod
-    def __appliance__(cls, appliance: ProxmoxApplianceInfo) -> rx.Component:
+    def __appliance__(cls, appliance: ApplianceInfo) -> rx.Component:
         """Create a grid list item component for a system appliance."""
         return GridList.Item(
             rx.el.div(
                 rx.el.div(
                     rx.el.h3(
                         appliance.template,
-                        class_name=(
-                            "text-lg font-semibold text-gray-900 dark:text-[#E8F1FF] truncate"
-                        ),
+                        class_name=("text-lg font-semibold text-gray-900 dark:text-[#E8F1FF] truncate"),
                     ),
                     rx.el.p(
                         f"{appliance.type} • {appliance.version} • {appliance.architecture}",
@@ -170,6 +174,7 @@ class DownloadApplianceDialog:
                     ),
                     Select(
                         DownloadApplianceState.available_nodes,
+                        default_value=OrbitLabSettings.primary_node,
                         placeholder="Select Node",
                         name="node",
                         required=True,
@@ -208,19 +213,15 @@ class DownloadApplianceDialog:
                         RadioGroup.Item(
                             "system",
                             on_change=lambda: set_appliance_view("system"),
-                            value=DownloadApplianceState.appliance_view
+                            value=DownloadApplianceState.appliance_view,
                         ),
                         RadioGroup.Item(
                             "turnkey",
                             on_change=lambda: set_appliance_view("turnkey"),
-                            value=DownloadApplianceState.appliance_view
+                            value=DownloadApplianceState.appliance_view,
                         ),
                     ),
-                    Input(
-                        placeholder="Search appliances...",
-                        icon="search",
-                        on_change=search_appliances
-                    ),
+                    Input(placeholder="Search appliances...", icon="search", on_change=search_appliances),
                     class_name="flex items-center justify-between mb-4 space-x-4",
                 ),
                 rx.scroll_area(

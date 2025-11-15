@@ -21,12 +21,14 @@ from orbitlab.manifest.schemas.serialization import SerializeEnum
 
 class Tag(BaseModel):
     """A tag consisting of a name and value for OrbitLab manifest metadata."""
+
     name: str
     value: str
 
 
 class Metadata(BaseModel):
     """Base metadata schema for OrbitLab manifest files."""
+
     tags: Annotated[list[Tag] | None, Field(default=None)]
 
 
@@ -46,6 +48,7 @@ class Ref(BaseModel, Generic[SpecType]):
         _kind (Kind | None): The kind of the referenced manifest.
         _name (str): The name of the referenced manifest.
     """
+
     ref: str
     _kind: ManifestKind | None = None
     _name: str = ""
@@ -94,6 +97,7 @@ class BaseManifest(BaseModel, Generic[MetaType, SpecType]):
         kind (ManifestKind): The kind of manifest.
         name (str): The name of the manifest.
     """
+
     kind: Annotated[ManifestKind, SerializeEnum]
     name: str
     metadata: MetaType
@@ -109,6 +113,23 @@ class BaseManifest(BaseModel, Generic[MetaType, SpecType]):
             raise ManifestRegistrationError(kind=cls.kind, msg="Manifest already registered.")
         cls._registry.default[cls.kind.value] = cls
         super().__init_subclass__(**kwargs)
+
+    @classmethod
+    def get_manifest_model(cls, kind: ManifestKind) -> "BaseManifest":
+        """Get the registered manifest model class for the specified kind.
+
+        Args:
+            kind (ManifestKind): The kind of manifest to retrieve.
+
+        Returns:
+            type["BaseManifest"]: The manifest class registered for the given kind.
+
+        Raises:
+            ManifestRegistrationError: If the manifest kind is not registered.
+        """
+        if kind.value not in cls._registry.default:
+            raise ManifestRegistrationError(kind=kind, msg="Never registered.")
+        return cls._registry.default[kind.value]
 
     @property
     def manifest_path(self) -> Path:

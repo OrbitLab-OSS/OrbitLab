@@ -9,13 +9,13 @@ class Field:
                 class_name="w-1/4 mr-4 text-base font-semibold text-gray-900 dark:text-[#E8F1FF]",
             ),
             component,
-            class_name="w-full flex items-center"
+            class_name="w-full flex items-center",
         )
 
 
 class FieldSet:
     Field = staticmethod(Field)
-    
+
     def __new__(cls, title: str, *children: rx.Component) -> rx.Component:
         return rx.el.fieldset(
             rx.el.legend(

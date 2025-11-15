@@ -17,7 +17,7 @@ from pydantic import BaseModel, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from orbitlab.clients.proxmox.exceptions import HTTPConfigError, PVECommandError
-from orbitlab.clients.proxmox.models import ProxmoxApplianceInfo, ProxmoxTaskStatus
+from orbitlab.clients.proxmox.models import ApplianceInfo, ProxmoxAppliances, ProxmoxClusterStatus, ProxmoxTaskStatus
 from orbitlab.data_types import ApplianceType, TaskStatus
 
 T = TypeVar("T", bound=BaseModel)
@@ -36,8 +36,11 @@ class HTTPConfig(BaseSettings):
         verify_ssl (bool): Whether to verify SSL certificates.
         timeout (int): Timeout for API requests in seconds.
     """
+
     model_config = SettingsConfigDict(
-        env_nested_delimiter="_", env_nested_max_split=1, env_prefix="PROXMOX_",
+        env_nested_delimiter="_",
+        env_nested_max_split=1,
+        env_prefix="PROXMOX_",
     )
 
     api_url: str
@@ -204,9 +207,7 @@ class Proxmox:
         """
         data = self.__request__("get", path, **params)
         if model:
-            if isinstance(data, list):
-                return [model(**item) for item in data]
-            return model(**data)
+            return model.model_validate(data)
         return data
 
     def create(self, path: str, **params: dict[str, str]) -> str | dict:
@@ -245,6 +246,9 @@ class Proxmox:
         """
         return self.__request__("delete", path, **params)
 
+    def get_cluster_status(self) -> ProxmoxClusterStatus:
+        return self.get("/cluster/status", model=ProxmoxClusterStatus)
+
     def get_next_vmid(self) -> int:
         """Retrieve the next available VMID from the Proxmox cluster.
 
@@ -254,7 +258,7 @@ class Proxmox:
         result = self.get("/cluster/nextid")
         return int(result.strip())
 
-    def list_appliances(self, node: str, appliance_type: ApplianceType | None = None) -> list[ProxmoxApplianceInfo]:
+    def list_appliances(self, node: str, appliance_type: ApplianceType | None = None) -> ProxmoxAppliances:
         """List available LXC appliances on the specified Proxmox node.
 
         Args:
@@ -262,10 +266,10 @@ class Proxmox:
             appliance_type (ApplianceType | None): Filter for appliance type (SYSTEM, TURNKEY, or None for all).
 
         Returns:
-            list[ProxmoxApplianceInfo]: A list of available LXC appliances.
+            ProxmoxAppliances: A list of available LXC appliances.
         """
-        appliances = self.get(f"/nodes/{node}/aplinfo", model=ProxmoxApplianceInfo)
-        match (appliance_type):
+        appliances = self.get(f"/nodes/{node}/aplinfo", model=ProxmoxAppliances)
+        match appliance_type:
             case ApplianceType.SYSTEM:
                 return [apl for apl in appliances if not apl.is_turnkey]
             case ApplianceType.TURNKEY:
@@ -273,7 +277,7 @@ class Proxmox:
             case _:
                 return appliances
 
-    def download_appliance(self, node: str, storage: str, appliance: ProxmoxApplianceInfo) -> str:
+    def download_appliance(self, node: str, storage: str, appliance: ApplianceInfo) -> str:
         """Download an LXC appliance to the specified storage on a Proxmox node.
 
         Args:
@@ -285,6 +289,11 @@ class Proxmox:
             str: The UPID of the task.
         """
         return self.create(f"/nodes/{node}/aplinfo", storage=storage, template=appliance.template)
+
+    def node_in_maintenance_mode(self, node: str) -> bool:
+        nodes = [node for node in self.get("/cluster/ha/status/current") if node["type"] == "lrm"]
+        node_status = next(iter(i for i in nodes if i["node"] == node))
+        return "maintenance" in node_status["status"]
 
     def get_task_status(self, node: str, upid: str) -> ProxmoxTaskStatus:
         """Retrieve the status of a specific task on a Proxmox node.
@@ -315,6 +324,6 @@ class Proxmox:
         while status == TaskStatus.RUNNING:
             time.sleep(interval)
             if (time.time() - start_time) > timeout:
-                msg =f"Task {upid} timed out after {timeout}s"
+                msg = f"Task {upid} timed out after {timeout}s"
                 raise TimeoutError(msg)
             status = self.get_task_status(node, upid)

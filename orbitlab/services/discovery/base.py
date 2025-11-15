@@ -14,7 +14,7 @@ class DiscoveryService(ABC):
     This class provides a template for implementing discovery logic for various manifest kinds.
     """
 
-    def __init__(self, kind: ManifestKind, proxmox: Proxmox | None = None) -> None:
+    def __init__(self, *, kind: ManifestKind, proxmox: Proxmox | None = None) -> None:
         """Initialize the DiscoveryService with a specific ManifestKind.
 
         Args:

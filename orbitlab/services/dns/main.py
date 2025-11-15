@@ -1,12 +1,12 @@
 import asyncio
 import hashlib
 import logging
-from pathlib import Path
 import socket
+from pathlib import Path
 
-from aiodnsresolver import Resolver, TYPES
-from dnslib import DNSRecord, QTYPE, RR, A, AAAA, RCODE, DNSQuestion
 import yaml
+from aiodnsresolver import TYPES, Resolver
+from dnslib import AAAA, QTYPE, RCODE, RR, A, DNSQuestion, DNSRecord
 
 from orbitlab.constants import DNS_ZONE_ROOT
 
@@ -98,7 +98,7 @@ class OrbitDNS:
             local_addr=(host, port),
             family=socket.AF_INET,
             allow_broadcast=False,
-            reuse_port=True
+            reuse_port=True,
         )
         try:
             await asyncio.Future()
@@ -115,6 +115,7 @@ def file_hash(path: Path) -> str | None:
         return h.hexdigest()
     except FileNotFoundError:
         return None
+
 
 async def watch_zones(dns: OrbitDNS, interval=1):
     # TODO: Update to watch all zone files in zone root
