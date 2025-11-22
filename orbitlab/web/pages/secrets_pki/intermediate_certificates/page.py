@@ -3,8 +3,7 @@ from typing import Literal
 import reflex as rx
 
 from orbitlab.manifest.schemas.secrets import CertificateManifest
-from orbitlab.web.components import Badge, Buttons, GridList, PageHeader
-from orbitlab.web.states.managers import DialogStateManager
+from orbitlab.web.components import Badge, Buttons, Dialog, GridList, PageHeader
 
 from .dialogs import ConfirmRevokeIntermediateCADialog, CreateIntermediateCADialog, ManageIntermediateCertDialog
 from .states import IntermediateCAState, ManageIntermediateCerts
@@ -18,7 +17,7 @@ async def set_filter(state: IntermediateCAState, cert_filter: Literal["All", "Va
 @rx.event
 async def manage_root_ca(state: ManageIntermediateCerts, ca: dict):
     state.manifest = CertificateManifest.model_validate(ca)
-    return DialogStateManager.toggle(ManageIntermediateCertDialog.dialog_id)
+    return Dialog.open(ManageIntermediateCertDialog.dialog_id)
 
 
 class IntermediateCertificateAuthorities:
@@ -116,7 +115,7 @@ class IntermediateCertificateAuthorities:
                 Buttons.Primary(
                     "Create Signing CA",
                     icon="plus",
-                    on_click=DialogStateManager.toggle(CreateIntermediateCADialog.dialog_id),
+                    on_click=Dialog.open(CreateIntermediateCADialog.dialog_id),
                 ),
             ),
             CreateIntermediateCADialog(),

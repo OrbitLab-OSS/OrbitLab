@@ -6,12 +6,12 @@ import reflex as rx
 from orbitlab.constants import WORKFLOW_FILES_ROOT
 from orbitlab.data_types import CustomApplianceStepType, ManifestKind, StorageContentType
 from orbitlab.manifest.client import ManifestClient
-from orbitlab.manifest.schemas.appliances import Step
+from orbitlab.manifest.schemas.appliances import FilePush, Step
 from orbitlab.web.components import (
     Buttons,
     Dialog,
     FieldSet,
-    HoverCard,
+    Popover,
     Input,
     MultiSelect,
     ProgressBars,
@@ -19,10 +19,11 @@ from orbitlab.web.components import (
     UploadBox,
     WithStatus,
 )
+from orbitlab.web.components.editor import Editor
 from orbitlab.web.components.progress_panels import ProgressPanels
 from orbitlab.web.components.sortable import Sortable, SortableItem
 from orbitlab.web.states.certificates import CertificateManifestsState
-from orbitlab.web.states.managers import DialogStateManager, ProgressPanelStateManager
+from orbitlab.web.states.managers import ProgressPanelStateManager
 
 
 class CreateApplianceState(CertificateManifestsState):
@@ -31,12 +32,13 @@ class CreateApplianceState(CertificateManifestsState):
     steps_config: dict[int, Step] = rx.field(default_factory=dict)
     uploading: bool = False
     upload_progress: int = 0
+    script_value: str = ""
 
-    @rx.var
+    @rx.var(cache=False)
     def base_appliances(self) -> list[str]:
         return list(ManifestClient().get_existing_by_kind(kind=ManifestKind.BASE_APPLIANCE).keys())
 
-    @rx.var
+    @rx.var(cache=False)
     def nodes(self) -> list[str]:
         return list(ManifestClient().get_existing_by_kind(kind=ManifestKind.NODE))
 
@@ -58,7 +60,7 @@ class CreateApplianceState(CertificateManifestsState):
         for step in self.steps_config.values():
             if not step:
                 return True
-            if not step.valid():
+            if not step.valid:
                 return True
         return False
 
@@ -82,14 +84,14 @@ class CreateApplianceState(CertificateManifestsState):
 @rx.event
 async def create_appliance_from_base(state: CreateApplianceState, base_appliance: str) -> None:
     state.form_data["base_appliance"] = base_appliance
-    return DialogStateManager.toggle(CreateApplianceDialog.dialog_id)
+    return Dialog.open(CreateApplianceDialog.dialog_id)
 
 
 @rx.event
 async def cancel(state: CreateApplianceState):
     state.reset()
     return [
-        DialogStateManager.toggle(CreateApplianceDialog.dialog_id),
+        Dialog.close(CreateApplianceDialog.dialog_id),
         ProgressPanelStateManager.reset_progress(CreateApplianceDialog.progress_id),
     ]
 
@@ -144,9 +146,9 @@ async def add_step(state: CreateApplianceState):
 
 @rx.event
 async def delete_step(state: CreateApplianceState, step_id: int):
-    if state.steps_config[step_id].files:
+    if hasattr(state.steps_config[step_id], "files"):
         for file in state.steps_config[step_id].files:
-            file.unlink(missing_ok=True)
+            file.source.unlink(missing_ok=True)
     del state.steps_config[step_id]
     item = next((item for item in state.step_order if item["id"] == step_id), None)
     state.step_order.remove(item)
@@ -166,7 +168,7 @@ async def set_step_name(state: CreateApplianceState, step_id: int, name: str):
 async def handle_uploads(state: CreateApplianceState, files: list[rx.UploadFile]):
     for index, step in state.steps_config.items():
         if step.type == CustomApplianceStepType.FILES and not step.files:
-            uploaded_files: list[Path] = []
+            uploaded_files: list[FilePush] = []
             state.uploading = True
             for file in files:
                 path: Path = WORKFLOW_FILES_ROOT / "custom_appliances" / state.form_data["name"] / file.name
@@ -175,7 +177,7 @@ async def handle_uploads(state: CreateApplianceState, files: list[rx.UploadFile]
 
                 with path.open("wb") as f:
                     f.write(data)
-                uploaded_files.append(path)
+                uploaded_files.append(FilePush(source=path))
             state.steps_config[index].files = uploaded_files
             return
 
@@ -193,15 +195,47 @@ def cancel_upload(state: CreateApplianceState):
     return rx.cancel_upload(CreateApplianceDialog.upload_id)
 
 
+@rx.event
+async def set_destination(state: CreateApplianceState, step_id: int, source: str, destination: str):
+    for file in state.steps_config[step_id].files:
+        if file.source == Path(source):
+            file.destination = Path(destination)
+            break
+            
+
+@rx.event
+async def set_script(state: CreateApplianceState, value: str):
+    state.script_value = value
+
+
 class ManageWorkflowStepScriptDialog:
     dialog_id: Final = "manage-workflow-step-script-dialog"
 
     def __new__(cls):
         return Dialog(
             "Edit Workflow Script",
-            rx.code_block(),
+            rx.callout(
+                """
+                Scripts will be pushed to the '/tmp' directory on the LXC and executed from there.
+                After execution, they get deleted.
+                """,
+                icon="info",
+                class_name="my-2"
+            ),
+            Editor(
+                value=CreateApplianceState.script_value,
+                on_change=set_script,
+                language="shell",
+            ),
+            rx.el.div(
+                Buttons.Primary(
+                    "Save & Close",
+                    on_click=Dialog.close(cls.dialog_id)
+                ),
+                class_name="w-full flex justify-end mt-10"
+            ),
             dialog_id=cls.dialog_id,
-            class_name="max-w-[80vw] w-[80vw] max-h-[80vh] h-[80vh]",
+            class_name="max-w-[80vw] w-[80vw] max-h-[80vh] h-fit",
         )
 
 
@@ -233,32 +267,52 @@ class CreateApplianceDialog:
                             rx.upload_files(upload_id=cls.upload_id, on_upload_progress=on_upload_progress),
                         ),
                     ),
-                    HoverCard(
-                        WithStatus(
-                            rx.icon(
-                                "files",
-                                size=36,
-                                class_name=(
-                                    "text-[#1E63E9] dark:text-[#36E2F4] "
-                                    "transition-transform duration-300 ease-in-out "
-                                    "group-hover:scale-110"
-                                ),
-                            ),
-                            status_content=CreateApplianceState.steps_config.get(
-                                Sortable.SortID.to(int),
-                                {},
-                            )
-                            .get("files", [])
-                            .length(),
-                            color="blue",
-                        ),
+                    Popover(
                         rx.el.div(
-                            rx.foreach(
-                                CreateApplianceState.steps_config.get(Sortable.SortID.to(int), {}).get("files", []),
-                                rx.text,
+                            WithStatus(
+                                rx.icon(
+                                    "files",
+                                    size=36,
+                                    class_name=(
+                                        "text-[#1E63E9] dark:text-[#36E2F4] "
+                                        "transition-transform duration-300 ease-in-out "
+                                        "group-hover:scale-110"
+                                    ),
+                                ),
+                                status_content=CreateApplianceState.steps_config.get(
+                                    Sortable.SortID.to(int),
+                                    {},
+                                )
+                                .get("files", [])
+                                .length(),
+                                color="blue",
                             ),
-                            class_name="flex flex-col justify-start items-center",
                         ),
+                        rx.foreach(
+                            CreateApplianceState.steps_config.get(Sortable.SortID.to(int), {}).get("files", []),
+                            lambda file: rx.el.div(
+                                rx.el.div(
+                                    rx.el.p("Source: "),
+                                    Input(
+                                        value=file["source"].to(str),
+                                        disabled=True
+                                    ),
+                                    class_name="flex space-x-4"
+                                ),
+                                rx.el.div(
+                                    rx.el.p("Destination: "),
+                                    Input(
+                                        value=file["destination"].to(str),
+                                        pattern=r"^\/(?:[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)*)?$",
+                                        on_change=lambda value: set_destination(Sortable.SortID, file["source"], value)
+                                    ),
+                                    class_name="flex space-x-4"
+                                ),
+                                class_name="w-fit flex flex-col space-y-2"
+                            )
+                        ),
+                        side="bottom",
+                        size="4",
                     ),
                 ),
             ),
@@ -269,102 +323,107 @@ class CreateApplianceDialog:
     def __script__(cls) -> rx.Component:
         return rx.el.div(
             ManageWorkflowStepScriptDialog(),
+            Buttons.Primary(
+                "Edit Script",
+                on_click=Dialog.open(ManageWorkflowStepScriptDialog.dialog_id)
+            ),
+            class_name="flex grow items-center justify-center space-x-6",
         )
 
     def __new__(cls) -> rx.Component:
-        return rx.dialog.root(
-            rx.dialog.content(
-                rx.dialog.title("Create Custom Appliance"),
-                ProgressPanels(
-                    ProgressPanels.Step(
-                        "General Configuration",
-                        FieldSet(
-                            "Proxmox",
-                            FieldSet.Field(
-                                "Appliance Name: ",
-                                Input(
-                                    placeholder="my_custom_appliance",
-                                    default_value=CreateApplianceState.name,
-                                    pattern=r"(\w+)",
-                                    error="Names can be up to 64 alphanumeric characters and underscores.",
-                                    min="1",
-                                    max="64",
-                                    name="name",
-                                    required=True,
-                                ),
-                            ),
-                            FieldSet.Field(
-                                "Base Appliance: ",
-                                Select(
-                                    CreateApplianceState.base_appliances,
-                                    default_value=CreateApplianceState.base_appliance,
-                                    placeholder="Select Base Appliance",
-                                    name="base_appliance",
-                                    required=True,
-                                ),
-                            ),
-                            FieldSet.Field(
-                                "Node: ",
-                                Select(
-                                    CreateApplianceState.nodes,
-                                    placeholder="Select Node",
-                                    default_value=CreateApplianceState.node,
-                                    on_change=set_node,
-                                    name="node",
-                                    required=True,
-                                ),
-                            ),
-                            FieldSet.Field(
-                                "Storage: ",
-                                Select(
-                                    CreateApplianceState.available_storage,
-                                    value=CreateApplianceState.storage,
-                                    on_change=set_storage,
-                                    placeholder="Select Storage",
-                                    name="storage",
-                                    required=True,
-                                ),
+        return Dialog(
+            "Create Custom Appliance",
+            ProgressPanels(
+                ProgressPanels.Step(
+                    "General Configuration",
+                    FieldSet(
+                        "Proxmox",
+                        FieldSet.Field(
+                            "Appliance Name: ",
+                            Input(
+                                placeholder="my_custom_appliance",
+                                default_value=CreateApplianceState.name,
+                                pattern=r"(\w+)",
+                                error="Names can be up to 64 alphanumeric characters and underscores.",
+                                min="1",
+                                max="64",
+                                name="name",
+                                required=True,
                             ),
                         ),
-                        FieldSet(
-                            "Certificates & Secrets",
-                            FieldSet.Field(
-                                "Root CAs",
-                                MultiSelect(
-                                    CreateApplianceState.root_certificate_names,
-                                    placeholder="Select CAs",
-                                    name="certificate_authorities",
-                                    refresh_button=Buttons.Icon(
-                                        "refresh-ccw",
-                                        size=12,
-                                        on_click=CertificateManifestsState.refresh_root_certificates,
-                                    ),
-                                ),
-                            ),
-                            FieldSet.Field(
-                                "SSH Key",
-                                Input(
-                                    value="Auto-generated one-time key",
-                                    disabled=True,
-                                ),
+                        FieldSet.Field(
+                            "Base Appliance: ",
+                            Select(
+                                CreateApplianceState.base_appliances,
+                                default_value=CreateApplianceState.base_appliance,
+                                placeholder="Select Base Appliance",
+                                name="base_appliance",
+                                required=True,
                             ),
                         ),
-                        validate=add_data_and_go_next,
+                        FieldSet.Field(
+                            "Node: ",
+                            Select(
+                                CreateApplianceState.nodes,
+                                placeholder="Select Node",
+                                default_value=CreateApplianceState.node,
+                                on_change=set_node,
+                                name="node",
+                                required=True,
+                            ),
+                        ),
+                        FieldSet.Field(
+                            "Storage: ",
+                            Select(
+                                CreateApplianceState.available_storage,
+                                value=CreateApplianceState.storage,
+                                on_change=set_storage,
+                                placeholder="Select Storage",
+                                name="storage",
+                                required=True,
+                            ),
+                        ),
                     ),
-                    ProgressPanels.Step(
-                        "Workflow Steps",
-                        rx.el.div(
-                            Buttons.Primary(
-                                "Add Workflow Step",
-                                icon="plus",
-                                on_click=add_step,
-                                disabled=CreateApplianceState.add_step_disabled,
+                    FieldSet(
+                        "Certificates & Secrets",
+                        FieldSet.Field(
+                            "Root CAs",
+                            MultiSelect(
+                                CreateApplianceState.root_certificate_names,
+                                placeholder="Select CAs",
+                                name="certificate_authorities",
+                                refresh_button=Buttons.Icon(
+                                    "refresh-ccw",
+                                    size=12,
+                                    on_click=CertificateManifestsState.refresh_root_certificates,
+                                ),
                             ),
-                            rx.text("Drag steps to change execution order."),
-                            class_name="w-full flex justify-between mb-4",
                         ),
-                        Sortable(
-                            Sortable.Item(
+                        FieldSet.Field(
+                            "SSH Key",
+                            Input(
+                                value="Auto-generated one-time key",
+                                disabled=True,
+                            ),
+                        ),
+                    ),
+                    validate=add_data_and_go_next,
+                ),
+                ProgressPanels.Step(
+                    "Workflow Steps",
+                    rx.el.div(
+                        Buttons.Primary(
+                            "Add Workflow Step",
+                            icon="plus",
+                            on_click=add_step,
+                            disabled=CreateApplianceState.add_step_disabled,
+                        ),
+                        rx.text("Drag steps to change execution order."),
+                        class_name="w-full flex justify-between mb-4",
+                    ),
+                    Sortable(
+                        Sortable.Item(
+                            rx.el.div(
                                 rx.el.div(
                                     rx.el.div(
                                         Input(
@@ -373,7 +432,7 @@ class CreateApplianceDialog:
                                                 {},
                                             ).get("name", ""),
                                             on_change=lambda name: set_step_name(Sortable.SortID, name),
-                                            placeholder="Step Name",
+                                            placeholder="Step Name (Required)",
                                             wrapper_class_name="w-fit",
                                         ),
                                         Select(
@@ -387,59 +446,51 @@ class CreateApplianceDialog:
                                             name="workflow-steps",
                                             disabled=CreateApplianceState.uploading,
                                         ),
-                                        rx.match(
-                                            CreateApplianceState.steps_config.get(
-                                                Sortable.SortID.to(int),
-                                                {},
-                                            ).get("type", ""),
-                                            ("script", rx.el.p("script")),
-                                            ("secrets", rx.el.p("secrets")),
-                                            ("files", cls.__files__()),
-                                            rx.fragment(),
-                                        ),
-                                        class_name="w-full flex items-center justify-between mx-4 space-x-4",
+                                        class_name="flex space-x-4"
                                     ),
-                                    Buttons.Icon("trash", on_click=lambda: delete_step(Sortable.SortID)),
-                                    class_name="w-full flex items-center justify-start",
+                                    rx.match(
+                                        CreateApplianceState.steps_config.get(
+                                            Sortable.SortID.to(int),
+                                            {},
+                                        ).get("type", ""),
+                                        ("script", cls.__script__()),
+                                        ("secrets", rx.el.p("secrets")),
+                                        ("files", cls.__files__()),
+                                        rx.fragment(),
+                                    ),
+                                    class_name="w-full flex items-center justify-between mx-4 space-x-4",
                                 ),
+                                Buttons.Icon("trash", on_click=lambda: delete_step(Sortable.SortID)),
+                                class_name="w-full flex items-center justify-start",
                             ),
-                            data=CreateApplianceState.step_order,
-                            on_change=update_step_order,
-                            class_name="mb-4",
                         ),
-                        # Custom Steps:
-                        #   - Injected Secrets:
-                        #       - Select multiple secrets from vault
-                        #       - specify file path (name & location)
-                        #       - Format (.env, JSON, YAML)
-                        #   - ?
-                        # Upload Files:
-                        #   - User uploads N files (saved to file cache)
-                        #   - Specify directory to place files in
-                        # Run Script:
-                        #   - User writes/uploads a custom bash script to execute
-                        # > Can be done in any order and User may change order
-                        validate=validate_workflow_steps,
+                        data=CreateApplianceState.step_order,
+                        on_change=update_step_order,
+                        class_name="mb-4 min-w-[50vw]",
                     ),
-                    ProgressPanels.Step(
-                        "Review & Verify",
-                        # Show summarized data as a data list (compact)
-                        rx.el.p("bar"),
-                        validate=create_appliance,
-                    ),
-                    cancel_button=Buttons.Secondary("Cancel", on_click=cancel),
-                    id=cls.progress_id,
+                    # Custom Steps:
+                    #   - Injected Secrets:
+                    #       - Select multiple secrets from vault
+                    #       - specify file path (name & location)
+                    #       - Format (.env, JSON, YAML)
+                    #   - ?
+                    # Upload Files:
+                    #   - User uploads N files (saved to file cache)
+                    #   - Specify directory to place files in
+                    # Run Script:
+                    #   - User writes/uploads a custom bash script to execute
+                    # > Can be done in any order and User may change order
+                    validate=validate_workflow_steps,
                 ),
-                class_name="max-w-[85vw] w-fit max-h-[85vh] h-fit flex flex-col",
+                ProgressPanels.Step(
+                    "Review & Verify",
+                    # Show summarized data as a data list (compact)
+                    rx.el.p("bar"),
+                    validate=create_appliance,
+                ),
+                cancel_button=Buttons.Secondary("Cancel", on_click=cancel),
+                id=cls.progress_id,
             ),
-            on_mount=DialogStateManager.register(cls.dialog_id),
-            open=DialogStateManager.registered.get(cls.dialog_id, False),
-            class_name=(
-                "border-r border-gray-200 dark:border-white/[0.08] "
-                "transition-all duration-300 ease-in-out "
-                "bg-gradient-to-b from-gray-50/95 to-gray-200/80 "
-                "dark:from-[#0E1015]/95 dark:to-[#181B22]/90 "
-                "shadow-[inset_0_0_0.5px_rgba(255,255,255,0.1)] "
-                "hover:ring-1 hover:ring-[#36E2F4]/30"
-            ),
+            dialog_id=cls.dialog_id,
+            class_name="max-w-[75vw] w-fit"
         )

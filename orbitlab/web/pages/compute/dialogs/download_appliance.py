@@ -9,9 +9,8 @@ from orbitlab.data_types import ApplianceType, ManifestKind
 from orbitlab.manifest.client import ManifestClient
 from orbitlab.manifest.schemas.appliances import BaseApplianceManifest, BaseApplianceMetadata, BaseApplianceSpec
 from orbitlab.manifest.schemas.nodes import NodeManifest
-from orbitlab.web.components import Buttons, GridList, Input, OrbitLabLogo, RadioGroup, Select
+from orbitlab.web.components import Buttons, Dialog, GridList, Input, OrbitLabLogo, RadioGroup, Select
 from orbitlab.web.states.cluster import OrbitLabSettings
-from orbitlab.web.states.managers import DialogStateManager
 
 
 class ApplianceItemDownload(BaseModel):
@@ -104,27 +103,10 @@ async def download_appliance(state: DownloadApplianceState, form: dict):
     storage = form["storage"]
     state.download_configs[template].downloading = True
     appliance = next(iter(apl for apl in state.available_system_appliances if apl.template == template))
-    manifest = BaseApplianceManifest(
-        name=appliance.template,
-        metadata=BaseApplianceMetadata(
-            turnkey=appliance.is_turnkey,
-            section=appliance.section,
-            info=appliance.headline,
-            checksum=appliance.sha512sum,
-            url=appliance.location,
-        ),
-        spec=BaseApplianceSpec(
-            node=node,
-            template=appliance.template,
-            storage=storage,
-            architecture=appliance.architecture,
-            version=appliance.version,
-            os_type=appliance.os,
-        ),
-    )
+    manifest = appliance.create_manifest(node=node, storage=storage)
     upid = Proxmox().download_appliance(node=manifest.spec.node, storage=manifest.spec.storage, appliance=appliance)
     return [
-        DialogStateManager.toggle(DownloadApplianceDialog.dialog_id),
+        Dialog.close(DownloadApplianceDialog.dialog_id),
         wait_for_download(manifest, upid),
     ]
 
@@ -199,70 +181,54 @@ class DownloadApplianceDialog:
         )
 
     def __new__(cls) -> rx.Component:
-        """Create and return the download appliance dialog component.
-
-        Returns:
-            rx.Component: A dialog component for downloading Proxmox appliances.
-        """
-        return rx.dialog.root(
-            rx.dialog.content(
-                rx.el.form(id=cls.form_id, on_submit=download_appliance),
-                rx.dialog.title("Select Appliance to Download"),
-                rx.el.div(
-                    RadioGroup(
-                        RadioGroup.Item(
-                            "system",
-                            on_change=lambda: set_appliance_view("system"),
-                            value=DownloadApplianceState.appliance_view,
-                        ),
-                        RadioGroup.Item(
-                            "turnkey",
-                            on_change=lambda: set_appliance_view("turnkey"),
-                            value=DownloadApplianceState.appliance_view,
-                        ),
+        """Create and return the download appliance dialog component."""
+        return Dialog(
+            "Select Appliance to Download",
+            rx.el.form(id=cls.form_id, on_submit=download_appliance),
+            rx.el.div(
+                RadioGroup(
+                    RadioGroup.Item(
+                        "system",
+                        on_change=lambda: set_appliance_view("system"),
+                        value=DownloadApplianceState.appliance_view,
                     ),
-                    Input(placeholder="Search appliances...", icon="search", on_change=search_appliances),
-                    class_name="flex items-center justify-between mb-4 space-x-4",
+                    RadioGroup.Item(
+                        "turnkey",
+                        on_change=lambda: set_appliance_view("turnkey"),
+                        value=DownloadApplianceState.appliance_view,
+                    ),
                 ),
-                rx.scroll_area(
-                    rx.vstack(
-                        rx.match(
-                            DownloadApplianceState.appliance_view,
-                            (
-                                ApplianceType.TURNKEY,
-                                GridList(
-                                    rx.foreach(
-                                        DownloadApplianceState.available_turnkey_appliances,
-                                        lambda apl: cls.__appliance__(apl),
-                                    ),
-                                ),
-                            ),
+                Input(placeholder="Search appliances...", icon="search", on_change=search_appliances),
+                class_name="flex items-center justify-between mb-4 space-x-4",
+            ),
+            rx.scroll_area(
+                rx.vstack(
+                    rx.match(
+                        DownloadApplianceState.appliance_view,
+                        (
+                            ApplianceType.TURNKEY,
                             GridList(
                                 rx.foreach(
-                                    DownloadApplianceState.available_system_appliances,
+                                    DownloadApplianceState.available_turnkey_appliances,
                                     lambda apl: cls.__appliance__(apl),
                                 ),
                             ),
                         ),
+                        GridList(
+                            rx.foreach(
+                                DownloadApplianceState.available_system_appliances,
+                                lambda apl: cls.__appliance__(apl),
+                            ),
+                        ),
                     ),
-                    type="hover",
-                    scrollbars="vertical",
-                    class_name="flex-grow",
                 ),
-                rx.el.div(
-                    Buttons.Secondary("Close", on_click=DialogStateManager.toggle(DownloadApplianceDialog.dialog_id)),
-                    class_name="w-full flex justify-end mt-4",
-                ),
-                class_name="max-w-[85vw] w-[85vw] max-h-[85vh] h-[85vh] flex flex-col",
+                type="hover",
+                scrollbars="vertical",
+                class_name="flex-grow",
             ),
-            on_mount=DialogStateManager.register(cls.dialog_id),
-            open=DialogStateManager.registered.get(cls.dialog_id, False),
-            class_name=(
-                "border-r border-gray-200 dark:border-white/[0.08] "
-                "transition-all duration-300 ease-in-out "
-                "bg-gradient-to-b from-gray-50/95 to-gray-200/80 "
-                "dark:from-[#0E1015]/95 dark:to-[#181B22]/90 "
-                "shadow-[inset_0_0_0.5px_rgba(255,255,255,0.1)] "
-                "hover:ring-1 hover:ring-[#36E2F4]/30"
+            rx.el.div(
+                Buttons.Secondary("Close", on_click=Dialog.close(cls.dialog_id)),
+                class_name="w-full flex justify-end mt-4",
             ),
+            dialog_id=cls.dialog_id,
         )

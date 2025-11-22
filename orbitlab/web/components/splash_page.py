@@ -11,8 +11,8 @@ from orbitlab.manifest.schemas.cluster import ClusterManifest
 from orbitlab.manifest.schemas.nodes import NodeManifest
 from orbitlab.manifest.schemas.settings import OrbitLabSettingsManifest, SettingsMetadata, SettingsSpec
 from orbitlab.services.discovery import Cluster, Node
+from orbitlab.services.discovery.appliances import ApplianceDiscovery
 from orbitlab.web.components import Buttons, Dialog, FieldSet, Input, OrbitLabLogo, Select
-from orbitlab.web.states.managers import DialogStateManager
 
 
 class SplashPageState(rx.State):
@@ -67,9 +67,12 @@ async def run_cluster_discovery(state: SplashPageState):
         state.subtitle = "Running Node Discovery..."
     await Node().run()
     async with state:
-        state.subtitle = "Done."
+        state.subtitle = "Running Appliance Discovery..."
         state.nodes = list(manifest_client.get_existing_by_kind(kind=ManifestKind.NODE).keys())
-    return DialogStateManager.toggle(ConfigureSettingsDialog.dialog_id)
+    await ApplianceDiscovery().run()
+    async with state:
+        state.subtitle = "Done."
+    return Dialog.close(ConfigureSettingsDialog.dialog_id)
 
 
 @rx.event
@@ -87,7 +90,7 @@ async def initialize_settings(state: SplashPageState, form: dict):
     ManifestClient().save(manifest=manifest)
     state.reset()
     state.configured = True
-    return DialogStateManager.toggle(ConfigureSettingsDialog.dialog_id)
+    return Dialog.open(ConfigureSettingsDialog.dialog_id)
 
 
 @rx.event

@@ -10,6 +10,7 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, Field, RootModel, computed_field
 
 from orbitlab import data_types
+from orbitlab.manifest.schemas.appliances import BaseApplianceManifest, BaseApplianceMetadata, BaseApplianceSpec
 from orbitlab.manifest.schemas.serialization import PveBool, PveContentList, PveStorageType
 
 
@@ -213,6 +214,26 @@ class ApplianceInfo(BaseModel):
             bool: True if the appliance has a management URL, indicating it is a TurnKey appliance; False otherwise.
         """
         return bool(self.manage_url)
+    
+    def create_manifest(self, node: str, storage: str) -> BaseApplianceManifest:
+        return BaseApplianceManifest(
+            name=self.template,
+            metadata=BaseApplianceMetadata(
+                turnkey=self.is_turnkey,
+                section=self.section,
+                info=self.headline,
+                checksum=self.sha512sum,
+                url=self.location,
+            ),
+            spec=BaseApplianceSpec(
+                node=node,
+                template=self.template,
+                storage=storage,
+                architecture=self.architecture,
+                version=self.version,
+                os_type=self.os,
+            ),
+        )
 
 
 ProxmoxAppliances = RootModel[list[ApplianceInfo]]
@@ -267,3 +288,14 @@ class ClusterStatus(BaseModel):
 ClusterItem = Annotated[ClusterStatus | NodeStatus, Field(discriminator="type")]
 
 ProxmoxClusterStatus = RootModel[list[ClusterItem]]
+
+
+class ContentItem(BaseModel):
+    id: Annotated[str, Field(alias="volid")]
+    content_type: Annotated[data_types.StorageContentType, Field(alias="content")]
+    format: str
+    size_bytes: Annotated[int, Field(alias="size")]
+    creation_time: Annotated[int, Field(alias="ctime")]
+
+
+ProxmoxStorageContent = RootModel[list[ContentItem]]

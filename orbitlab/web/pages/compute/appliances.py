@@ -3,9 +3,10 @@ import reflex as rx
 from orbitlab.data_types import ManifestKind
 from orbitlab.manifest.client import ManifestClient
 from orbitlab.manifest.schemas.appliances import BaseApplianceManifest
-from orbitlab.web.components import Buttons, Card, Menu, PageHeader
+from orbitlab.services.discovery.appliances import ApplianceDiscovery
+from orbitlab.web.components import Buttons, Card, Dialog, Menu, PageHeader
 
-from .dialogs import DialogStateManager, DownloadApplianceDialog
+from .dialogs import DownloadApplianceDialog
 from .dialogs.create_appliance import CreateApplianceDialog, create_appliance_from_base
 
 
@@ -24,6 +25,12 @@ class AppliancesState(rx.State):
 @rx.event
 async def refresh_base_appliances(state: AppliancesState):
     state.base_appliances = get_base_appliances()
+
+
+@rx.event
+async def run_appliance_discovery(state: AppliancesState):
+    await ApplianceDiscovery().run()
+    return refresh_base_appliances
 
 
 class BaseApplianceTable:
@@ -135,7 +142,14 @@ class BaseApplianceTable:
             header=Card.Header(
                 rx.el.div(
                     rx.el.h3("Base Appliances"),
-                    Buttons.Icon("refresh-ccw", on_click=refresh_base_appliances),
+                    rx.el.div(
+                        Buttons.Icon("refresh-ccw", on_click=refresh_base_appliances),
+                        Menu(
+                            Buttons.Primary("Manage", icon="chevron-down"),
+                            Menu.Item("Rerun Discovery", on_click=run_appliance_discovery)
+                        ),
+                        class_name="flex space-x-4"
+                    ),
                     class_name="w-full flex justify-between",
                 ),
             ),
@@ -151,12 +165,12 @@ class Appliances:
                 Buttons.Secondary(
                     "Create Custom Appliance",
                     icon="pen",
-                    on_click=DialogStateManager.toggle(CreateApplianceDialog.dialog_id),
+                    on_click=Dialog.open(CreateApplianceDialog.dialog_id),
                 ),
                 Buttons.Primary(
                     "Download Base Appliance",
                     icon="cloud-download",
-                    on_click=DialogStateManager.toggle(DownloadApplianceDialog.dialog_id),
+                    on_click=Dialog.open(DownloadApplianceDialog.dialog_id),
                 ),
             ),
             BaseApplianceTable(),

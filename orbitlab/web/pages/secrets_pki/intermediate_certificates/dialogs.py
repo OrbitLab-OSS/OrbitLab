@@ -6,7 +6,6 @@ from orbitlab.services.pki.client import Certificates
 from orbitlab.services.pki.models import IntermediateCA
 from orbitlab.web.components import Badge, Buttons, Dialog, FieldSet, Input
 from orbitlab.web.components.select import Select
-from orbitlab.web.states.managers import DialogStateManager
 
 from .states import IntermediateCAState, ManageIntermediateCerts
 
@@ -16,15 +15,15 @@ async def revoke_ica(state: ManageIntermediateCerts):
     # TODO: Actually Revoke cert
     state.reset()
     return [
-        DialogStateManager.toggle(ConfirmRevokeIntermediateCADialog.dialog_id),
-        DialogStateManager.toggle(ManageIntermediateCertDialog.dialog_id),
+        Dialog.close(ConfirmRevokeIntermediateCADialog.dialog_id),
+        Dialog.close(ManageIntermediateCertDialog.dialog_id),
     ]
 
 
 @rx.event
 async def cancel_revoke(state: ManageIntermediateCerts):
     state.revoke_disabled = True
-    return DialogStateManager.toggle(ConfirmRevokeIntermediateCADialog.dialog_id)
+    return Dialog.close(ConfirmRevokeIntermediateCADialog.dialog_id)
 
 
 @rx.event
@@ -45,7 +44,7 @@ async def create_intermediate_ca(state: IntermediateCAState, form: dict):
         ),
     )
     state.intermediate_certificates.append(manifest)
-    return DialogStateManager.toggle(CreateIntermediateCADialog.dialog_id)
+    return Dialog.open(CreateIntermediateCADialog.dialog_id)
 
 
 class CreateIntermediateCADialog:
@@ -102,7 +101,7 @@ class CreateIntermediateCADialog:
                 class_name="px-3 overflow-y-auto",
             ),
             rx.el.div(
-                Buttons.Secondary("Cancel", on_click=lambda: DialogStateManager.toggle(cls.dialog_id)),
+                Buttons.Secondary("Cancel", on_click=lambda: Dialog.close(cls.dialog_id)),
                 Buttons.Primary("Submit", form=cls.form_id),
                 class_name="w-full flex justify-end mt-4 space-x-3",
             ),
@@ -156,12 +155,12 @@ class ManageIntermediateCertDialog:
                     ),
                     Buttons.Secondary(
                         "Close",
-                        on_click=DialogStateManager.toggle(cls.dialog_id),
+                        on_click=Dialog.close(cls.dialog_id),
                     ),
                     Buttons.Secondary(
                         "Revoke",
                         class_name="bg-red-500",
-                        on_click=DialogStateManager.toggle(ConfirmRevokeIntermediateCADialog.dialog_id),
+                        on_click=Dialog.open(ConfirmRevokeIntermediateCADialog.dialog_id),
                     ),
                     class_name="w-full flex justify-end space-x-4 my-4",
                 ),

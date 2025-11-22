@@ -2,7 +2,7 @@
 
 from datetime import datetime
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field
 
@@ -60,13 +60,19 @@ class CustomApplianceMetadata(Metadata):
     updated_on: datetime | None = None
 
 
+class FilePush(BaseModel):
+    source: Path
+    destination: Annotated[Path | Literal[""], Field(default="")]
+
+
 class Step(BaseModel):
     type: CustomApplianceStepType
     name: str = ""
     script: Annotated[str | None, Field(default=None)]
-    files: Annotated[list[Path] | None, Field(default=None)]
+    files: Annotated[list[FilePush] | None, Field(default=None)]
     secrets: Annotated[list[str] | None, Field(default=None)]
 
+    @property
     def valid(self) -> bool:
         """Check if the step is valid based on its type and required fields.
 
@@ -76,7 +82,9 @@ class Step(BaseModel):
         if not self.name:
             return False
         if self.type == CustomApplianceStepType.FILES:
-            return bool(self.files)
+            if not self.files:
+                return False
+            return all([bool(file.destination) for file in self.files])
         if self.type == CustomApplianceStepType.SCRIPT:
             return bool(self.script)
         return bool(self.secrets)

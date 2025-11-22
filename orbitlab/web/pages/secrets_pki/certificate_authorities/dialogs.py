@@ -9,7 +9,6 @@ from orbitlab.services.pki.client import Certificates
 from orbitlab.services.pki.models import Subject
 from orbitlab.web.components import Badge, Buttons, CheckboxGroup, Dialog, FieldSet, Input
 from orbitlab.web.components.menu import Menu
-from orbitlab.web.states.managers import DialogStateManager
 
 from .states import CAState, ManageCA
 
@@ -19,15 +18,15 @@ async def revoke_ca(state: ManageCA):
     # TODO: Actually Revoke cert
     state.reset()
     return [
-        DialogStateManager.toggle(ConfirmRevokeCADialog.dialog_id),
-        DialogStateManager.toggle(ManageCertificateAuthorityDialog.dialog_id),
+        Dialog.close(ConfirmRevokeCADialog.dialog_id),
+        Dialog.close(ManageCertificateAuthorityDialog.dialog_id),
     ]
 
 
 @rx.event
 async def cancel_revoke(state: ManageCA):
     state.revoke_disabled = True
-    return DialogStateManager.toggle(ConfirmRevokeCADialog.dialog_id)
+    return Dialog.close(ConfirmRevokeCADialog.dialog_id)
 
 
 @rx.event
@@ -52,7 +51,7 @@ async def create_certificate_authority(state: CAState, form: dict):
         key_usage=[KeyUsageTypes(usage) for usage in json.loads(form["key_usage"])],
     )
     state.certificate_authorities.append(manifest)
-    return DialogStateManager.toggle(CreateCertificateAuthorityDialog.dialog_id)
+    return Dialog.close(CreateCertificateAuthorityDialog.dialog_id)
 
 
 class CreateCertificateAuthorityDialog:
@@ -151,7 +150,7 @@ class CreateCertificateAuthorityDialog:
                 class_name="px-3 overflow-y-auto",
             ),
             rx.el.div(
-                Buttons.Secondary("Cancel", on_click=lambda: DialogStateManager.toggle(cls.dialog_id)),
+                Buttons.Secondary("Cancel", on_click=lambda: Dialog.close(cls.dialog_id)),
                 Buttons.Primary("Submit", form=cls.form_id),
                 class_name="w-full flex justify-end mt-4 space-x-3",
             ),
@@ -311,13 +310,13 @@ class ManageCertificateAuthorityDialog:
                     ),
                     Buttons.Secondary(
                         "Close",
-                        on_click=DialogStateManager.toggle(cls.dialog_id),
+                        on_click=Dialog.close(cls.dialog_id),
                     ),
                     Menu(
                         Buttons.Secondary("Danger", icon="chevron-down", class_name="bg-red-600/80"),
                         Menu.Item(
                             "Revoke",
-                            on_click=DialogStateManager.toggle(ConfirmRevokeCADialog.dialog_id),
+                            on_click=Dialog.close(ConfirmRevokeCADialog.dialog_id),
                             class_name="text-red-400 hover:text-red-500 hover:bg-red-500/10 hover:border-red-500/50",
                         ),
                     ),

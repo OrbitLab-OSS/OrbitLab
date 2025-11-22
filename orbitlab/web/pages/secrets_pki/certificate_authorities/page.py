@@ -3,8 +3,7 @@ from typing import Literal
 import reflex as rx
 
 from orbitlab.manifest.schemas.secrets import CertificateManifest
-from orbitlab.web.components import Badge, Buttons, GridList, PageHeader
-from orbitlab.web.states.managers import DialogStateManager
+from orbitlab.web.components import Badge, Buttons, Dialog, GridList, PageHeader
 
 from .dialogs import ConfirmRevokeCADialog, CreateCertificateAuthorityDialog, ManageCertificateAuthorityDialog
 from .states import CAState, ManageCA
@@ -18,7 +17,7 @@ async def set_ca_filter(state: CAState, ca_filter: Literal["All", "Valid", "Warn
 @rx.event
 async def manage_root_ca(state: ManageCA, ca: dict):
     state.manifest = CertificateManifest.model_validate(ca)
-    return DialogStateManager.toggle(ManageCertificateAuthorityDialog.dialog_id)
+    return Dialog.open(ManageCertificateAuthorityDialog.dialog_id)
 
 
 class CertificateAuthorities:
@@ -107,7 +106,7 @@ class CertificateAuthorities:
                 Buttons.Primary(
                     "Create CA",
                     icon="plus",
-                    on_click=DialogStateManager.toggle(CreateCertificateAuthorityDialog.dialog_id),
+                    on_click=Dialog.open(CreateCertificateAuthorityDialog.dialog_id),
                 ),
             ),
             CreateCertificateAuthorityDialog(),

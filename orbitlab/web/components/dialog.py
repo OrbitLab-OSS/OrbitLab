@@ -2,7 +2,27 @@
 
 import reflex as rx
 
-from orbitlab.web.states.managers import DialogStateManager
+
+class DialogStateManager(rx.State):
+    registered: dict[str, bool] = rx.field(default_factory=dict)
+
+    @rx.event
+    async def register(self, dialog_id: str) -> None:
+        self.registered[dialog_id] = False
+
+    @rx.event
+    async def toggle(self, dialog_id: str) -> None:
+        self.registered[dialog_id] = not self.registered[dialog_id]
+
+
+@rx.event
+async def open(state: DialogStateManager, dialog_id: str) -> None:
+    state.registered[dialog_id] = True
+
+
+@rx.event
+async def close(state: DialogStateManager, dialog_id: str) -> None:
+    state.registered[dialog_id] = False
 
 
 class Dialog:
@@ -11,6 +31,9 @@ class Dialog:
     This class creates a reflex dialog component with a title, content,
     and automatic state management for open/close behavior.
     """
+
+    open = staticmethod(open)
+    close = staticmethod(close)
 
     def __new__(cls, title: str, *children: rx.Component, dialog_id: str, **props: dict) -> rx.Component:
         """Create a new dialog component instance.

@@ -16,9 +16,9 @@ import httpx
 from pydantic import BaseModel, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from orbitlab.clients.proxmox.exceptions import HTTPConfigError, PVECommandError
-from orbitlab.clients.proxmox.models import ApplianceInfo, ProxmoxAppliances, ProxmoxClusterStatus, ProxmoxTaskStatus
-from orbitlab.data_types import ApplianceType, TaskStatus
+from orbitlab.clients.proxmox.exceptions import HTTPConfigError, PVECommandError, ApplianceNotFoundError
+from orbitlab.clients.proxmox.models import ApplianceInfo, ProxmoxAppliances, ProxmoxClusterStatus, ProxmoxTaskStatus, ProxmoxStorageContent
+from orbitlab.data_types import ApplianceType, StorageContentType, TaskStatus
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -276,6 +276,13 @@ class Proxmox:
                 return [apl for apl in appliances if apl.is_turnkey]
             case _:
                 return appliances
+    
+    def describe_appliance(self, node: str, appliance_id: str) -> ApplianceInfo:
+        for appliance in self.list_appliances(node=node).root:
+            if appliance.template in appliance_id:
+                return appliance
+        raise ApplianceNotFoundError(appliance_id=appliance_id)
+
 
     def download_appliance(self, node: str, storage: str, appliance: ApplianceInfo) -> str:
         """Download an LXC appliance to the specified storage on a Proxmox node.
@@ -327,3 +334,7 @@ class Proxmox:
                 msg = f"Task {upid} timed out after {timeout}s"
                 raise TimeoutError(msg)
             status = self.get_task_status(node, upid)
+
+    def list_content_for_storage(self, node: str, storage: str, content_type: StorageContentType | None = None) -> ProxmoxStorageContent:
+        params = {"content": content_type.value} if content_type else {}
+        return self.get(f"/nodes/{node}/storage/{storage}/content", model=ProxmoxStorageContent, **params)

@@ -5,6 +5,7 @@ from .buttons import Buttons
 from .card import Card
 from .checkbox import CheckboxGroup
 from .dialog import Dialog
+from .editor import Editor
 from .fieldset import FieldSet
 from .grid_list import GridList
 from .hover_card import HoverCard
@@ -12,6 +13,7 @@ from .input import Input
 from .logo import OrbitLabLogo
 from .menu import Menu
 from .page_header import PageHeader
+from .popover import Popover
 from .progress_bars import ProgressBars
 from .progress_panels import ProgressPanels
 from .radio_group import RadioGroup
@@ -25,6 +27,7 @@ __all__ = (
     "Card",
     "CheckboxGroup",
     "Dialog",
+    "Editor",
     "FieldSet",
     "GridList",
     "HoverCard",
@@ -33,6 +36,7 @@ __all__ = (
     "MultiSelect",
     "OrbitLabLogo",
     "PageHeader",
+    "Popover",
     "ProgressBars",
     "ProgressPanels",
     "RadioGroup",

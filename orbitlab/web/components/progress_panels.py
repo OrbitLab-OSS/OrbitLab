@@ -47,7 +47,7 @@ class ProgressStep:
                         Buttons.Primary("Next", form=form),
                     ),
                 ),
-                class_name="w-full flex justify-end space-x-2",
+                class_name="w-full flex justify-end space-x-2 mt-10",
             ),
             data_active=ProgressPanelStateManager.registered.get(progress_id, 0) == index,
             class_name="w-full flex flex-col data-[active=false]:hidden",

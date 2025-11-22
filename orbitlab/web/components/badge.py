@@ -6,47 +6,15 @@ import reflex as rx
 
 Colors: TypeAlias = Literal["default", "blue", "green", "red", "orange"]
 StatusContent: TypeAlias = str | rx.Component | rx.Var
-COLOR_CLASSES = {
-    "default": (
-        "bg-gradient-to-b from-gray-100/90 to-gray-200/60 "
-        "text-gray-700 border border-gray-300/60 "
-        "dark:from-[#0E1015]/90 dark:to-[#181B22]/80 "
-        "dark:text-gray-300 dark:border-white/[0.06]"
-    ),
-    "blue": (
-        "bg-gradient-to-b from-[#E0F2FE]/80 to-[#BFDBFE]/70 "
-        "text-[#1E63E9] border border-[#93C5FD]/60 "
-        "dark:from-[#1E63E9]/20 dark:to-[#36E2F4]/10 "
-        "dark:text-[#36E2F4] dark:border-[#36E2F4]/30"
-    ),
-    "green": (
-        "bg-gradient-to-b from-[#DCFCE7]/80 to-[#BBF7D0]/70 "
-        "text-[#16A34A] border border-[#86EFAC]/60 "
-        "dark:from-[#16A34A]/20 dark:to-[#4ADE80]/10 "
-        "dark:text-[#4ADE80] dark:border-[#4ADE80]/30"
-    ),
-    "red": (
-        "bg-gradient-to-b from-[#FEE2E2]/80 to-[#FCA5A5]/70 "
-        "text-[#DC2626] border border-[#FCA5A5]/50 "
-        "dark:from-[#DC2626]/20 dark:to-[#F87171]/10 "
-        "dark:text-[#F87171] dark:border-[#F87171]/30"
-    ),
-    "orange": (
-        "bg-gradient-to-b from-[#FFEDD5]/80 to-[#FED7AA]/70 "
-        "text-[#EA580C] border border-[#FDBA74]/60 "
-        "dark:from-[#EA580C]/20 dark:to-[#FB923C]/10 "
-        "dark:text-[#FB923C] dark:border-[#FB923C]/30"
-    ),
-}
 
 
 class WithStatus:
     color_classes: ClassVar[dict[Colors, str]] = {
         "default": (
-            "bg-gradient-to-b from-gray-100/90 to-gray-200/60 "
-            "text-gray-700 border border-gray-300/60 "
-            "dark:from-[#0E1015]/90 dark:to-[#181B22]/80 "
-            "dark:text-gray-300 dark:border-white/[0.06]"
+            "bg-gradient-to-b from-gray-100 to-gray-200 "
+            "text-gray-700 border border-gray-300 "
+            "dark:from-[#0E1015] dark:to-[#181B22] "
+            "dark:text-gray-300 dark:border-white"
         ),
         "blue": (
             "bg-gradient-to-b from-[#E0F2FE] to-[#BFDBFE] "
@@ -61,10 +29,10 @@ class WithStatus:
             "dark:text-[#4ADE80] dark:border-[#4ADE80]/30"
         ),
         "red": (
-            "bg-gradient-to-b from-[#FEE2E2]/80 to-[#FCA5A5]/70 "
-            "text-[#DC2626] border border-[#FCA5A5]/50 "
-            "dark:from-[#DC2626]/20 dark:to-[#F87171]/10 "
-            "dark:text-[#F87171] dark:border-[#F87171]/30"
+            "bg-gradient-to-b from-[#FEE2E2] to-[#FCA5A5] "
+            "text-black border border-[#FCA5A5] "
+            "dark:from-[#DC2626] dark:to-[#F87171] "
+            "dark:text-white dark:border-[#F87171]"
         ),
         "orange": (
             "bg-gradient-to-b from-[#FFEDD5]/80 to-[#FED7AA]/70 "

@@ -27,3 +27,9 @@ class HTTPConfigError(Exception):
         """
         super().__init__(msg)
         self.msg = msg
+
+
+class ApplianceNotFoundError(Exception):
+    def __init__(self, appliance_id: str):
+        super().__init__(f"Appliance '{appliance_id}' not found.")
+        self.appliance_id = appliance_id
