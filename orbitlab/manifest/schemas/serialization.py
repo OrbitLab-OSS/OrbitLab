@@ -26,6 +26,7 @@ def __serialize_enum_list__(enums: list[StrEnum]):
 
 SerializeEnum = PlainSerializer(lambda v: v.value)
 SerializeEnumList = PlainSerializer(__serialize_enum_list__)
+SerializePath = PlainSerializer(lambda v: str(v))
 SerializeIP = PlainSerializer(lambda addr: str(addr))
 PveBool = Annotated[bool, PlainValidator(lambda v: v if isinstance(v, bool) else bool(v))]
 PveContentList = Annotated[

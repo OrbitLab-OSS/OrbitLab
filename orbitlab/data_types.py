@@ -1,6 +1,11 @@
 """Data types and enumerations for OrbitLab."""
 
 from enum import StrEnum, auto
+from typing import TypeAlias
+
+from reflex.event import EventCallback, EventHandler, EventSpec
+
+FrontendEvents: TypeAlias = EventCallback | EventHandler | EventSpec | list[EventCallback | EventHandler | EventSpec]
 
 
 class ManifestKind(StrEnum):
@@ -163,4 +168,3 @@ class TaskStatus(StrEnum):
 class CustomApplianceStepType(StrEnum):
     SCRIPT = auto()
     FILES = auto()
-    SECRETS = auto()

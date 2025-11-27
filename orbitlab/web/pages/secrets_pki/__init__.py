@@ -1,3 +1,11 @@
-from .dashboard import secrets_and_pki_pages
+"""OrbitLab Secrets & PKI."""
 
-pages = (secrets_and_pki_pages,)
+from .dashboard import secrets_pki_dashboard
+from .manage_secrets import __pages__ as secrets_pages
+from .pki import __pages__ as pki_pages
+
+__pages__ = (
+    secrets_pki_dashboard,
+    *secrets_pages,
+    *pki_pages,
+)

@@ -4,11 +4,11 @@ from datetime import datetime
 from pathlib import Path
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, computed_field
 
 from orbitlab.data_types import CustomApplianceStepType, ManifestKind
 from orbitlab.manifest.schemas.base import BaseManifest, Metadata, Spec
-from orbitlab.manifest.schemas.serialization import SerializeEnum
+from orbitlab.manifest.schemas.serialization import SerializeEnum, SerializePath
 
 
 class BaseApplianceMetadata(Metadata):
@@ -55,18 +55,20 @@ class BaseApplianceManifest(BaseManifest[BaseApplianceMetadata, BaseApplianceSpe
 
 class CustomApplianceMetadata(Metadata):
     name: str
-    base_appliance: str
     created_on: datetime
     updated_on: datetime | None = None
 
 
 class FilePush(BaseModel):
-    source: Path
-    destination: Annotated[Path | Literal[""], Field(default="")]
+    source: Annotated[Path, SerializePath]
+    destination: Annotated[Path | Literal[""], SerializePath, Field(default="")]
+
+    def configured(self) -> bool:
+        return bool(self.destination)
 
 
 class Step(BaseModel):
-    type: CustomApplianceStepType
+    type: Annotated[CustomApplianceStepType, SerializeEnum]
     name: str = ""
     script: Annotated[str | None, Field(default=None)]
     files: Annotated[list[FilePush] | None, Field(default=None)]
@@ -74,25 +76,28 @@ class Step(BaseModel):
 
     @property
     def valid(self) -> bool:
-        """Check if the step is valid based on its type and required fields.
+        files = [file.configured() for file in self.files] if self.files else [False]
+        return any([self.script, *files, self.secrets])
 
-        Returns:
-            bool: True if the step has the necessary data for its type, False otherwise.
-        """
+    def validate(self) -> str:
         if not self.name:
-            return False
+            return "Step name is not provided."
         if self.type == CustomApplianceStepType.FILES:
             if not self.files:
-                return False
-            return all([bool(file.destination) for file in self.files])
-        if self.type == CustomApplianceStepType.SCRIPT:
-            return bool(self.script)
-        return bool(self.secrets)
+                return "No files uploaded for files step."
+            for file in self.files:
+                if not file.destination:
+                    return f"File {file.source} as no specified destination."
+        if self.type == CustomApplianceStepType.SCRIPT and not self.script:
+            return "Script step has no configured shell script."
+        return ""
 
 
 class CustomApplianceSpec(Spec):
+    base_appliance: str
     node: str
     storage: str
+    certificate_authorities: list[str] | None
     steps: list[Step]
 
 

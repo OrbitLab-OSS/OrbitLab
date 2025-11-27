@@ -4,24 +4,24 @@ import reflex as rx
 
 
 class DialogStateManager(rx.State):
+    """State manager for tracking dialog open/close states."""
     registered: dict[str, bool] = rx.field(default_factory=dict)
 
     @rx.event
     async def register(self, dialog_id: str) -> None:
+        """Register a dialog."""
         self.registered[dialog_id] = False
-
-    @rx.event
-    async def toggle(self, dialog_id: str) -> None:
-        self.registered[dialog_id] = not self.registered[dialog_id]
 
 
 @rx.event
-async def open(state: DialogStateManager, dialog_id: str) -> None:
+async def open_dialog(state: DialogStateManager, dialog_id: str) -> None:
+    """Open a dialog by setting its state to True."""
     state.registered[dialog_id] = True
 
 
 @rx.event
-async def close(state: DialogStateManager, dialog_id: str) -> None:
+async def close_dialog(state: DialogStateManager, dialog_id: str) -> None:
+    """Close a dialog by setting its state to False."""
     state.registered[dialog_id] = False
 
 
@@ -32,8 +32,8 @@ class Dialog:
     and automatic state management for open/close behavior.
     """
 
-    open = staticmethod(open)
-    close = staticmethod(close)
+    open = staticmethod(open_dialog)
+    close = staticmethod(close_dialog)
 
     def __new__(cls, title: str, *children: rx.Component, dialog_id: str, **props: dict) -> rx.Component:
         """Create a new dialog component instance.

@@ -1,41 +1,40 @@
+"""OrbitLab LXC Tables."""
+
 import reflex as rx
 
-from orbitlab.data_types import ManifestKind
-from orbitlab.manifest.client import ManifestClient
+from orbitlab.data_types import FrontendEvents
 from orbitlab.manifest.schemas.appliances import BaseApplianceManifest
 from orbitlab.services.discovery.appliances import ApplianceDiscovery
-from orbitlab.web.components import Buttons, Card, Dialog, Menu, PageHeader
+from orbitlab.web.components import Buttons, Card, Menu
+from orbitlab.web.states.utilities import EventGroup
 
-from .dialogs import DownloadApplianceDialog
-from .dialogs.create_appliance import CreateApplianceDialog, create_appliance_from_base
-
-
-def get_base_appliances() -> list[BaseApplianceManifest]:
-    client = ManifestClient()
-    return [
-        client.load(name, kind=ManifestKind.BASE_APPLIANCE)
-        for name in client.get_existing_by_kind(kind=ManifestKind.BASE_APPLIANCE)
-    ]
+from .dialogs import CreateApplianceDialog
+from .states import AppliancesState, get_base_appliances
 
 
-class AppliancesState(rx.State):
-    base_appliances: list[BaseApplianceManifest] = rx.field(default_factory=get_base_appliances)
+class BaseApplianceTable(EventGroup):
+    """A table component for displaying base appliance manifests.
 
+    This class provides functionality to display base appliances in a table format
+    with refresh capabilities and discovery management features.
+    """
 
-@rx.event
-async def refresh_base_appliances(state: AppliancesState):
-    state.base_appliances = get_base_appliances()
+    @staticmethod
+    @rx.event
+    async def refresh_base_appliances(state: AppliancesState) -> None:
+        """Refresh the base appliances list by fetching the latest data."""
+        state.base_appliances = get_base_appliances()
 
+    @staticmethod
+    @rx.event
+    async def run_appliance_discovery(_: AppliancesState) -> FrontendEvents:
+        """Run appliance discovery and refresh the base appliances list."""
+        await ApplianceDiscovery().run()
+        return BaseApplianceTable.refresh_base_appliances
 
-@rx.event
-async def run_appliance_discovery(state: AppliancesState):
-    await ApplianceDiscovery().run()
-    return refresh_base_appliances
-
-
-class BaseApplianceTable:
     @classmethod
     def __table_row__(cls, appliance: BaseApplianceManifest) -> rx.Component:
+        """Create and return the table row component."""
         return rx.el.tr(
             rx.el.td(
                 appliance.name,
@@ -84,7 +83,10 @@ class BaseApplianceTable:
             rx.el.td(
                 Menu(
                     Buttons.Icon("ellipsis-vertical"),
-                    Menu.Item("Create Custom Appliance", on_click=lambda: create_appliance_from_base(appliance.name)),
+                    Menu.Item(
+                        "Create Custom Appliance",
+                        on_click=CreateApplianceDialog.create_appliance_from_base(appliance.name),
+                    ),
                 ),
                 class_name="px-6 py-4 whitespace-nowrap text-sm text-gray-700 dark:text-gray-300",
             ),
@@ -143,38 +145,15 @@ class BaseApplianceTable:
                 rx.el.div(
                     rx.el.h3("Base Appliances"),
                     rx.el.div(
-                        Buttons.Icon("refresh-ccw", on_click=refresh_base_appliances),
+                        Buttons.Icon("refresh-ccw", on_click=cls.refresh_base_appliances),
                         Menu(
                             Buttons.Primary("Manage", icon="chevron-down"),
-                            Menu.Item("Rerun Discovery", on_click=run_appliance_discovery)
+                            Menu.Item("Rerun Discovery", on_click=cls.run_appliance_discovery),
                         ),
-                        class_name="flex space-x-4"
+                        class_name="flex space-x-4",
                     ),
                     class_name="w-full flex justify-between",
                 ),
             ),
             class_name="w-full mt-6",
-        )
-
-
-class Appliances:
-    def __new__(cls) -> rx.Component:
-        return rx.el.div(
-            PageHeader(
-                "LXC Appliance Management",
-                Buttons.Secondary(
-                    "Create Custom Appliance",
-                    icon="pen",
-                    on_click=Dialog.open(CreateApplianceDialog.dialog_id),
-                ),
-                Buttons.Primary(
-                    "Download Base Appliance",
-                    icon="cloud-download",
-                    on_click=Dialog.open(DownloadApplianceDialog.dialog_id),
-                ),
-            ),
-            BaseApplianceTable(),
-            DownloadApplianceDialog(),
-            CreateApplianceDialog(),
-            class_name="w-full h-full flex flex-col",
         )

@@ -8,19 +8,22 @@ from orbitlab.web.pages import pages
 
 
 class HomePageState(rx.State):
+    """State management for the home page."""
+
     loading: bool = True
 
 
 class MainDashboard:
+    """Main dashboard component that creates the application layout with sidebar and content area."""
+
     def __new__(cls) -> rx.Component:
-        side_bar, sidebar_id = SideBar(
-            SideBar.NavItem(icon="server", text="Proxmox Nodes", href="/nodes"),
-            SideBar.NavItem(icon="server-cog", text="Compute", href="/compute"),
-            SideBar.NavItem(icon="server-cog", text="Secrets & PKI", href="/secrets-pki"),
-            default_page="",
-        )
+        """Create and return the page."""
         return rx.el.div(
-            side_bar,
+            SideBar(
+                SideBar.NavItem(icon="server", text="Proxmox Nodes", href="/nodes"),
+                SideBar.NavItem(icon="server-cog", text="Compute", href="/compute"),
+                SideBar.NavItem(icon="server-cog", text="Secrets & PKI", href="/secrets-pki"),
+            ),
             rx.el.div(
                 class_name=(
                     "min-h-screen w-full flex flex-col p-4 "
@@ -37,6 +40,7 @@ class MainDashboard:
 
 @rx.page("/")
 def home() -> rx.Component:
+    """Home page that displays either the main dashboard or splash page based on configuration status."""
     return rx.cond(
         SplashPageState.configured,
         MainDashboard(),

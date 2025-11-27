@@ -2,4 +2,4 @@
 
 from .dashboard import nodes_page
 
-pages = (nodes_page,)
+__pages__ = (nodes_page,)

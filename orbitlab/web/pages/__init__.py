@@ -3,9 +3,9 @@
 This package aggregates all page definitions from various modules.
 """
 
-from .compute import pages as compute_pages
-from .nodes import pages as node_pages
-from .secrets_pki import pages as secret_pki_pages
+from .compute import __pages__ as compute_pages
+from .nodes import __pages__ as node_pages
+from .secrets_pki import __pages__ as secret_pki_pages
 
 pages = (
     *compute_pages,

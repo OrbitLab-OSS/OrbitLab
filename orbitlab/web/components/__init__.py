@@ -4,6 +4,7 @@ from .badge import Badge, WithStatus
 from .buttons import Buttons
 from .card import Card
 from .checkbox import CheckboxGroup
+from .data_list import DataList
 from .dialog import Dialog
 from .editor import Editor
 from .fieldset import FieldSet
@@ -19,6 +20,7 @@ from .progress_panels import ProgressPanels
 from .radio_group import RadioGroup
 from .select import MultiSelect, Select
 from .sidebar import SideBar
+from .sortable import Sortable, SortableItem
 from .upload import UploadBox
 
 __all__ = (
@@ -26,6 +28,7 @@ __all__ = (
     "Buttons",
     "Card",
     "CheckboxGroup",
+    "DataList",
     "Dialog",
     "Editor",
     "FieldSet",
@@ -42,6 +45,8 @@ __all__ = (
     "RadioGroup",
     "Select",
     "SideBar",
+    "Sortable",
+    "SortableItem",
     "UploadBox",
     "WithStatus",
 )

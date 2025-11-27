@@ -19,7 +19,7 @@ class SideBarStatus(BaseModel):
         show_settings_menu (bool): Whether the settings menu is shown. Defaults to False.
     """
 
-    active_page: str
+    active_page: str = ""
     collapsed: bool = False
     show_settings_menu: bool = False
 
@@ -33,33 +33,24 @@ class SideBarStateManager(rx.State):
 
     registered: dict[str, SideBarStatus] = rx.field(default_factory=dict)
 
+    @rx.var
+    def current_path(self) -> str:
+        """Get the current URL path from the router."""
+        return self.router.url.path
+
     @rx.event
-    async def register(self, sidebar_id: str, default_page: str) -> None:
+    async def register(self, sidebar_id: str) -> None:
         """Register a sidebar by its identifier and set its state to False.
 
         Parameters:
             sidebar_id (str): The identifier of the sidebar to register.
         """
-        self.registered[sidebar_id] = SideBarStatus(active_page=default_page)
+        self.registered[sidebar_id] = SideBarStatus()
 
     @rx.event
     async def toggle(self, sidebar_id: str) -> None:
-        """Toggle the state of the sidebar with the given sidebar_id.
-
-        Parameters:
-            sidebar_id (str): The identifier of the sidebar to toggle.
-        """
+        """Toggle the expand/collapse state of the sidebar with the given sidebar_id."""
         self.registered[sidebar_id].collapsed = not self.registered[sidebar_id].collapsed
-
-    @rx.event
-    async def set_active_page(self, sidebar_id: str, active_page: str) -> None:
-        """Set the active page for the specified sidebar.
-
-        Parameters:
-            sidebar_id (str): The identifier of the sidebar.
-            active_page (str): The page to set as active.
-        """
-        self.registered[sidebar_id].active_page = active_page
 
     @rx.event
     async def toggle_settings_menu(self, sidebar_id: str) -> None:
@@ -71,23 +62,20 @@ class SideBarStateManager(rx.State):
         self.registered[sidebar_id].show_settings_menu = not self.registered[sidebar_id].show_settings_menu
 
 
-class NavItemHref(TypedDict, total=False):
-    href: str
-
-
-class NavItem(NavItemHref):
-    """A navigation item for the sidebar.
-
-    Attributes:
-        icon (str): The icon identifier for the navigation item.
-        text (str): The display text for the navigation item.
-    """
+class NavItem(TypedDict):
+    """A navigation item for the sidebar."""
 
     icon: str
     text: str
+    href: str
 
 
 class SectionHeader(TypedDict):
+    """A section header for organizing navigation items in the sidebar.
+
+    Attributes:
+        title (str): The title text to display for the section header.
+    """
     title: str
 
 
@@ -200,10 +188,6 @@ class SideBarRoot:
         Returns:
             A button component representing the navigation item.
         """
-        on_click = lambda: SideBarStateManager.set_active_page(cls.sidebar_id, nav_item["text"])  # noqa: E731
-        if "href" in nav_item:
-            on_click = rx.redirect(nav_item["href"])
-
         return rx.el.button(
             rx.el.div(
                 rx.icon(nav_item["icon"], size=20, class_name="transition-colors duration-200"),
@@ -214,8 +198,8 @@ class SideBarRoot:
                 ),
                 class_name="flex items-center gap-3",
             ),
-            on_click=on_click,
-            data_active=SideBarStateManager.registered.get(cls.sidebar_id).active_page == nav_item["text"],
+            on_click=rx.redirect(nav_item["href"]),
+            data_active=SideBarStateManager.current_path == nav_item["href"],
             data_collapsed=SideBarStateManager.registered.get(cls.sidebar_id).collapsed,
             class_name=(
                 "flex items-start w-full px-3 py-2.5 rounded-lg data-[active=true]:bg-sky-100 "
@@ -231,14 +215,13 @@ class SideBarRoot:
     def __new__(
         cls,
         *nav_items: NavItem | SectionHeader,
-        default_page: str,
         title: str = "OrbitLab",
     ) -> tuple[rx.Component, str]:
         """Create a new sidebar component instance.
 
         Parameters:
             nav_items: A sequence of navigation items to display in the sidebar.
-            default_page: The page identifier to set as active by default.
+            title: The sidebar Title.
 
         Returns:
             A Reflex component representing the complete sidebar and its ID.
@@ -246,11 +229,6 @@ class SideBarRoot:
         Raises:
             RuntimeError: If the default_page is not found in the nav_items.
         """
-        pages = [item["text"] for item in nav_items if "text" in item and "href" not in item]
-        if pages and default_page not in pages:
-            msg = f"Default page {default_page} not one of: {pages}"
-            raise RuntimeError(msg)
-
         cls.sidebar_id = str(uuid.uuid4())
         return rx.el.aside(
             rx.el.div(
@@ -262,7 +240,8 @@ class SideBarRoot:
                                 title,
                                 data_collapsed=SideBarStateManager.registered.get(cls.sidebar_id).collapsed,
                                 class_name=(
-                                    "text-lg font-bold text-nowrap text-gray-800 dark:text-gray-100 data-[collapsed=true]:hidden"
+                                    "text-lg font-bold text-nowrap text-gray-800 dark:text-gray-100 "
+                                    "data-[collapsed=true]:hidden"
                                 ),
                             ),
                             href="/",
@@ -297,7 +276,7 @@ class SideBarRoot:
                 class_name="flex flex-col justify-between h-full",
             ),
             data_collapsed=SideBarStateManager.registered.get(cls.sidebar_id).collapsed,
-            on_mount=SideBarStateManager.register(cls.sidebar_id, default_page),
+            on_mount=SideBarStateManager.register(cls.sidebar_id),
             class_name=(
                 "h-screen flex flex-col justify-between "
                 "border-r border-gray-200 dark:border-white/[0.08] "
@@ -310,7 +289,7 @@ class SideBarRoot:
                 "shadow-[inset_0_0_0.5px_rgba(255,255,255,0.1)] "
                 "hover:ring-1 hover:ring-[#36E2F4]/30"
             ),
-        ), cls.sidebar_id
+        )
 
 
 class SideBarNamespace(SimpleNamespace):
