@@ -16,7 +16,7 @@ class ManifestNotFoundError(Exception):
             name (str): The name of the manifest.
             kind (ManifestKind): The kind of the manifest.
         """
-        super().__init__(f"Manifest {name} of kind {kind} not found.")
+        super().__init__(f"Manifest '{name}' of kind '{kind}' not found.")
         self.name = name
         self.kind = kind
 

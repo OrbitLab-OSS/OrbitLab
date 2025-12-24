@@ -6,11 +6,13 @@ build-backend = "setuptools.build_meta"
 name = "orbitlab"
 version = "0.0.1"
 dependencies = [
-    "httpx",
+    "cryptography==46.0.3",
+    "httpx==0.28.1",
     "pydantic==2.12.3",
     "pydantic-settings==2.11.0",
     "PyYAML==6.0.3",
-    "reflex==0.8.16",
+    "reflex==0.8.21",
+    "websocket-client==1.9.0"
 ]
 
 [project.optional-dependencies]
@@ -20,16 +22,15 @@ dev = [
 ]
 
 [tool.ruff]
+src = [ ".",]
 line-length = 120
-target-version = "py311"
+target-version = "py312"
 extend-exclude = ["tests"]
+output-format = "grouped"
 
 [tool.ruff.lint]
-fixable = ["ALL"]
-select = ["A", "B", "C", "D", "E", "F", "G", "I", "N", "Q", "S", "T", "W", "ANN", "ARG", "BLE", "COM", "DJ", "DTZ",
-    "EM", "ERA", "EXE", "FBT", "ICN", "INP", "ISC", "NPY", "PD", "PGH", "PIE", "PL", "PT", "PTH", "PYI", "RET", "RSE",
-    "RUF", "SIM", "SLF", "TCH", "TID", "TRY", "UP", "YTT"]
-ignore = ["ANN101", "ANN102", "D203", "D212", "T201", "G004", "S507", "S202", "PTH207"]
+select = [ "ALL" ]
+ignore = [ "D203", "D212", "T201", "G004", "S507", "S202", "PTH207" ]
 
 [tool.ruff.lint.pylint]
 max-args = 6
@@ -38,7 +39,7 @@ max-args = 6
 convention = "google"
 
 [tool.pytest.ini_options]
-pythonpath = "src"
+pythonpath = "."
 addopts = "--capture=no --cov=pws --cov-report=term-missing"
 testpaths = ["tests"]
 python_files = ["test_*.py"]

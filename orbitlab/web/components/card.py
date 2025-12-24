@@ -1,4 +1,5 @@
 """Card component factory module for creating styled card UI elements."""
+
 from types import SimpleNamespace
 
 import reflex as rx
@@ -6,6 +7,7 @@ import reflex as rx
 
 class CardHeader:
     """A factory class for creating card header components."""
+
     def __new__(cls, *children: rx.Component) -> rx.Component:
         """Create a card header component.
 
@@ -33,6 +35,7 @@ class CardHeader:
 
 class CardFooter:
     """A factory class for creating card footer components."""
+
     def __new__(cls, *children: rx.Component) -> rx.Component:
         """Create a card footer component.
 
@@ -60,11 +63,12 @@ class CardFooter:
 
 class CardRoot:
     """A factory class for creating card root components."""
+
     def __new__(
         cls,
         *children: rx.Component,
-        header: CardHeader | None = None,
-        footer: CardFooter | None = None,
+        header: rx.Component | None = None,
+        footer: rx.Component | None = None,
         class_name: str = "",
     ) -> rx.Component:
         """Create a card root component with optional header and footer.
@@ -103,9 +107,10 @@ class CardRoot:
 
 class CardNamespace(SimpleNamespace):
     """A namespace for card-related components."""
-    __call__ = CardRoot
-    Header = CardHeader
-    Footer = CardFooter
+
+    __call__ = staticmethod(CardRoot)
+    Header = staticmethod(CardHeader)
+    Footer = staticmethod(CardFooter)
 
 
 Card = CardNamespace()

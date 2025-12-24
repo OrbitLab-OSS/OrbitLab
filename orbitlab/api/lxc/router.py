@@ -1,7 +1,5 @@
 from fastapi import APIRouter
 
-from orbitlab.data_types import ManifestKind
-from orbitlab.manifest.client import ManifestClient
 from orbitlab.manifest.schemas.lxcs import LXCManifest
 
 router = APIRouter(prefix="/api/v1/lxc", tags=["LXC"])

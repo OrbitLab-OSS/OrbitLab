@@ -8,3 +8,7 @@ pex_binary(
     entry_point="reflex",
     dependencies=[":pyproject"]
 )
+
+python_sources(
+    name="root",
+)

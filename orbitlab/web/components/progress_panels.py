@@ -1,28 +1,44 @@
-import uuid
-import reflex as rx
+"""OrbitLab Progress Panel component."""
 
-from orbitlab.web.states.managers import ProgressPanelStateManager
+import reflex as rx
+from reflex.components.component import BaseComponent
+
+from orbitlab.web.states.utilities import EventGroup
+
 from .buttons import Buttons
 
 
-@rx.event
-async def foo(state: ProgressPanelStateManager):
-    pass
+class ProgressPanelStateManager(rx.State):
+    """Manages the state of progress panels including step tracking and registration."""
 
+    registered: rx.Field[dict[str, int]] = rx.field(default_factory=dict)
+
+    @rx.event
+    async def register(self, progress_id: str) -> None:
+        """Register a new progress panel with the given ID."""
+        self.registered[progress_id] = 0
+
+
+VALID_FORM_NAME_TYPES = str | rx.vars.LiteralStringVar | rx.vars.ConcatVarOperation
 
 class ProgressStep:
-    def __init__(self, name: str, *children: rx.Component, validate: rx.EventHandler) -> tuple[str, rx.Component]:
+    """Represents a single step in a progress panel workflow."""
+
+    def __init__(self, name: str, *children: rx.Component, validate: rx.EventHandler | rx.event.EventCallback) -> None:
+        """Initialize a progress step with a name, child components, and validation handler."""
         self.name = name
         self.children = children
         self.validate = validate
-    
-    def __apply_form__(self, component: rx.Component, form: str) -> None:
-        if hasattr(component, "name") and isinstance(component.name, rx.vars.LiteralStringVar):
-            component.custom_attrs["form"] = form
+
+    def __apply_form__(self, component: rx.Component | BaseComponent, form: str) -> None:
+        """Recursively apply form attribute to component and its children."""
+        if hasattr(component, "name") and isinstance(component.name, VALID_FORM_NAME_TYPES): # pyright: ignore[reportAttributeAccessIssue]
+            component.custom_attrs["form"] = form # pyright: ignore[reportAttributeAccessIssue]
         for child in component.children:
             self.__apply_form__(child, form)
 
     def get_component(self, progress_id: str, index: int, steps: int, cancel_button: rx.Component) -> rx.Component:
+        """Generate the component for this progress step with navigation buttons."""
         form = f"{progress_id}-form-{index}"
         for child in self.children:
             self.__apply_form__(child, form)
@@ -40,32 +56,55 @@ class ProgressStep:
                         steps - 1,
                         rx.fragment(
                             cancel_button,
-                            Buttons.Secondary("Previous", on_click=ProgressPanelStateManager.previous(progress_id)),
+                            Buttons.Secondary("Previous", on_click=ProgressPanels.previous(progress_id)),
                             Buttons.Primary("Submit", form=form),
                         ),
                     ),
                     rx.fragment(
                         cancel_button,
-                        Buttons.Secondary("Previous", on_click=ProgressPanelStateManager.previous(progress_id)),
-                        Buttons.Primary("Next", form=form)
+                        Buttons.Secondary("Previous", on_click=ProgressPanels.previous(progress_id)),
+                        Buttons.Primary("Next", form=form),
                     ),
                 ),
-                class_name="w-full flex justify-end space-x-2"
+                class_name="w-full flex justify-end space-x-2 mt-10",
             ),
             data_active=ProgressPanelStateManager.registered.get(progress_id, 0) == index,
-            class_name="w-full flex flex-col data-[active=false]:hidden"
+            class_name="w-full flex flex-col data-[active=false]:hidden",
         )
 
 
-class ProgressPanels:
+class ProgressPanels(EventGroup):
+    """A component class for creating multi-step progress panels with navigation.
+
+    This class provides methods for managing progress panel state transitions
+    and rendering step-based workflows with navigation controls.
+    """
+
+    @staticmethod
+    @rx.event
+    async def next(state: ProgressPanelStateManager, progress_id: str) -> None:
+        """Advance the progress panel to the next step."""
+        state.registered[progress_id] += 1
+
+    @staticmethod
+    @rx.event
+    async def previous(state: ProgressPanelStateManager, progress_id: str) -> None:
+        """Move the progress panel to the previous step."""
+        state.registered[progress_id] -= 1
+
+    @staticmethod
+    @rx.event
+    async def reset(state: ProgressPanelStateManager, progress_id: str) -> None:
+        """Reset the progress panel to the first step."""
+        state.registered[progress_id] = 0
+
     Step = staticmethod(ProgressStep)
-    Manager = ProgressPanelStateManager
 
     @classmethod
     def __step_icon__(cls, progress_id: str, index: int) -> rx.Component:
         """Return the circular step indicator depending on step state."""
         return rx.cond(
-            ProgressPanelStateManager.registered.get(progress_id, 0) > index,
+            ProgressPanelStateManager.registered.get(progress_id, 0).to(int) > index,
             rx.el.div(
                 rx.icon("check", size=14, class_name="text-white"),
                 class_name=(
@@ -77,7 +116,7 @@ class ProgressPanels:
             rx.cond(
                 ProgressPanelStateManager.registered.get(progress_id, 0) == index,
                 rx.el.div(
-                    f"{index+1}",
+                    f"{index + 1}",
                     class_name=(
                         "flex items-center justify-center w-6 h-6 rounded-full "
                         "text-white font-semibold "
@@ -86,18 +125,19 @@ class ProgressPanels:
                     ),
                 ),
                 rx.el.div(
-                    f"{index+1}",
+                    f"{index + 1}",
                     class_name=(
                         "flex items-center justify-center w-6 h-6 rounded-full "
                         "text-gray-400 dark:text-gray-600 "
                         "bg-gray-200/70 dark:bg-white/[0.05]"
                     ),
                 ),
-            )
+            ),
         )
-    
+
     @classmethod
     def __step_panel__(cls, progress_id: str, title: str, step_count: int, index: int) -> rx.Component:
+        """Create and return the panel component."""
         return rx.fragment(
             rx.el.div(
                 rx.el.div(
@@ -121,7 +161,7 @@ class ProgressPanels:
                 index == step_count - 1,
                 rx.fragment(),
                 rx.el.div(
-                    data_active=ProgressPanelStateManager.registered.get(progress_id, 0) > index,
+                    data_active=ProgressPanelStateManager.registered.get(progress_id, 0).to(int) > index,
                     class_name=(
                         "h-8 w-[2px] rounded-full bg-[#1E63E9]/50 dark:bg-[#36E2F4]/50 "
                         "data-[active=true]:bg-gray-300 data-[active=true]:dark:bg-white/[0.06]"
@@ -131,11 +171,10 @@ class ProgressPanels:
         )
 
     @classmethod
-    def __new__(cls, *steps: ProgressStep, id: str = "", cancel_button: rx.Component | None = None) -> rx.Component:
+    def __new__(cls, *steps: ProgressStep, progress_id: str, cancel_button: rx.Component | None = None) -> rx.Component:
         """Render the full vertical progress panel."""
-        progress_id = id or str(uuid.uuid4())
-        steps = [step for step in steps if isinstance(step, ProgressStep)]
-        titles = [step.name for step in steps]
+        all_steps = [step for step in steps if isinstance(step, ProgressStep)]
+        titles = [step.name for step in all_steps]
         cancel_button = cancel_button or rx.fragment()
         return rx.el.div(
             rx.el.div(
@@ -156,11 +195,16 @@ class ProgressPanels:
             ),
             rx.el.div(
                 *[
-                    step.get_component(progress_id=progress_id, index=index, steps=len(steps), cancel_button=cancel_button)
-                    for index, step in enumerate(steps)
+                    step.get_component(
+                        progress_id=progress_id,
+                        index=index,
+                        steps=len(all_steps),
+                        cancel_button=cancel_button,
+                    )
+                    for index, step in enumerate(all_steps)
                 ],
-                class_name="px-6 py-3"
+                class_name="px-6 py-3",
             ),
             on_mount=ProgressPanelStateManager.register(progress_id),
-            class_name="min-w-[600px]"
+            class_name="min-w-[600px]",
         )

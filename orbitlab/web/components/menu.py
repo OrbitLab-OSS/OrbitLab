@@ -1,31 +1,46 @@
-from typing import TypedDict, Unpack
+"""OrbitLab Dropdown Menu Component."""
+
+from typing import NotRequired, TypedDict, Unpack
 
 import reflex as rx
 
 
-class MenuProps(TypedDict):
-    text: str
+class ItemProps(TypedDict):
+    """Type definition for optional menu item component properties."""
+    on_click: rx.EventHandler[rx.event.no_args_event_spec] | rx.event.EventSpec | rx.Var | rx.event.EventCallback
+    class_name: NotRequired[str]
 
 
 class MenuItem:
-    def __new__(cls, text: str, on_click: rx.EventHandler[rx.event.no_args_event_spec]) -> rx.Component:
-        return rx.dropdown_menu.item(
-            text,
-            on_click=on_click,
-            class_name=(
-                "p-3 rounded-full text-[rgb(0,150,255)] transition-all duration-200 ease-in-out "
-                "hover:border hover:scale-105 hover:text-[rgb(0,200,255)] hover:bg-[rgba(0,150,255,0.1)] "
-                "hover:border-[rgba(0,200,255,0.5)] hover:shadow-[0_0_6px_rgba(0,150,255,0.25)] cursor-pointer"
-            ),
+    """A dropdown menu item component with hover effects and styling."""
+
+    def __new__(cls, child: str | rx.Component, **props: Unpack[ItemProps]) -> rx.Component:
+        """Create and return the menu item component."""
+        props["class_name"] = (
+            "p-3 rounded-full text-[rgb(0,150,255)] transition-all duration-200 ease-in-out "
+            "hover:border hover:scale-105 hover:text-[rgb(0,200,255)] hover:bg-[rgba(0,150,255,0.1)] "
+            "hover:border-[rgba(0,200,255,0.5)] hover:shadow-[0_0_6px_rgba(0,150,255,0.25)] cursor-pointer "
+            f"{props.get('class_name', '')}"
         )
+        return rx.dropdown_menu.item(child, **props)
+
+
+class Props(TypedDict, total=False):
+    """Type definition for optional menu item component properties."""
+    class_name: str
+    data_collapsed: rx.Var[bool]
 
 
 class Menu:
+    """A dropdown menu component with items and separators."""
+
     Item = staticmethod(MenuItem)
     Separator = staticmethod(rx.dropdown_menu.separator)
 
-    def __new__(cls, trigger: rx.Component, *children: rx.Component, **props: Unpack[MenuProps]) -> rx.Component:
+    def __new__(cls, trigger: rx.Component, *children: rx.Component, **props: Unpack[Props]) -> rx.Component:
+        """Create and return the menu component."""
         return rx.dropdown_menu.root(
             rx.dropdown_menu.trigger(trigger),
             rx.dropdown_menu.content(*children),
+            **props,
         )

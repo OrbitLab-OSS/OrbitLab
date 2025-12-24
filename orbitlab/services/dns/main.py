@@ -1,144 +1,136 @@
-import asyncio
-import hashlib
-import logging
+import argparse
+import ipaddress
+import tempfile
 from pathlib import Path
-import socket
+from typing import Final
 
-from aiodnsresolver import Resolver, TYPES
-from dnslib import DNSRecord, QTYPE, RR, A, AAAA, RCODE, DNSQuestion
-import yaml
+ROOT_DIR: Final = Path("/opt/coredns")
+ZONE_FILE: Final = ROOT_DIR / "orbitlab.zone"
+MANAGED_HEADER = "# --- OrbitLab managed entries ---"
+MANAGED_FOOTER = "# --- End OrbitLab managed entries ---"
 
-from orbitlab.constants import DNS_ZONE_ROOT
+def parse_hosts_block(lines: list[str]) -> dict[str, set[str]]:
+    entries: dict[str, set[str]] = {}
 
+    for line in lines:
+        stripped_line = line.strip()
+        if not stripped_line or stripped_line.startswith("#"):
+            continue
 
-class _DNSServerProtocol:
-    def __init__(self, handler):
-        self.handler = handler
-        self._tasks = set()
+        parts = stripped_line.split()
+        ip = parts[0]
+        host_names = parts[1:]
 
-    def connection_made(self, transport):
-        self.transport = transport
+        ipaddress.ip_address(ip)
+        entries.setdefault(ip, set()).update(host_names)
 
-    def datagram_received(self, data, addr):
-        task = asyncio.create_task(self.handler(data, addr, self.transport))
-        self._tasks.add(task)
-        task.add_done_callback(self._tasks.discard)
-
-
-class OrbitDNS:
-    # TODO: load zones and upstreams from config
-    def __init__(self, zones: dict[str, dict[str, str]], upstreams: list[str] | None = None):
-        self.zones = zones
-        self.upstreams = upstreams or ["1.1.1.1", "8.8.8.8"]
-        self.resolve, self.clear_cache = Resolver()
-        self.ttl = 60
-
-    async def handle_query(self, data, addr, transport):
-        try:
-            request = DNSRecord.parse(data)
-            reply = request.reply()
-            for q in request.questions:
-                q: DNSQuestion
-                qname = str(q.qname).rstrip(".")
-                qtype = QTYPE[q.qtype]
-
-                # 1) Authoritative: exact match A/AAAA in local zones
-                answered = await self._answer_authoritative(qname, qtype, reply)
-
-                # 2) Forward (stub) for other names/types we support
-                if not answered and qtype in ("A", "AAAA"):
-                    try:
-                        rec_type = TYPES.A if qtype == "A" else TYPES.AAAA
-                        ip_addrs = await self.resolve(qname, rec_type)  # returns iterable of ipaddress objects
-                        for ip in ip_addrs:
-                            rdata = A(str(ip)) if qtype == "A" else AAAA(str(ip))
-                            reply.add_answer(RR(qname, getattr(QTYPE, qtype), rdata=rdata, ttl=self.ttl))
-                        answered = True
-                    except Exception:
-                        logging.exception("DNS resolution failed for %s (%s)", qname, qtype)
-
-                if not answered:
-                    reply.header.rcode = RCODE.NXDOMAIN
-            transport.sendto(reply.pack(), addr)
-        except (KeyError, AttributeError, ValueError):
-            # If parsing fails, return FORMERR to be polite
-            try:
-                bad = DNSRecord.parse(data)
-                r = bad.reply()
-                r.header.rcode = RCODE.FORMERR
-                transport.sendto(r.pack(), addr)
-            except (KeyError, AttributeError, ValueError):
-                logging.exception("DNS resolution failed during FORMERR handling")
-
-    async def _answer_authoritative(self, qname: str, qtype: str, reply) -> bool:
-        # Exact match first
-        for zone, records in self.zones.items():
-            if qname.endswith(zone):
-                val = records.get(qname)
-                if not val:
-                    continue
-                if ":" in val and qtype == "AAAA":
-                    reply.add_answer(RR(qname, QTYPE.AAAA, rdata=AAAA(val), ttl=self.ttl))
-                    return True
-                if ":" not in val and qtype == "A":
-                    reply.add_answer(RR(qname, QTYPE.A, rdata=A(val), ttl=self.ttl))
-                    return True
-        return False
-
-    async def start(self, host: str = "0.0.0.0", port: int = 53) -> None:  # noqa: S104
-        """Start the OrbitDNS server and runs indefinitely until cancelled.
-
-        Args:
-            host (str): The host/IP address to bind the server to (default is "0.0.0.0").
-            port (int): The UDP port to listen on (default is 53).
-        """
-        loop = asyncio.get_running_loop()
-        transport, _ = await loop.create_datagram_endpoint(
-            lambda: _DNSServerProtocol(self.handle_query),
-            local_addr=(host, port),
-            family=socket.AF_INET,
-            allow_broadcast=False,
-            reuse_port=True
-        )
-        try:
-            await asyncio.Future()
-        finally:
-            transport.close()
+    return entries
 
 
-def file_hash(path: Path) -> str | None:
-    try:
-        h = hashlib.sha256()
-        with path.open("rb") as f:
-            for chunk in iter(lambda: f.read(8192), b""):
-                h.update(chunk)
-        return h.hexdigest()
-    except FileNotFoundError:
-        return None
+def render_hosts_block(entries: dict[str, set[str]]) -> list[str]:
+    lines: list[str] = []
 
-async def watch_zones(dns: OrbitDNS, interval=1):
-    # TODO: Update to watch all zone files in zone root
-    last = None
-    while True:
-        try:
-            cur = file_hash(path)
-            if cur and cur != last:
-                with open(path) as f:
-                    dns.zones = yaml.safe_load(f) or {}
-                last = cur
-                print("[orbitdns] zones reloaded")
-        except Exception as e:
-            print("[orbitdns] watcher error:", e)
-        await asyncio.sleep(interval)
+    for ip in sorted(entries, key=lambda x: ipaddress.ip_address(x)):
+        names = sorted(entries[ip])
+        lines.append(f"{ip} {' '.join(names)}")
+
+    return lines
 
 
-async def main():
-    zones = {}
-    DNS_ZONE_ROOT.mkdir(parents=True, exist_ok=True)
-    zone_config = DNS_ZONE_ROOT / "config.yaml"
-    if zone_config.exists():
-        with zone_config.open("rt") as f:
-            zones = yaml.safe_load(f) or {}
-    dns = OrbitDNS(zones)
-    _ = asyncio.create_task(watch_zones(dns))
-    await run_dns_server(dns, host="0.0.0.0", port=53)
+def load_existing() -> tuple[list[str], list[str], list[str]]:
+    pre, managed, post = [], [], []
+    section = "pre"
+
+    for line in ZONE_FILE.read_text().splitlines():
+        if line.strip() == MANAGED_HEADER:
+            section = "managed"
+            continue
+        if line.strip() == MANAGED_FOOTER:
+            section = "post"
+            continue
+
+        if section == "pre":
+            pre.append(line)
+        elif section == "managed":
+            managed.append(line)
+        else:
+            post.append(line)
+
+    return pre, managed, post
+
+
+def write_zone(
+    entries: dict[str, set[str]],
+    pre: list[str],
+    post: list[str],
+) -> None:
+    managed_lines = render_hosts_block(entries)
+
+    with tempfile.NamedTemporaryFile("w", delete=False) as tmp:
+        if pre:
+            tmp.write("\n".join(pre).rstrip() + "\n")
+
+        tmp.write(f"{MANAGED_HEADER}\n")
+        for line in managed_lines:
+            tmp.write(f"{line}\n")
+        tmp.write(f"{MANAGED_FOOTER}\n")
+
+        if post:
+            tmp.write("\n".join(post).rstrip() + "\n")
+
+    Path(tmp.name).replace(ZONE_FILE)
+
+
+def cmd_create(args: argparse.Namespace) -> None:
+    entries: dict[str, set[str]] = {}
+
+    for ip in args.ip:
+        ipaddress.ip_address(ip)
+        entries[ip] = {args.hostname}
+
+    write_zone(entries, [], [])
+
+
+def cmd_update(args: argparse.Namespace) -> None:
+    pre, managed, post = load_existing()
+    entries = parse_hosts_block(managed)
+
+    if args.add:
+        entries.setdefault(args.ip, set()).add(args.hostname)
+
+    if args.remove and args.ip in entries:
+        entries[args.ip].discard(args.hostname)
+        if not entries[args.ip]:
+            del entries[args.ip]
+
+    write_zone(entries, pre, post)
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Manage CoreDNS hosts-style zone file for OrbitLab")
+
+    sub = parser.add_subparsers(required=True)
+
+    create = sub.add_parser("create", help="Create zone file")
+    create.add_argument("--hostname", required=True)
+    create.add_argument(
+        "--ip",
+        action="append",
+        required=True,
+    )
+    create.set_defaults(func=cmd_create)
+
+    update = sub.add_parser("update", help="Update zone file")
+    update.add_argument("--ip", required=True)
+    update.add_argument("--hostname", required=True)
+    group = update.add_mutually_exclusive_group(required=True)
+    group.add_argument("--add", action="store_true")
+    group.add_argument("--remove", action="store_true")
+    update.set_defaults(func=cmd_update)
+
+    args = parser.parse_args()
+    args.func(args)
+
+
+if __name__ == "__main__":
+    main()

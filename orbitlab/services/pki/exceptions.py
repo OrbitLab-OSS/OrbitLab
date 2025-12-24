@@ -10,6 +10,7 @@ class CSRExistsError(Exception):
         name (str): The name of the certificate signing request.
         exists (bool): Indicates whether the CSR already exists.
     """
+
     def __init__(self, name: str, *, exists: bool) -> None:
         """Initialize CSRExistsError.
 
@@ -19,7 +20,8 @@ class CSRExistsError(Exception):
         """
         super().__init__(
             f"Certificate Signing Request for '{name}' already exists."
-            if exists else f"Certificate Signing Request for '{name}' does not exists.",
+            if exists
+            else f"Certificate Signing Request for '{name}' does not exists.",
         )
         self.name = name
 
@@ -30,6 +32,7 @@ class CSRSigningError(Exception):
     Attributes:
         msg (str): The error message describing the signing error.
     """
+
     def __init__(self, msg: str) -> None:
         """Initialize CSRSigningError.
 
@@ -47,6 +50,7 @@ class CertificateExistsError(Exception):
         name (str): The name of the certificate.
         exists (bool): Indicates whether the certificate already exists.
     """
+
     def __init__(self, name: str, *, exists: bool) -> None:
         """
         Initialize CertificateExistsError.
@@ -56,8 +60,7 @@ class CertificateExistsError(Exception):
             exists (bool): Indicates whether the certificate already exists.
         """
         super().__init__(
-            f"Certificate '{name}' already exists."
-            if exists else f"Certificate '{name}' does not exists.",
+            f"Certificate '{name}' already exists." if exists else f"Certificate '{name}' does not exists.",
         )
         self.name = name
 
@@ -69,6 +72,7 @@ class CertificateTypeError(Exception):
         common_name (str): The common name of the certificate.
         cert_type (CertificateTypes): The expected certificate type.
     """
+
     def __init__(self, common_name: str, cert_type: CertificateTypes) -> None:
         """Initialize CertificateTypeError.
 
@@ -88,6 +92,7 @@ class CertificateFingerprintError(Exception):
         common_name (str): The common name of the certificate.
         serial_number (str): The serial number of the certificate.
     """
+
     def __init__(self, common_name: str, serial_number: str) -> None:
         """
         Initialize CertificateFingerprintError.
@@ -108,6 +113,7 @@ class SSHKeyExistsError(Exception):
         name (str): The name of the SSH key.
         exists (bool): Indicates whether the SSH key already exists.
     """
+
     def __init__(self, name: str, *, exists: bool) -> None:
         """
         Initialize SSHKeyExistsError.
@@ -117,7 +123,6 @@ class SSHKeyExistsError(Exception):
             exists (bool): Whether the SSH key already exists.
         """
         super().__init__(
-            f"SSH Key with name {name} already exists."
-            if exists else f"SSH Key with name {name} does not exists.",
+            f"SSH Key with name {name} already exists." if exists else f"SSH Key with name {name} does not exists.",
         )
         self.name = name

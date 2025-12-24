@@ -35,8 +35,7 @@ class RadioItem:
                     "peer-checked:border-[#1E63E9]/40 dark:peer-checked:border-[#36E2F4]/40 "
                     "peer-checked:shadow-[0_0_10px_rgba(54,226,244,0.15)] "
                     # Disabled
-                    "peer-disabled:opacity-40 peer-disabled:cursor-not-allowed "
-                    + class_name
+                    "peer-disabled:opacity-40 peer-disabled:cursor-not-allowed " + class_name
                 ),
                 # For screen readers / better click target
                 aria_hidden="true",

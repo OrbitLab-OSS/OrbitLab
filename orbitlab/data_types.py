@@ -2,6 +2,10 @@
 
 from enum import StrEnum, auto
 
+from reflex.event import EventCallback, EventHandler, EventSpec
+
+type FrontendEvents = EventCallback | EventHandler | EventSpec | list[EventCallback | EventHandler | EventSpec]
+
 
 class ManifestKind(StrEnum):
     """Enumeration of possible manifest kinds in OrbitLab."""
@@ -10,8 +14,8 @@ class ManifestKind(StrEnum):
     CUSTOM_APPLIANCE = auto()
     CLUSTER = auto()
     NODE = auto()
-    SDN = auto()
-    STORAGE = auto()
+    IPAM = auto()
+    SECTOR = auto()
     LXC = auto()
     SECRET = auto()
     CERTIFICATE = auto()
@@ -153,6 +157,10 @@ class ApplianceType(StrEnum):
     TURNKEY = auto()
 
 
+class OrbitLabApplianceType(StrEnum):
+    SECTOR_GATEWAY = "SectorGateway"
+
+
 class TaskStatus(StrEnum):
     """Enumeration of possible appliance types in OrbitLab."""
 
@@ -161,5 +169,27 @@ class TaskStatus(StrEnum):
 
 
 class CustomApplianceStepType(StrEnum):
+    """Enumeration of possible custom appliance step types in OrbitLab."""
+
     SCRIPT = auto()
     FILES = auto()
+
+
+class ClusterMode(StrEnum):
+    LOCAL = auto()
+    CLUSTER = auto()
+
+
+class InitializationState(StrEnum):
+    NOT_STARTED = auto()
+    RUNNING = auto()
+    BACKPLANE = auto()
+    FINALIZE = auto()
+    ABORTED = auto()
+    COMPLETE = auto()
+
+
+class SectorState(StrEnum):
+    PENDING = auto()
+    AVAILABLE = auto()
+    DELETING = auto()

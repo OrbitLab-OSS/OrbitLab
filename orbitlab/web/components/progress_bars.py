@@ -1,99 +1,61 @@
-"""Progress bar components for the OrbitLab web application."""
+"""OrbitLab ProgressBar Component."""
+
 from types import SimpleNamespace
+from typing import TypedDict, Unpack
 
 import reflex as rx
 
 
+class Props(TypedDict, total=False):
+    """Basic ProgressBar Props."""
+
+    maximum: float
+    show_label: bool
+
+
 class Basic:
-    """A basic progress bar component.
+    """OrbitLab-themed progress bar with glow, gradients, and theme-aware styling."""
 
-    This class provides a factory for creating styled progress bar components
-    with optional labels and status text. Progress bars support light and dark themes
-    with smooth transitions and tooltip display of progress percentage.
-    """
-
-    @classmethod
-    def __step_labels__(cls, label: str) -> rx.Component:
-        """Create a step label component with appropriate styling.
-
-        Args:
-            label: The text label to display.
-
-        Returns:
-            A Reflex component representing the styled label.
-        """
+    def __new__(cls, value: float | rx.Var[float], **props: Unpack[Props]) -> rx.Component:
+        """Create an OrbitLab-styled progress bar."""
+        maximum = props.pop("maximum", 100)
+        show_label = props.pop("show_label", True)
+        percent = rx.cond(maximum > 0, (value / maximum) * 100, 0) # pyright: ignore[reportOperatorIssue]
         return rx.el.div(
-            label,
-            class_name="text-gray-600 dark:text-gray-400 not-first:text-center last:text-right",
-        )
-
-    def __new__(
-        cls,
-        progress: float | rx.Var[float],
-        start_label: str = "",
-        end_label: str = "",
-        status: str | None = None,
-    ) -> rx.Component:
-        """Create a basic progress bar component.
-
-        Args:
-            progress: The progress value as a percentage (0-100).
-            start_label: Label displayed at the start of the progress bar.
-            end_label: Label displayed at the end of the progress bar.
-            status: Optional status text displayed above the progress bar.
-
-        Returns:
-            A Reflex component representing the progress bar.
-        """
-        return rx.el.div(
-            rx.cond(
-                status,
-                rx.el.p(
-                    status,
-                    class_name="text-sm font-medium text-gray-900 dark:text-[#E8F1FF]",
-                ),
-            ),
             rx.el.div(
-                rx.tooltip(
-                    rx.el.div(
-                        rx.el.div(
-                            style={"width": f"{progress:.1f}%"},
-                            class_name=(
-                                "h-2 rounded-full "
-                                "bg-[#1E63E9] dark:bg-[#36E2F4] "
-                                "shadow-[0_0_6px_rgba(54,226,244,0.4)] "
-                                "transition-all duration-500 ease-in-out"
-                            ),
-                        ),
-                        class_name=(
-                            "overflow-hidden rounded-full "
-                            "bg-gray-200/70 dark:bg-white/[0.07] "
-                            "backdrop-blur-sm"
-                        ),
+                rx.progress(
+                    value=value,
+                    max=maximum,
+                    class_name=(
+                        "w-full h-3 rounded-full overflow-hidden "
+                        "bg-gray-200/70 dark:bg-white/[0.07] backdrop-blur-sm "
+                        "outline outline-1 outline-gray-200/50 dark:outline-white/[0.05] "
+                        "shadow-[inset_0_1px_2px_rgba(0,0,0,0.15)] "
+                        "[&::-webkit-progress-value]:transition-all [&::-webkit-progress-value]:duration-500 "
+                        "[&::-webkit-progress-value]:ease-in-out "
+                        "[&::-webkit-progress-value]:bg-gradient-to-r "
+                        "[&::-webkit-progress-value]:from-[#1E63E9] "
+                        "[&::-webkit-progress-value]:to-[#36E2F4] "
+                        "[&::-webkit-progress-value]:shadow-[0_0_6px_rgba(54,226,244,0.4)] "
+                        "[&::-moz-progress-bar]:bg-gradient-to-r "
+                        "[&::-moz-progress-bar]:from-[#1E63E9] "
+                        "[&::-moz-progress-bar]:to-[#36E2F4]"
                     ),
-                    content=f"{progress:.1f}%",
                 ),
-                rx.el.div(
-                    rx.el.div(
-                        start_label,
-                        class_name="text-gray-600 dark:text-gray-400 not-first:text-center last:text-right",
-                    ),
-                    rx.el.div(
-                        end_label,
-                        class_name="text-gray-600 dark:text-gray-400 not-first:text-center last:text-right",
-                    ),
-                    class_name="w-full flex justify-between",
+                class_name="relative w-full",
+            ),
+            rx.cond(
+                show_label,
+                rx.text(
+                    f"{percent:.1f}%",
+                    class_name=("mt-2 text-xs font-medium text-gray-600 dark:text-gray-400 tracking-wide select-none"),
                 ),
             ),
-            aria_hidden="true",
-            class_name="mt-6",
+            class_name="flex justify-start items-center w-full transition-all duration-300 ease-in-out",
         )
 
 
-class ProgressBarsNamespace(SimpleNamespace):
+class ProgressBars(SimpleNamespace):
     """Namespace container for progress bar component classes."""
 
-    Basic = Basic
-
-
-ProgressBars = ProgressBarsNamespace()
+    Basic = staticmethod(Basic)

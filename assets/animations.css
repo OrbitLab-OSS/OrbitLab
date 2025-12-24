@@ -1,6 +1,85 @@
 @layer utilities {
   @keyframes pulse {
-    0%, 100% { transform: scale(0); opacity: 0; }
-    50% { transform: scale(3); opacity: 1; }
+
+    0%,
+    100% {
+      transform: scale(0);
+      opacity: 0;
+    }
+
+    50% {
+      transform: scale(3);
+      opacity: 1;
+    }
+  }
+
+  @keyframes fadeInUp {
+    0% {
+      opacity: 0;
+      transform: translateY(20px);
+    }
+
+    66% {
+      opacity: 0;
+      transform: translateY(20px);
+    }
+
+    100% {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  @keyframes twinkle {
+    0% {
+      opacity: 0;
+      transform: translate(0, 0) scale(1);
+    }
+
+    10% {
+      opacity: 1;
+      transform: translate(0, 0) scale(1.05);
+    }
+
+    45% {
+      opacity: 1;
+      transform: translate(0, 0) scale(1.05);
+    }
+
+    50% {
+      opacity: 0;
+      transform: translate(0, 0) scale(1);
+    }
+
+    /* movement happens only while invisible */
+    75% {
+      opacity: 0;
+      transform: translate(calc(var(--dx) * 0.1%), calc(var(--dy) * 0.1%)) scale(1);
+    }
+
+    80% {
+      opacity: 1;
+      transform: translate(calc(var(--dx) * 0.1%), calc(var(--dy) * 0.1%)) scale(1.05);
+    }
+
+    100% {
+      opacity: 0;
+      transform: translate(calc(var(--dx) * 0.1%), calc(var(--dy) * 0.1%)) scale(1);
+    }
+  }
+
+  .fade-title {
+    animation: 1s fadeInUp ease-out;
+  }
+
+  .fade-subtitle {
+    animation: 1.5s fadeInUp ease-out;
+  }
+
+  .star {
+    animation: twinkle var(--duration) ease-in-out infinite;
+    transform-origin: center;
+    filter: drop-shadow(0 0 4px #36E2F4);
+    opacity: 0;
   }
 }
