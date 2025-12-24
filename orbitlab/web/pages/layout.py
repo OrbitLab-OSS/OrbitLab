@@ -1,8 +1,13 @@
+"""OrbitLab Default Layout."""
+
 import reflex as rx
 
 
 class DefaultLayout:
+    """Default layout for all OrbitLab Pages."""
+
     def __new__(cls, side_bar: rx.Component, *children: rx.Component) -> rx.Component:
+        """Create and return the default layout."""
         return rx.el.div(
             side_bar,
             rx.el.div(

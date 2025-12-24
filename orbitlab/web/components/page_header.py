@@ -1,10 +1,14 @@
+"""OrbitLab Page Header Component."""
+
 import reflex as rx
 
 
 class PageHeader:
-    def __new__(cls, header: str, *actions: rx.Component):
+    """A page header component with title and action buttons."""
+
+    def __new__(cls, header: str, *actions: rx.Component) -> rx.Component:
+        """Create and return the page header component."""
         return rx.el.div(
-            # === Left Section (Title) ===
             rx.el.div(
                 rx.el.h2(
                     header,
@@ -12,7 +16,6 @@ class PageHeader:
                 ),
                 class_name="min-w-0 flex-1",
             ),
-            # === Right Section (Buttons) ===
             rx.el.div(
                 *actions,
                 class_name="mt-2 flex space-x-2 lg:mt-4 lg:mr-4",

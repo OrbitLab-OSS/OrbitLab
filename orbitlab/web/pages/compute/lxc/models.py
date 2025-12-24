@@ -5,10 +5,11 @@ from datetime import UTC, datetime
 
 from pydantic import BaseModel, Field, field_validator
 
-from orbitlab.manifest.schemas.appliances import (
+from orbitlab.manifest.appliances import (
     CustomApplianceManifest,
     CustomApplianceMetadata,
     CustomApplianceSpec,
+    Network,
     Step,
 )
 
@@ -24,8 +25,11 @@ class CreateCustomApplianceForm(BaseModel):
     base_appliance: str
     node: str
     storage: str
+    memory: int
+    swap: int
     certificate_authorities: list[str] | None
     workflow_steps: list[Step]
+    networks: list[Network]
 
     @field_validator("certificate_authorities", mode="plain")
     @classmethod
@@ -47,8 +51,11 @@ class CreateCustomApplianceForm(BaseModel):
                 base_appliance=self.base_appliance,
                 node=self.node,
                 storage=self.storage,
+                memory=self.memory,
+                swap=self.swap,
                 certificate_authorities=self.certificate_authorities,
                 steps=self.workflow_steps,
+                networks=self.networks,
             ),
         )
 

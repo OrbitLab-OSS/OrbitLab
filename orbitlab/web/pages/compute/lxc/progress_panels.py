@@ -1,17 +1,18 @@
 """OrbitLab LXC Progress Panels."""
 
 from pathlib import Path
-from typing import Final
+from typing import Final, cast
 
 import reflex as rx
 
-from orbitlab.constants import WORKFLOW_FILES_ROOT
-from orbitlab.data_types import CustomApplianceStepType
-from orbitlab.manifest.schemas.appliances import FilePush, Step
+from orbitlab.constants import Directories
+from orbitlab.data_types import CustomApplianceStepType, FrontendEvents
+from orbitlab.manifest.appliances import FilePush, Step
 from orbitlab.web import components
-from orbitlab.web.states.certificates import CertificateManifestsState
+from orbitlab.web.states.manifests import ManifestsState
 from orbitlab.web.states.utilities import EventGroup
 
+from .models import Network
 from .states import CreateApplianceState
 
 
@@ -57,7 +58,7 @@ class GeneralConfigurationPanel(EventGroup):
                 components.FieldSet.Field(
                     "Base Appliance: ",
                     components.Select(
-                        CreateApplianceState.base_appliances,
+                        CreateApplianceState.base_appliance_names,
                         default_value=CreateApplianceState.base_appliance,
                         placeholder="Select Base Appliance",
                         name="base_appliance",
@@ -67,7 +68,7 @@ class GeneralConfigurationPanel(EventGroup):
                 components.FieldSet.Field(
                     "Node: ",
                     components.Select(
-                        CreateApplianceState.nodes,
+                        ManifestsState.node_names,
                         placeholder="Select Node",
                         default_value=CreateApplianceState.node,
                         on_change=cls.set_node,
@@ -86,19 +87,39 @@ class GeneralConfigurationPanel(EventGroup):
                         required=True,
                     ),
                 ),
+                components.FieldSet.Field(
+                    "Memory (GiB): ",
+                    components.Slider(
+                        default_value=CreateApplianceState.memory_gb,
+                        min=1,
+                        max=12,
+                        name="memory",
+                        required=True,
+                    ),
+                ),
+                components.FieldSet.Field(
+                    "Swap (GiB): ",
+                    components.Slider(
+                        default_value=CreateApplianceState.swap_gb,
+                        min=1,
+                        max=12,
+                        name="swap",
+                        required=True,
+                    ),
+                ),
             ),
             components.FieldSet(
                 "Certificates & Secrets",
                 components.FieldSet.Field(
                     "Root CAs",
                     components.MultiSelect(
-                        CreateApplianceState.root_certificate_names,
+                        ManifestsState.certificate_authority_names,
                         placeholder="Select CAs",
                         name="certificate_authorities",
                         refresh_button=components.Buttons.Icon(
                             "refresh-ccw",
                             size=12,
-                            on_click=CertificateManifestsState.refresh_root_certificates,
+                            on_click=ManifestsState.cache_clear("certificates"),
                         ),
                     ),
                 ),
@@ -106,6 +127,140 @@ class GeneralConfigurationPanel(EventGroup):
                     "SSH Key",
                     rx.text("Auto-generated one-time key pair", class_name="font-light italic"),
                 ),
+            ),
+        )
+
+
+class NetworkConfigurationPanel(EventGroup):
+    """Panel for configuring network settings in custom appliance creation.
+
+    This panel provides functionality for adding, configuring, and managing
+    network interfaces for LXC appliances. Users can configure IP settings
+    (IPv4, IPv6, or dual stack), select network bridges, and specify static
+    or DHCP configuration for each network interface.
+    """
+
+    @staticmethod
+    @rx.event
+    async def add_network(state: CreateApplianceState) -> None:
+        """Add a new network configuration to the appliance."""
+        new_item_id = len(state.network_order)
+        while new_item_id in state.networks:
+            new_item_id += 1
+        state.network_order.append({"id": new_item_id})
+        state.networks[new_item_id] = Network()
+
+    @staticmethod
+    @rx.event
+    async def update_network_order(state: CreateApplianceState, networks: list[components.SortableItem]) -> None:
+        """Update the order of workflow steps in the appliance configuration."""
+        state.network_order = networks
+
+    @staticmethod
+    @rx.event
+    async def set_network(state: CreateApplianceState, sort_id: int, name: str) -> None:
+        """Set the network name for a specific network configuration."""
+        state.networks[sort_id].name = name
+
+    @staticmethod
+    @rx.event
+    async def set_subnet(state: CreateApplianceState, sort_id: int, subnet: str) -> None:
+        """Set the subnet name for a specific network configuration."""
+        state.networks[sort_id].subnet = subnet
+
+    @staticmethod
+    @rx.event
+    async def delete_network(state: CreateApplianceState, sort_id: int) -> None:
+        """Delete a network configuration from the appliance."""
+        del state.networks[sort_id]
+        item = next((net for net in state.network_order if net["id"] == sort_id), None)
+        if item:
+            state.network_order.remove(item)
+
+    @classmethod
+    def sortable_network(cls, item: components.SortableItem, index: int) -> rx.Component:
+        """Create a sortable network configuration component.
+
+        Args:
+            item: The sortable item containing the network ID.
+            index: The index position of the network in the list.
+
+        Returns:
+            A component representing a draggable network configuration item.
+        """
+        sort_id = rx.Var.create(item["id"]).to(int)
+        network: Network = CreateApplianceState.networks.get(sort_id,{}).to(Network)
+        return rx.el.div(
+            rx.icon(
+                "grip-vertical",
+                class_name=(
+                    "drag-handle ml-3 mr-4 cursor-grab text-gray-500 dark:text-gray-400 "
+                    "hover:text-[#1E63E9] dark:hover:text-[#36E2F4] "
+                    "active:cursor-grabbing transition-colors duration-200 ease-in-out"
+                ),
+            ),
+            rx.el.div(
+                rx.el.div(
+                    rx.text(f"net{index}"),
+                    class_name="flex space-x-4",
+                ),
+                rx.el.div(
+                    rx.text("Network: "),
+                    components.Select(
+                        CreateApplianceState.available_networks,
+                        value=network.name,
+                        on_change=lambda name: cls.set_network(sort_id, name),
+                        required=True,
+                    ),
+                    class_name="flex items-center space-x-4",
+                ),
+                rx.el.div(
+                    rx.text("Subnet: "),
+                    components.Select(
+                        CreateApplianceState.available_subnets.get(network.name, {}).to(dict),
+                        value=network.subnet,
+                        on_change=lambda name: cls.set_subnet(sort_id, name),
+                        required=True,
+                    ),
+                    class_name="flex items-center space-x-4",
+                ),
+                components.Buttons.Icon(
+                    "trash",
+                    on_click=lambda: cls.delete_network(sort_id),
+                ),
+                class_name="w-full flex items-center justify-between mx-4 space-x-4",
+            ),
+            key=sort_id,
+            class_name=(
+                "flex items-center gap-2 px-4 py-2 rounded-lg select-none "
+                "border border-gray-200/60 dark:border-white/[0.08] "
+                "bg-gradient-to-b from-gray-50/90 to-gray-100/80 "
+                "dark:from-[#0E1015]/95 dark:to-[#181B22]/90 "
+                "shadow-sm hover:shadow-md hover:ring-1 hover:ring-[#36E2F4]/30 "
+                "transition-all duration-200 ease-in-out"
+            ),
+        )
+
+    def __new__(cls) -> rx.Component:
+        """Create and return the Progress Panel components."""
+        return rx.fragment(
+            rx.el.div(
+                components.Buttons.Primary(
+                    "Add Network",
+                    icon="plus",
+                    on_click=cls.add_network,
+                ),
+                rx.text("Drag networks to change order."),
+                class_name="w-full flex justify-between mb-4",
+            ),
+            components.Sortable(
+                rx.foreach(
+                    CreateApplianceState.network_order,
+                    lambda item, index: cls.sortable_network(item, index),
+                ),
+                data=CreateApplianceState.network_order,
+                on_change=cls.update_network_order,
+                class_name="mb-4 min-w-[50vw] space-y-2",
             ),
         )
 
@@ -120,14 +275,15 @@ class FilesWorkflowStep(EventGroup):
 
     @staticmethod
     @rx.event
-    async def handle_uploads(state: CreateApplianceState, files: list[rx.UploadFile]) -> None:
+    async def handle_uploads(state: CreateApplianceState, files: list[rx.UploadFile] | rx.upload_files) -> None:
         """Handle file uploads for workflow steps."""
+        selected_files = cast(list[rx.UploadFile], files)
         for index, step in state.steps_config.items():
             if step.type == CustomApplianceStepType.FILES and not step.files:
                 uploaded_files: list[FilePush] = []
                 state.uploading = True
-                for file in files:
-                    path: Path = WORKFLOW_FILES_ROOT / "custom_appliances" / state.form_data["name"] / file.name
+                for file in selected_files:
+                    path: Path = Directories.CUSTOM_APPLIANCES / state.form_data["name"] / file.name
                     path.parent.mkdir(parents=True, exist_ok=True)
                     data = await file.read()
 
@@ -139,20 +295,21 @@ class FilesWorkflowStep(EventGroup):
 
     @staticmethod
     @rx.event
-    async def configure_files(state: CreateApplianceState, step_id: int) -> None:
+    async def configure_files(state: CreateApplianceState, step_id: int) -> FrontendEvents:
         """Configure files for a specific workflow step."""
-        state.files_step = step_id
-        state.files_data = state.steps_config[state.files_step].files
+        state.files_data = state.steps_config[step_id].files
         return components.Dialog.open(FilesWorkflowStep.dialog_id)
 
     @staticmethod
     @rx.event
-    async def save_files(state: CreateApplianceState, form: dict) -> rx.event.EventCallback:
+    async def save_files(state: CreateApplianceState, step_id: int, form: dict) -> FrontendEvents | None:
         """Save the configured files data to the workflow step and reset the dialog state."""
-        for file in state.files_data:
-            file.destination = Path(form[str(file.source)])
-        state.steps_config[state.files_step].files = state.files_data
-        return FilesWorkflowStep.reset
+        if state.files_data:
+            for file in state.files_data:
+                file.destination = Path(form[str(file.source)])
+            state.steps_config[step_id].files = state.files_data
+            return FilesWorkflowStep.reset
+        return None
 
     @staticmethod
     @rx.event
@@ -174,7 +331,6 @@ class FilesWorkflowStep(EventGroup):
     @rx.event
     def reset(state: CreateApplianceState) -> rx.event.EventCallback:
         """Cancel the current file upload operation."""
-        state.files_step = None
         state.files_data = None
         return components.Dialog.close(FilesWorkflowStep.dialog_id)
 
@@ -192,11 +348,13 @@ class FilesWorkflowStep(EventGroup):
         Returns:
             A component with input fields for configuring file source and destination.
         """
+        source = rx.Var.create(file.source).to(str)
+        destination = rx.Var.create(file.destination).to(str)
         return rx.el.div(
             rx.el.div(
                 rx.el.p("Source: "),
                 components.Input(
-                    value=rx.Var.create(file.source).to(str),
+                    value=source,
                     disabled=True,
                 ),
                 class_name="flex space-x-4",
@@ -204,9 +362,9 @@ class FilesWorkflowStep(EventGroup):
             rx.el.div(
                 rx.el.p("Destination: "),
                 components.Input(
-                    default_value=rx.Var.create(file.destination).to(str),
+                    default_value=destination,
                     pattern=r"^\/(?:[A-Za-z0-9._\-]+(?:\/[A-Za-z0-9._\-]+)*)?$",
-                    name=rx.Var.create(file.source).to(str),
+                    name=source,
                     form=form_id,
                     error="Destinations must be valid absolute file paths.",
                 ),
@@ -215,12 +373,10 @@ class FilesWorkflowStep(EventGroup):
             class_name="w-full flex flex-col space-y-2",
         )
 
-    def __new__(cls) -> rx.Component:
+    def __new__(cls, sort_id: int | rx.Var[int]) -> rx.Component:
         """Create and return the Files workflow step."""
-        sort_id = components.Sortable.SortID.to(int)
-        step_config = CreateApplianceState.steps_config.get(sort_id,{}).to(dict)
-        step_name = step_config.get("name", "Unnamed").to(str)
-        files = step_config.get("files", []).to(list[FilePush])
+        step: Step = CreateApplianceState.steps_config.get(sort_id,{}).to(Step)
+        files = rx.Var.create(step.files).to(list[FilePush])
         form_id = f"{sort_id}"
         return rx.el.div(
             rx.cond(
@@ -231,17 +387,11 @@ class FilesWorkflowStep(EventGroup):
                     class_name="flex w-full items-center justify-center space-x-4",
                 ),
                 rx.cond(
-                    files.length() == 0,
-                    components.UploadBox(
-                        upload_id=cls.upload_id,
-                        on_drop=cls.handle_uploads(
-                            rx.upload_files(upload_id=cls.upload_id, on_upload_progress=cls.on_upload_progress),
-                        ),
-                    ),
+                    files.to(bool),
                     rx.fragment(
                         components.Dialog(
-                            f"Configure Files Step: {step_name}",
-                            rx.el.form(id=form_id, on_submit=cls.save_files),
+                            f"Configure Files Step: {step.name}",
+                            rx.el.form(id=form_id, on_submit=lambda data: cls.save_files(sort_id, data)),
                             rx.callout(
                                 """
                                 Files must have a destination directory specified. You can also rename the file by
@@ -262,14 +412,15 @@ class FilesWorkflowStep(EventGroup):
                             dialog_id=cls.dialog_id,
                             class_name="max-w-[80vw] w-[80vw] max-h-[80vh] h-fit",
                         ),
-                        rx.cond(
-                            step_config.get("valid", False),
-                            rx.icon("check", class_name="text-green-500"),
-                            rx.icon("info", class_name="text-red-500"),
-                        ),
                         components.Buttons.Primary(
                             "Configure Files",
                             on_click=cls.configure_files(sort_id),
+                        ),
+                    ),
+                    components.UploadBox(
+                        upload_id=cls.upload_id,
+                        on_drop=cls.handle_uploads(
+                            rx.upload_files(upload_id=cls.upload_id, on_upload_progress=cls.on_upload_progress),
                         ),
                     ),
                 ),
@@ -289,36 +440,33 @@ class ScriptWorkflowStep(EventGroup):
     @rx.event
     async def on_script_change(state: CreateApplianceState, value: str) -> None:
         """Update the script data in state when the editor content changes."""
-        state.script_data = value
+        state.script_value = value
 
     @staticmethod
     @rx.event
-    async def save_script(state: CreateApplianceState) -> rx.event.EventCallback:
+    async def save_script(state: CreateApplianceState, step_id: int) -> rx.event.EventCallback:
         """Save the script data to the current step configuration and reset the dialog."""
-        state.steps_config[state.script_step].script = state.script_data
+        state.steps_config[step_id].script = state.script_value
         return ScriptWorkflowStep.reset
 
     @staticmethod
     @rx.event
     async def reset(state: CreateApplianceState) -> rx.event.EventCallback:
         """Reset the script editing state by clearing script data and step ID."""
-        state.script_data = ""
-        state.script_step = None
+        state.script_value = state.default_script_value = ""
         return components.Dialog.close(ScriptWorkflowStep.dialog_id)
 
     @staticmethod
     @rx.event
-    async def edit_script(state: CreateApplianceState, step_id: int | None) -> rx.event.EventCallback:
+    async def edit_script(state: CreateApplianceState, step_id: int) -> rx.event.EventCallback:
         """Set the script step ID for editing."""
-        state.script_step = step_id
+        state.script_value = state.default_script_value = state.steps_config[step_id].script or ""
         return components.Dialog.open(ScriptWorkflowStep.dialog_id)
 
     dialog_id: Final = "script-workflow-step-edit-dialog"
 
-    def __new__(cls) -> rx.Component:
+    def __new__(cls, sort_id: int | rx.Var[int]) -> rx.Component:
         """Create and return the Script workflow step."""
-        sort_id = components.Sortable.SortID.to(int)
-        steps_config = CreateApplianceState.steps_config.get(sort_id,{}).to(dict)
         return rx.el.div(
             components.Dialog(
                 "Edit Workflow Script",
@@ -337,16 +485,11 @@ class ScriptWorkflowStep(EventGroup):
                 ),
                 rx.el.div(
                     components.Buttons.Secondary("Cancel", on_click=cls.reset),
-                    components.Buttons.Primary("Save & Close", on_click=cls.save_script),
+                    components.Buttons.Primary("Save & Close", on_click=cls.save_script(sort_id)),
                     class_name="w-full flex justify-end space-x-2 mt-10",
                 ),
                 dialog_id=cls.dialog_id,
                 class_name="max-w-[80vw] w-[80vw] max-h-[80vh] h-fit",
-            ),
-            rx.cond(
-                steps_config.get("valid", False),
-                rx.icon("check", class_name="text-green-500"),
-                rx.icon("info", class_name="text-red-500"),
             ),
             components.Buttons.Primary("Edit Script", on_click=cls.edit_script(sort_id)),
             class_name="flex grow items-center justify-center space-x-6",
@@ -364,30 +507,29 @@ class WorkflowConfigurationPanel(EventGroup):
 
     @staticmethod
     @rx.event
-    async def add_step(state: CreateApplianceState) -> None:
+    async def add_step(state: CreateApplianceState, step_type: str) -> None:
         """Add a new workflow step to the appliance configuration."""
         new_item_id = len(state.step_order)
         while new_item_id in state.steps_config:
             new_item_id += 1
         state.step_order.append({"id": new_item_id})
-        state.steps_config[new_item_id] = {}
+        state.steps_config[new_item_id] = Step(
+            name=f"{step_type.capitalize()} {new_item_id}",
+            type=CustomApplianceStepType(step_type),
+        )
 
     @staticmethod
     @rx.event
     async def delete_step(state: CreateApplianceState, step_id: int) -> None:
         """Delete a workflow step from the appliance configuration."""
-        if hasattr(state.steps_config[step_id], "files"):
-            for file in state.steps_config[step_id].files:
+        files = state.steps_config[step_id].files
+        if isinstance(files, list):
+            for file in files:
                 file.source.unlink(missing_ok=True)
         del state.steps_config[step_id]
         item = next((item for item in state.step_order if item["id"] == step_id), None)
-        state.step_order.remove(item)
-
-    @staticmethod
-    @rx.event
-    async def set_step_type(state: CreateApplianceState, step_id: int, step_type: str) -> None:
-        """Set the type for a workflow step in the appliance configuration."""
-        state.steps_config[step_id] = Step(type=CustomApplianceStepType(step_type))
+        if item:
+            state.step_order.remove(item)
 
     @staticmethod
     @rx.event
@@ -401,65 +543,82 @@ class WorkflowConfigurationPanel(EventGroup):
         """Update the order of workflow steps in the appliance configuration."""
         state.step_order = steps
 
+    @classmethod
+    def sortable_step(cls, item: components.SortableItem) -> rx.Component:
+        """Create a sortable workflow step component."""
+        sort_id = rx.Var.create(item["id"]).to(int)
+        step_config: Step = CreateApplianceState.steps_config.get(sort_id,{}).to(Step)
+        return rx.el.div(
+            rx.icon(
+                "grip-vertical",
+                class_name=(
+                    "drag-handle ml-3 mr-4 cursor-grab text-gray-500 dark:text-gray-400 "
+                    "hover:text-[#1E63E9] dark:hover:text-[#36E2F4] "
+                    "active:cursor-grabbing transition-colors duration-200 ease-in-out"
+                ),
+            ),
+            rx.el.div(
+                rx.el.div(
+                    components.Input(
+                        value=step_config.name,
+                        on_change=lambda name: cls.set_step_name(sort_id, name),
+                        placeholder="Step Name (Required)",
+                        wrapper_class_name="w-fit",
+                    ),
+                    class_name="flex space-x-4",
+                ),
+                rx.match(
+                    step_config.type,
+                    (
+                        "script",
+                        rx.el.div(
+                            ScriptWorkflowStep(sort_id),
+                            class_name="flex space-x-2 items-center justify-center",
+                        ),
+                    ),
+                    (
+                        "files",
+                        rx.el.div(
+                            FilesWorkflowStep(sort_id),
+                            class_name="flex space-x-2 items-center justify-center",
+                        ),
+                    ),
+                    rx.fragment(),
+                ),
+                components.Buttons.Icon(
+                    "trash",
+                    on_click=lambda: cls.delete_step(sort_id),
+                ),
+                class_name="w-full flex items-center justify-between mx-4 space-x-4",
+            ),
+            key=sort_id,
+            class_name=(
+                "flex items-center gap-2 px-4 py-2 rounded-lg select-none "
+                "border border-gray-200/60 dark:border-white/[0.08] "
+                "bg-gradient-to-b from-gray-50/90 to-gray-100/80 "
+                "dark:from-[#0E1015]/95 dark:to-[#181B22]/90 "
+                "shadow-sm hover:shadow-md hover:ring-1 hover:ring-[#36E2F4]/30 "
+                "transition-all duration-200 ease-in-out"
+            ),
+        )
+
     def __new__(cls) -> rx.Component:
         """Create and return the Progress Panel components."""
-        sort_id = components.Sortable.SortID.to(int)
-        step_config = CreateApplianceState.steps_config.get(sort_id,{}).to(dict)
         return rx.fragment(
             rx.el.div(
-                components.Buttons.Primary(
-                    "Add Workflow Step",
-                    icon="plus",
-                    on_click=cls.add_step,
+                components.Menu(
+                    components.Buttons.Primary(
+                        "Add Workflow Step",
+                        icon="chevron-down",
+                    ),
+                    components.Menu.Item("Script Step", on_click=cls.add_step(CustomApplianceStepType.SCRIPT)),
+                    components.Menu.Item("Files Step", on_click=cls.add_step(CustomApplianceStepType.FILES)),
                 ),
                 rx.text("Drag steps to change execution order."),
                 class_name="w-full flex justify-between mb-4",
             ),
             components.Sortable(
-                components.Sortable.Item(
-                    rx.el.div(
-                        rx.el.div(
-                            components.Input(
-                                value=step_config.get("name", ""),
-                                on_change=lambda name: cls.set_step_name(sort_id, name),
-                                placeholder="Step Name (Required)",
-                                wrapper_class_name="w-fit",
-                            ),
-                            components.Select(
-                                CreateApplianceState.step_types,
-                                value=step_config.get("type", ""),
-                                on_change=lambda value: cls.set_step_type(sort_id, value),
-                                placeholder="Select Step Type",
-                                name="workflow-steps",
-                                disabled=CreateApplianceState.uploading,
-                            ),
-                            class_name="flex space-x-4",
-                        ),
-                        rx.match(
-                            step_config.get("type", ""),
-                            (
-                                "script",
-                                rx.el.div(
-                                    ScriptWorkflowStep(),
-                                    class_name="flex space-x-2 items-center justify-center",
-                                ),
-                            ),
-                            (
-                                "files",
-                                rx.el.div(
-                                    FilesWorkflowStep(),
-                                    class_name="flex space-x-2 items-center justify-center",
-                                ),
-                            ),
-                            rx.fragment(),
-                        ),
-                        components.Buttons.Icon(
-                            "trash",
-                            on_click=lambda: cls.delete_step(sort_id),
-                        ),
-                        class_name="w-full flex items-center justify-between mx-4 space-x-4",
-                    ),
-                ),
+                rx.foreach(CreateApplianceState.step_order, lambda item: cls.sortable_step(item)),
                 data=CreateApplianceState.step_order,
                 on_change=cls.update_step_order,
                 class_name="mb-4 min-w-[50vw]",

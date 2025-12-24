@@ -1,15 +1,17 @@
 """CodeMirror Editor."""
-from typing import Literal, NotRequired, Self, TypeAlias, TypedDict, Unpack, overload
+from typing import Literal, NotRequired, Self, TypedDict, Unpack, overload
 
 import reflex as rx
 
-Languages: TypeAlias = Literal["shell"]
+type Languages = Literal["shell"]
 
 
 class CodeMirrorProps(TypedDict):
+    """CodeMirror Editor Props."""
+
     value: rx.Var[str]
     language: Languages
-    on_change: rx.EventHandler[rx.event.passthrough_event_spec(str)]
+    on_change: rx.EventHandler[rx.event.passthrough_event_spec(str)] | rx.event.EventCallback
     theme: NotRequired[rx.Var[Literal["light", "dark"]]]
 
 
@@ -29,7 +31,7 @@ class CodeMirror(rx.Component):
 
     is_default = True
 
-    def add_imports(self) -> dict:
+    def add_imports(self) -> dict[str, rx.ImportVar]:
         """Add all imports."""
         return {
             "@codemirror/language": rx.ImportVar(tag="StreamLanguage", is_default=False),
@@ -37,7 +39,8 @@ class CodeMirror(rx.Component):
             **self.__handle_languages__(handle_for="imports"),
         }
 
-    def add_hooks(self):
+    def add_hooks(self) -> list[rx.Var]:
+        """Add reflex hooks."""
         set_default = rx.Var(
             (
                 f"const reflexStateValue = {self.value};"

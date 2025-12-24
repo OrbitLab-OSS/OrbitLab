@@ -5,11 +5,13 @@ import reflex as rx
 
 from orbitlab.web.components.sidebar import SideBar
 from orbitlab.web.pages.layout import DefaultLayout
+from orbitlab.web.utilities import require_configuration
 
 
-def compute_page(page: Callable[[], rx.Component]) -> rx.Component:
+def compute_page(page: Callable[[], rx.Component]) -> Callable[[], rx.Component]:
     """Create a compute page with sidebar navigation."""
 
+    @require_configuration
     def wrapped() -> rx.Component:
         return DefaultLayout(
             SideBar(

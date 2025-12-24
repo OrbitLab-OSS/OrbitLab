@@ -1,7 +1,6 @@
 """Models for secrets stored in the vault."""
 
 from datetime import datetime
-from typing import Annotated
 
 from pydantic import BaseModel, Field, SecretStr, field_serializer
 
@@ -24,8 +23,8 @@ class Secret(BaseModel):
     created_at: datetime
     version: int
     checksum: str
-    updated_at: Annotated[datetime | None, Field(default=None)]
-    metadata: Annotated[dict[str, str], Field(default_factory=dict)]
+    updated_at: datetime | None = Field(default=None)
+    metadata: dict[str, str] = Field(default_factory=dict)
 
     @field_serializer("secret_string", when_used="json")
     def dump_secret(self, secret_string: SecretStr) -> str:

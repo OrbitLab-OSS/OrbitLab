@@ -372,7 +372,7 @@ class CreateIntermediateCADialog(EventGroup):
                     FieldSet.Field(
                         "Root CA: ",
                         Select(
-                            IntermediateCAState.root_certificates,
+                            IntermediateCAState.certificate_authority_names,
                             placeholder="Select Root CA",
                             form=cls.form_id,
                             name="root_ca",

@@ -1,8 +1,13 @@
+"""OrbitLab FieldSet Component."""
+
 import reflex as rx
 
 
-class Field:
+class FieldItem:
+    """A field component that combines a label with another component."""
+
     def __new__(cls, label: str, component: rx.Component) -> rx.Component:
+        """Create a field with a label and component."""
         return rx.el.div(
             rx.el.p(
                 label,
@@ -14,9 +19,12 @@ class Field:
 
 
 class FieldSet:
-    Field = staticmethod(Field)
+    """A fieldset component that groups related form fields with a title and styled border."""
+
+    Field = staticmethod(FieldItem)
 
     def __new__(cls, title: str, *children: rx.Component) -> rx.Component:
+        """Create and return the fieldset component."""
         return rx.el.fieldset(
             rx.el.legend(
                 title,

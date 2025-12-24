@@ -67,8 +67,8 @@ class CardRoot:
     def __new__(
         cls,
         *children: rx.Component,
-        header: CardHeader | None = None,
-        footer: CardFooter | None = None,
+        header: rx.Component | None = None,
+        footer: rx.Component | None = None,
         class_name: str = "",
     ) -> rx.Component:
         """Create a card root component with optional header and footer.
@@ -108,9 +108,9 @@ class CardRoot:
 class CardNamespace(SimpleNamespace):
     """A namespace for card-related components."""
 
-    __call__ = CardRoot
-    Header = CardHeader
-    Footer = CardFooter
+    __call__ = staticmethod(CardRoot)
+    Header = staticmethod(CardHeader)
+    Footer = staticmethod(CardFooter)
 
 
 Card = CardNamespace()

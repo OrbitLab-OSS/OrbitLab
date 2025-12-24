@@ -2,9 +2,11 @@
 
 import reflex as rx
 
-from orbitlab.web.components.sidebar import SideBar
-from orbitlab.web.components.splash_page import SplashPage, SplashPageState
-from orbitlab.web.pages import pages
+from orbitlab.data_types import InitializationState
+from orbitlab.web import components
+from orbitlab.web.pages import pages  # noqa: F401
+
+from .splash_page import SplashPage, SplashPageState
 
 
 class HomePageState(rx.State):
@@ -19,10 +21,11 @@ class MainDashboard:
     def __new__(cls) -> rx.Component:
         """Create and return the page."""
         return rx.el.div(
-            SideBar(
-                SideBar.NavItem(icon="server", text="Proxmox Nodes", href="/nodes"),
-                SideBar.NavItem(icon="server-cog", text="Compute", href="/compute"),
-                SideBar.NavItem(icon="server-cog", text="Secrets & PKI", href="/secrets-pki"),
+            components.SideBar(
+                components.SideBar.NavItem(icon="server", text="Proxmox Nodes", href="/nodes"),
+                components.SideBar.NavItem(icon="server-cog", text="Compute", href="/compute"),
+                components.SideBar.NavItem(icon="book-lock", text="Secrets & PKI", href="/secrets-pki"),
+                components.SideBar.NavItem(icon="network", text="Sectors", href="/sectors"),
             ),
             rx.el.div(
                 class_name=(
@@ -42,19 +45,11 @@ class MainDashboard:
 def home() -> rx.Component:
     """Home page that displays either the main dashboard or splash page based on configuration status."""
     return rx.cond(
-        SplashPageState.configured,
+        SplashPageState.initialization_state == InitializationState.COMPLETE,
         MainDashboard(),
         SplashPage(),
     )
 
-
-for page in (home, *pages):
-    if "return" not in page.__annotations__:
-        msg = f"Page {page.__name__} does not have a specified return type."
-        raise RuntimeError(msg)
-    if page.__annotations__["return"] != rx.Component:
-        msg = f"Page {page.__name__} must return an rx.Component."
-        raise RuntimeError(msg)
 
 app = rx.App(
     stylesheets=["animations.css"],

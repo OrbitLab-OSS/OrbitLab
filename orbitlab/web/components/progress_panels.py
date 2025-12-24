@@ -1,6 +1,7 @@
 """OrbitLab Progress Panel component."""
 
 import reflex as rx
+from reflex.components.component import BaseComponent
 
 from orbitlab.web.states.utilities import EventGroup
 
@@ -18,19 +19,21 @@ class ProgressPanelStateManager(rx.State):
         self.registered[progress_id] = 0
 
 
+VALID_FORM_NAME_TYPES = str | rx.vars.LiteralStringVar | rx.vars.ConcatVarOperation
+
 class ProgressStep:
     """Represents a single step in a progress panel workflow."""
 
-    def __init__(self, name: str, *children: rx.Component, validate: rx.EventHandler) -> None:
+    def __init__(self, name: str, *children: rx.Component, validate: rx.EventHandler | rx.event.EventCallback) -> None:
         """Initialize a progress step with a name, child components, and validation handler."""
         self.name = name
         self.children = children
         self.validate = validate
 
-    def __apply_form__(self, component: rx.Component, form: str) -> None:
+    def __apply_form__(self, component: rx.Component | BaseComponent, form: str) -> None:
         """Recursively apply form attribute to component and its children."""
-        if hasattr(component, "name") and isinstance(component.name, str | rx.vars.LiteralStringVar):
-            component.custom_attrs["form"] = form
+        if hasattr(component, "name") and isinstance(component.name, VALID_FORM_NAME_TYPES): # pyright: ignore[reportAttributeAccessIssue]
+            component.custom_attrs["form"] = form # pyright: ignore[reportAttributeAccessIssue]
         for child in component.children:
             self.__apply_form__(child, form)
 
@@ -101,7 +104,7 @@ class ProgressPanels(EventGroup):
     def __step_icon__(cls, progress_id: str, index: int) -> rx.Component:
         """Return the circular step indicator depending on step state."""
         return rx.cond(
-            ProgressPanelStateManager.registered.get(progress_id, 0) > index,
+            ProgressPanelStateManager.registered.get(progress_id, 0).to(int) > index,
             rx.el.div(
                 rx.icon("check", size=14, class_name="text-white"),
                 class_name=(
@@ -158,7 +161,7 @@ class ProgressPanels(EventGroup):
                 index == step_count - 1,
                 rx.fragment(),
                 rx.el.div(
-                    data_active=ProgressPanelStateManager.registered.get(progress_id, 0) > index,
+                    data_active=ProgressPanelStateManager.registered.get(progress_id, 0).to(int) > index,
                     class_name=(
                         "h-8 w-[2px] rounded-full bg-[#1E63E9]/50 dark:bg-[#36E2F4]/50 "
                         "data-[active=true]:bg-gray-300 data-[active=true]:dark:bg-white/[0.06]"
@@ -170,8 +173,8 @@ class ProgressPanels(EventGroup):
     @classmethod
     def __new__(cls, *steps: ProgressStep, progress_id: str, cancel_button: rx.Component | None = None) -> rx.Component:
         """Render the full vertical progress panel."""
-        steps = [step for step in steps if isinstance(step, ProgressStep)]
-        titles = [step.name for step in steps]
+        all_steps = [step for step in steps if isinstance(step, ProgressStep)]
+        titles = [step.name for step in all_steps]
         cancel_button = cancel_button or rx.fragment()
         return rx.el.div(
             rx.el.div(
@@ -195,10 +198,10 @@ class ProgressPanels(EventGroup):
                     step.get_component(
                         progress_id=progress_id,
                         index=index,
-                        steps=len(steps),
+                        steps=len(all_steps),
                         cancel_button=cancel_button,
                     )
-                    for index, step in enumerate(steps)
+                    for index, step in enumerate(all_steps)
                 ],
                 class_name="px-6 py-3",
             ),

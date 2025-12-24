@@ -1,28 +1,43 @@
+"""OrbitLab Input Component."""
+
+from types import FunctionType
 from typing import TypedDict, Unpack
 
 import reflex as rx
+from reflex.components.el.elements.forms import HTMLInputTypeAttribute
 
 
 class Props(TypedDict, total=False):
-    on_change: rx.EventHandler[rx.event.input_event]
+    """Input Component Props."""
+
+    default_value: str | rx.Var[str]
+    on_change: rx.EventHandler[rx.event.input_event] | rx.event.EventCallback | FunctionType
     description: str
-    placeholder: str
-    value: str
-    type: str
+    placeholder: str | rx.Var[str]
+    value: str | rx.Var[str]
+    type: HTMLInputTypeAttribute
+    pattern: str
+    min: str
+    max: str
+    form: str | rx.Var[str]
+    name: str | rx.Var[str]
+    required: bool
+    disabled: bool
     error: str
     icon: str
-    class_name: str
     wrapper_class_name: str
 
 
 class Input:
-    def __new__(cls, **props: Unpack[Props]) -> rx.Component:
+    """Input component for creating styled input fields with optional icons and descriptions."""
+
+    def __new__(cls, class_name: str = "w-full grow", **props: Unpack[Props]) -> rx.Component:
+        """Create and return the input component."""
         props.setdefault("type", "text")
         props.setdefault("error", "Invalid input")
         icon = props.pop("icon", None)
         error = props.pop("error", None)
         description = props.pop("description", None)
-        wrapper_class_name = props.pop("wrapper_class_name", "w-full grow")
 
         icon_component = (
             rx.el.div(
@@ -36,7 +51,7 @@ class Input:
         return rx.el.div(
             rx.el.div(
                 icon_component,
-                rx.input(
+                rx.el.input(
                     class_name=(
                         "w-full rounded-lg px-3 py-1 outline-none text-base data-[icon=true]:pl-9 "
                         "font-medium transition-all duration-300 ease-in-out "
@@ -48,13 +63,14 @@ class Input:
                         "placeholder-gray-400 dark:placeholder-gray-500 "
                         "hover:ring-1 hover:ring-[#36E2F4]/30 "
                         "focus:ring-2 focus:ring-[#36E2F4]/40 "
+                        "disabled:opacity-25 "
                         "shadow-[inset_0_0_0.5px_rgba(255,255,255,0.10)] "
                     ),
                     data_icon=bool(icon),
                     **props,
                 ),
                 data_icon=bool(icon),
-                class_name="data[icon=true]:relative",
+                class_name="relative",
             ),
             rx.el.p(error, class_name="hidden mt-1 text-sm text-rose-400 group-has-user-invalid:block"),
             rx.cond(
@@ -64,5 +80,5 @@ class Input:
                     class_name="mt-1 text-sm text-gray-500 dark:text-gray-400 group-has-user-invalid:hidden",
                 ),
             ),
-            class_name=f"group flex flex-col {wrapper_class_name}",
+            class_name=f"group flex flex-col {class_name}",
         )

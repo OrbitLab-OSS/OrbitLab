@@ -2,9 +2,13 @@
 
 import inspect
 from base64 import b64encode
+from collections.abc import Callable
 from typing import Any, TypeVar
 
 import reflex as rx
+
+from orbitlab.data_types import InitializationState
+from orbitlab.web.splash_page import SplashPageState
 
 T = TypeVar("T", bound=rx.state.BaseState)
 
@@ -157,3 +161,13 @@ def create_new_blob(data: rx.vars.ArrayVar, mime_type: str):  # noqa: ANN201, D1
     return rx.vars.var_operation_return(
         js_expression=f"new Blob([new Uint8Array({data})], {{ type: '{mime_type}' }})",
     )
+
+
+def require_configuration(page: Callable[[], rx.Component]) -> Callable[[], rx.Component]:
+    def wrapped() -> rx.Component:
+        return rx.cond(
+            SplashPageState.initialization_state == InitializationState.COMPLETE,
+            page(),
+            rx.el.div(on_mount=rx.redirect("/")),
+        )
+    return wrapped

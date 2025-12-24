@@ -6,7 +6,7 @@ import reflex as rx
 class DataListLabel:
     """Data List Label."""
 
-    def __new__(cls, *children: rx.Component) -> rx.Component:
+    def __new__(cls, *children: rx.Component | str) -> rx.Component:
         """Create and return the label."""
         return rx.el.dt(
             *children,
@@ -21,7 +21,7 @@ class DataListLabel:
 class DataListValue:
     """Data List Value."""
 
-    def __new__(cls, *children: rx.Component) -> rx.Component:
+    def __new__(cls, *children: rx.Component | str | rx.Var[str]) -> rx.Component:
         """Create and return the value."""
         return rx.el.dd(
             *children,

@@ -1,37 +1,16 @@
 """Dashboard module for displaying and managing Proxmox nodes."""
 
-import asyncio
-from collections.abc import AsyncGenerator
-from typing import Any
-
 import reflex as rx
-from reflex.utils.prerequisites import get_and_validate_app
 
-from orbitlab.data_types import NodeStatus
-from orbitlab.manifest.schemas.nodes import NodeManifest
+from orbitlab.manifest.nodes import NodeManifest
 from orbitlab.web.components import Card
-from orbitlab.web.states.cluster import ProxmoxNodesState
+from orbitlab.web.states.manifests import ManifestsState
+from orbitlab.web.states.utilities import EventGroup
 
 from .layout import nodes_page
 
 
-@rx.event(background=True)
-async def refresh_nodes(state: ProxmoxNodesState) -> None:
-    """Background task that periodically refreshes Proxmox nodes data."""
-    app_info = get_and_validate_app()
-    while state.router.session.client_token in app_info.app.event_namespace.token_to_sid:
-        await asyncio.sleep(state.refresh_rate)
-        async with state:
-            state.refresh_nodes = True
-
-
-@rx.event
-async def on_load(state: ProxmoxNodesState) -> AsyncGenerator[rx.event.EventCallback, Any, None]:  # noqa: ARG001
-    """Load event handler that starts the background node refresh task."""
-    yield refresh_nodes
-
-
-class NodeRow:
+class NodeRow(EventGroup):
     """Factory class for creating table row components for Proxmox nodes."""
 
     def __new__(cls, node: NodeManifest) -> rx.Component:
@@ -42,11 +21,23 @@ class NodeRow:
                 class_name="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-800 dark:text-gray-200",
             ),
             rx.el.td(
-                rx.match(
-                    node.metadata.status,
-                    (NodeStatus.ONLINE, rx.badge("Online", color_scheme="green")),
-                    (NodeStatus.ONLINE, rx.badge("Online", color_scheme="green")),
+                rx.cond(
+                    node.metadata.online,
+                    rx.cond(
+                        node.metadata.maintenance_mode,
+                        rx.badge("Maintenance", color_scheme="yellow"),
+                        rx.badge("Online", color_scheme="green"),
+                    ),
+                    rx.badge("Offline", color_scheme="red"),
                 ),
+                class_name="px-6 py-4 whitespace-nowrap",
+            ),
+            rx.el.td(
+                node.metadata.ip,
+                class_name="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-800 dark:text-gray-200",
+            ),
+            rx.el.td(
+                # TODO: Per-node menu options
                 class_name="px-6 py-4 whitespace-nowrap",
             ),
             class_name=(
@@ -57,7 +48,7 @@ class NodeRow:
         )
 
 
-@rx.page("/nodes", on_load=on_load)
+@rx.page("/nodes")
 @nodes_page
 def nodes_dashboard() -> rx.Component:
     """Proxmox Nodes Page."""
@@ -82,11 +73,25 @@ def nodes_dashboard() -> rx.Component:
                                     "uppercase text-gray-600 dark:text-[#AEB9CC]"
                                 ),
                             ),
+                            rx.el.th(
+                                "IPv4 Address",
+                                class_name=(
+                                    "px-6 py-3 text-left text-xs font-semibold tracking-wider "
+                                    "uppercase text-gray-600 dark:text-[#AEB9CC]"
+                                ),
+                            ),
+                            rx.el.th(
+                                "",
+                                class_name=(
+                                    "px-6 py-3 text-left text-xs font-semibold tracking-wider "
+                                    "uppercase text-gray-600 dark:text-[#AEB9CC]"
+                                ),
+                            ),
                         ),
                         class_name="bg-white/60 dark:bg-white/[0.03] backdrop-blur-sm",
                     ),
                     rx.el.tbody(
-                        rx.foreach(ProxmoxNodesState.nodes, lambda node: NodeRow(node)),
+                        rx.foreach(ManifestsState.nodes, lambda node: NodeRow(node)),
                         class_name=(
                             "divide-y divide-gray-200 dark:divide-white/[0.08] "
                             "bg-white/70 dark:bg-[#0E1015]/60 backdrop-blur-sm"

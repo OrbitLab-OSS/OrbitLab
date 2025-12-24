@@ -1,10 +1,24 @@
-from types import SimpleNamespace
+"""OrbitLab Button Components."""
+
+from types import FunctionType, SimpleNamespace
+from typing import TypedDict, Unpack
 
 import reflex as rx
 
 
+class PrimaryButtonProps(TypedDict, total=False):
+    """Primary Button Component Props."""
+
+    on_click: rx.EventHandler | rx.event.EventCallback | list[rx.EventHandler | rx.event.EventCallback]
+    disabled: bool | rx.Var[bool]
+    form: str
+
+
 class PrimaryButton:
-    def __new__(cls, text: str, *, icon: str | None = None, **props: dict):
+    """A primary button component with gradient styling and optional icon."""
+
+    def __new__(cls, text: str, *, icon: str | None = None, **props: Unpack[PrimaryButtonProps]) -> rx.Component:
+        """Create and return the primary button component."""
         class_name = props.pop("class_name", "")
         return rx.el.button(
             rx.icon(icon, size=16, class_name="mr-2") if icon else rx.fragment(),
@@ -17,12 +31,22 @@ class PrimaryButton:
                 "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#36E2F4]/40 "
                 f"transition-all duration-200 shadow-md shadow-[#36E2F4]/30 {class_name}"
             ),
-            **props,
+            **props, # pyright: ignore[reportArgumentType]
         )
 
 
+class SecondaryButtonProps(TypedDict, total=False):
+    """Secondary Button Component Props."""
+
+    on_click: rx.EventHandler | rx.event.EventCallback | list[rx.EventHandler | rx.event.EventCallback]
+    form: str
+
+
 class SecondaryButton:
-    def __new__(cls, text: str, *, icon: str | None = None, **props: dict):
+    """A secondary button component with subtle styling."""
+
+    def __new__(cls, text: str, *, icon: str | None = None, **props: Unpack[SecondaryButtonProps]) -> rx.Component:
+        """Create and return the secondary button component."""
         class_name = props.pop("class_name", "")
         return rx.el.button(
             rx.icon(icon, size=16, class_name="mr-2") if icon else rx.fragment(),
@@ -36,12 +60,23 @@ class SecondaryButton:
                 "backdrop-blur-sm shadow-[inset_0_0_0_1px_rgba(255,255,255,0.08)] "
                 f"transition-all duration-200 {class_name}"
             ),
-            **props,
+            **props, # pyright: ignore[reportArgumentType]
         )
 
 
+class IconButtonProps(TypedDict, total=False):
+    """Icon Button Component Props."""
+
+    on_click: rx.EventHandler | rx.event.EventCallback | FunctionType | list[rx.EventHandler | rx.event.EventCallback]
+    form: str
+    size: int
+
+
 class IconButton:
-    def __new__(cls, icon: str, **props: dict):
+    """A button component that displays only an icon."""
+
+    def __new__(cls, icon: str, **props: Unpack[IconButtonProps]) -> rx.Component:
+        """Create and return the icon button component."""
         class_name = props.pop("class_name", "")
         return rx.el.button(
             rx.icon(icon, size=props.pop("size", 16)),
@@ -51,11 +86,13 @@ class IconButton:
                 "hover:border-[rgba(0,200,255,0.5)] hover:shadow-[0_0_6px_rgba(0,150,255,0.25)] cursor-pointer "
                 f"{class_name}"
             ),
-            **props,
+            **props, # pyright: ignore[reportArgumentType]
         )
 
 
 class ButtonsNamespace(SimpleNamespace):
+    """Button Components Namespace."""
+
     Primary = staticmethod(PrimaryButton)
     Secondary = staticmethod(SecondaryButton)
     Icon = staticmethod(IconButton)

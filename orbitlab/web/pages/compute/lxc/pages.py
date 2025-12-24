@@ -6,7 +6,7 @@ from orbitlab.web.components import Buttons, Dialog, PageHeader
 from orbitlab.web.pages.compute.layout import compute_page
 
 from .dialogs import CreateApplianceDialog, DownloadApplianceDialog
-from .tables import BaseApplianceTable
+from .tables import BaseApplianceTable, CustomApplianceTable
 
 
 @rx.page("/compute/lxc/appliances")
@@ -28,7 +28,9 @@ def appliances_page() -> rx.Component:
             ),
         ),
         BaseApplianceTable(),
+        CustomApplianceTable(),
         DownloadApplianceDialog(),
         CreateApplianceDialog(),
+        # RunCustomApplianceWorkflowDialog(),
         class_name="w-full h-full flex flex-col",
     )

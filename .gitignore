@@ -3,6 +3,8 @@ assets/external/
 *.db
 .web
 TEST_ROOT/
+orbitlab/services/dns/
+.vscode/
 # ---> Pants
 # Daemon
 .pants.d/

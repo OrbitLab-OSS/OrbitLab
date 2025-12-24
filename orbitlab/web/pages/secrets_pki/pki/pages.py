@@ -1,10 +1,10 @@
 """OrbitLab PKI pages."""
-from typing import Final, Literal, TypeAlias
+from typing import Final, Literal
 
 import reflex as rx
 
 from orbitlab.data_types import FrontendEvents
-from orbitlab.manifest.schemas.secrets import CertificateManifest
+from orbitlab.manifest.secrets import CertificateManifest
 from orbitlab.web.components import Badge, Buttons, Dialog, GridList, PageHeader
 from orbitlab.web.pages.secrets_pki.layout import secrets_pki_page
 from orbitlab.web.states.utilities import EventGroup
@@ -19,7 +19,7 @@ from .dialogs import (
 )
 from .states import CAState, IntermediateCAState, ManageCA, ManageIntermediateCerts
 
-CertFilter: TypeAlias = Literal["All", "Valid", "Warning", "Expired"]
+type CertFilter = Literal["All", "Valid", "Warning", "Expired"]
 
 
 class CertificateAuthority(EventGroup):
@@ -32,9 +32,9 @@ class CertificateAuthority(EventGroup):
 
     @staticmethod
     @rx.event
-    async def manage_root_ca(state: ManageCA, ca: dict) -> FrontendEvents:
+    async def manage_root_ca(state: ManageCA, ca: dict | CertificateManifest) -> FrontendEvents:
         """Open the management dialog for a root certificate authority."""
-        state.manifest = CertificateManifest.model_validate(ca)
+        state.manifest = CertificateManifest.model_validate(ca) if isinstance(ca, dict) else ca
         return Dialog.open(ManageCertificateAuthorityDialog.dialog_id)
 
     def __new__(cls, ca: CertificateManifest) -> rx.Component:
@@ -110,9 +110,9 @@ class IntermediateCertificate(EventGroup):
 
     @staticmethod
     @rx.event
-    async def manage_intermediate_ca(state: ManageIntermediateCerts, ca: dict) -> FrontendEvents:
+    async def manage_intermediate_ca(state: ManageIntermediateCerts, ca: dict | CertificateManifest) -> FrontendEvents:
         """Open the management dialog for an intermediate certificate authority."""
-        state.manifest = CertificateManifest.model_validate(ca)
+        state.manifest = CertificateManifest.model_validate(ca) if isinstance(ca, dict) else ca
         return Dialog.open(ManageIntermediateCertDialog.dialog_id)
 
     def __new__(cls, ca: CertificateManifest) -> rx.Component:
@@ -205,9 +205,9 @@ class FilterButton(EventGroup):
 
     @staticmethod
     @rx.event
-    async def set_ca_filter(state: CAState, ca_filter: CertFilter) -> None:
+    async def set_ca_filter(state: CAState, cert_filter: CertFilter) -> None:
         """Set the certificate filter for certificate authorities."""
-        state.ca_filter = ca_filter
+        state.cert_filter = cert_filter
 
     @staticmethod
     @rx.event
@@ -215,13 +215,13 @@ class FilterButton(EventGroup):
         """Set the certificate filter for intermediate certificate authorities."""
         state.cert_filter = cert_filter
 
-    def __new__(cls, state: rx.State, label: str) -> rx.Component:
+    def __new__(cls, state: type[rx.State], label: CertFilter) -> rx.Component:
         """Create and return the button component."""
         if state == CAState:
             return rx.el.button(
                 label,
                 on_click=cls.set_ca_filter(label),
-                data_active=CAState.ca_filter == label,
+                data_active=CAState.cert_filter == label,
                 class_name=cls.class_name,
             )
         if state == IntermediateCAState:
@@ -259,7 +259,7 @@ def certificate_authorities_page() -> rx.Component:
             class_name="flex items-center gap-2 mb-8",
         ),
         GridList(
-            rx.foreach(CAState.filtered_cas, lambda ca: CertificateAuthority(ca)),
+            rx.foreach(CAState.filtered_certificates, lambda ca: CertificateAuthority(ca)),
         ),
         class_name="w-full h-full",
     )

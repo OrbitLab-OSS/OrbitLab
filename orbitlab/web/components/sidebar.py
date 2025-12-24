@@ -2,12 +2,13 @@
 
 import uuid
 from types import SimpleNamespace
-from typing import TypedDict
 
 import reflex as rx
 from pydantic import BaseModel
 
 from orbitlab.web.components.logo import OrbitLabLogo
+
+from .menu import Menu
 
 
 class SideBarStatus(BaseModel):
@@ -19,19 +20,14 @@ class SideBarStatus(BaseModel):
         show_settings_menu (bool): Whether the settings menu is shown. Defaults to False.
     """
 
-    active_page: str = ""
     collapsed: bool = False
     show_settings_menu: bool = False
 
 
 class SideBarStateManager(rx.State):
-    """Manages the registration and toggle state of sidebars.
+    """Manages the registration and toggle state of sidebars."""
 
-    Attributes:
-        registered (dict[str, SideBarStatus]): A dictionary mapping sidebar identifiers to their open/closed state.
-    """
-
-    registered: dict[str, SideBarStatus] = rx.field(default_factory=dict)
+    registered: rx.Field[dict[str, SideBarStatus]] = rx.field(default_factory=dict)
 
     @rx.var
     def current_path(self) -> str:
@@ -40,11 +36,7 @@ class SideBarStateManager(rx.State):
 
     @rx.event
     async def register(self, sidebar_id: str) -> None:
-        """Register a sidebar by its identifier and set its state to False.
-
-        Parameters:
-            sidebar_id (str): The identifier of the sidebar to register.
-        """
+        """Register a sidebar by its identifier and set its state to False."""
         self.registered[sidebar_id] = SideBarStatus()
 
     @rx.event
@@ -54,15 +46,11 @@ class SideBarStateManager(rx.State):
 
     @rx.event
     async def toggle_settings_menu(self, sidebar_id: str) -> None:
-        """Toggle the state of the sidebar with the given sidebar_id.
-
-        Parameters:
-            sidebar_id (str): The identifier of the sidebar to toggle.
-        """
+        """Toggle the state of the sidebar with the given sidebar_id."""
         self.registered[sidebar_id].show_settings_menu = not self.registered[sidebar_id].show_settings_menu
 
 
-class NavItem(TypedDict):
+class SidebarNavItem(BaseModel):
     """A navigation item for the sidebar."""
 
     icon: str
@@ -70,12 +58,8 @@ class NavItem(TypedDict):
     href: str
 
 
-class SectionHeader(TypedDict):
-    """A section header for organizing navigation items in the sidebar.
-
-    Attributes:
-        title (str): The title text to display for the section header.
-    """
+class SidebarSectionHeader(BaseModel):
+    """A section header for organizing navigation items in the sidebar."""
     title: str
 
 
@@ -85,92 +69,15 @@ class SideBarRoot:
     sidebar_id: str
 
     @classmethod
-    def __settings_menu__(cls) -> rx.Component:
-        """Create the settings menu component for the sidebar.
-
-        Returns:
-            A component containing the settings menu with cluster settings, administration, and dark mode toggle.
-        """
-        return rx.el.div(
-            rx.el.div(
-                rx.el.button(
-                    "Cluster Settings",
-                    class_name=(
-                        "w-full text-left px-3 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 "
-                        "dark:hover:bg-gray-700 rounded-md"
-                    ),
-                ),
-                rx.el.button(
-                    "Administration",
-                    class_name=(
-                        "w-full text-left px-3 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 "
-                        "dark:hover:bg-gray-700 rounded-md"
-                    ),
-                ),
-                rx.el.div(class_name="my-1 h-px bg-gray-200 dark:bg-gray-700"),
-                rx.el.div(
-                    rx.el.span(
-                        "Dark Mode",
-                        class_name="text-sm text-gray-700 dark:text-gray-300",
-                    ),
-                    rx.el.button(
-                        rx.el.span(
-                            rx.icon("sun", size=12, class_name="text-yellow-500"),
-                            rx.icon("moon", size=12, class_name="text-white"),
-                            class_name=(
-                                "flex items-center justify-start dark:justify-end h-4 w-9 rounded-full bg-gray-200 "
-                                "dark:bg-sky-500 transition-all duration-300"
-                            ),
-                        ),
-                        on_click=rx.toggle_color_mode,
-                        class_name="p-0.5",
-                    ),
-                    class_name="flex items-center justify-between px-3 py-2",
-                ),
-                data_active=SideBarStateManager.registered.get(cls.sidebar_id).show_settings_menu,
-                class_name=(
-                    "fixed bottom-10 left-2 z-100 mb-3 p-2 bg-white dark:bg-gray-800 border border-gray-200 "
-                    "dark:border-gray-700 rounded-xl shadow-lg data-[active=false]:hidden"
-                ),
-            ),
-            rx.el.button(
-                rx.el.div(
-                    rx.icon("settings", size=20),
-                    rx.el.span(
-                        "Settings",
-                        data_collapsed=SideBarStateManager.registered.get(cls.sidebar_id).collapsed,
-                        class_name="text-sm font-medium data-[collapsed=true]:hidden",
-                    ),
-                    class_name="flex items-center gap-3",
-                ),
-                on_click=lambda: SideBarStateManager.toggle_settings_menu(cls.sidebar_id),
-                data_collapsed=SideBarStateManager.registered.get(cls.sidebar_id).collapsed,
-                class_name=(
-                    "flex items-start w-full px-3 py-2.5 rounded-lg text-gray-500 dark:text-gray-400 hover:bg-gray-100 "
-                    "dark:hover:bg-gray-800 hover:text-gray-800 dark:hover:text-gray-200 "
-                    "data-[collapsed=true]:justify-center"
-                ),
-            ),
-            class_name="relative",
-        )
-
-    @classmethod
-    def __section_header__(cls, header: SectionHeader) -> rx.Component:
-        """Create a section header component for the sidebar.
-
-        Args:
-            header: The section header configuration containing the title.
-
-        Returns:
-            A component representing the section header.
-        """
+    def __section_header__(cls, header: SidebarSectionHeader, collapsed: rx.vars.BooleanVar) -> rx.Component:
+        """Create a section header component for the sidebar."""
         return rx.el.div(
             rx.cond(
-                SideBarStateManager.registered.get(cls.sidebar_id).collapsed,
+                collapsed,
                 " •",
-                header["title"].upper(),
+                header.title.upper(),
             ),
-            data_collapsed=SideBarStateManager.registered.get(cls.sidebar_id).collapsed,
+            data_collapsed=collapsed,
             class_name=(
                 "px-3 pt-4 pb-1 text-xs font-semibold tracking-wider uppercase "
                 "text-gray-500 dark:text-gray-400 "
@@ -179,28 +86,21 @@ class SideBarRoot:
         )
 
     @classmethod
-    def __nav_item__(cls, nav_item: NavItem) -> rx.Component:
-        """Create a navigation item button for the sidebar.
-
-        Args:
-            nav_item: The navigation item configuration containing icon and text.
-
-        Returns:
-            A button component representing the navigation item.
-        """
+    def __nav_item__(cls, nav_item: SidebarNavItem, collapsed: rx.vars.BooleanVar) -> rx.Component:
+        """Create a navigation item button for the sidebar."""
         return rx.el.button(
             rx.el.div(
-                rx.icon(nav_item["icon"], size=20, class_name="transition-colors duration-200"),
+                rx.icon(nav_item.icon, size=20, class_name="transition-colors duration-200"),
                 rx.el.span(
-                    nav_item["text"],
-                    data_collapsed=SideBarStateManager.registered.get(cls.sidebar_id).collapsed,
+                    nav_item.text,
+                    data_collapsed=collapsed,
                     class_name="text-sm font-medium transition-all duration-200 data-[collapsed=true]:hidden",
                 ),
                 class_name="flex items-center gap-3",
             ),
-            on_click=rx.redirect(nav_item["href"]),
-            data_active=SideBarStateManager.current_path == nav_item["href"],
-            data_collapsed=SideBarStateManager.registered.get(cls.sidebar_id).collapsed,
+            on_click=rx.redirect(nav_item.href),
+            data_active=SideBarStateManager.current_path == nav_item.href,
+            data_collapsed=collapsed,
             class_name=(
                 "flex items-start w-full px-3 py-2.5 rounded-lg data-[active=true]:bg-sky-100 "
                 "data-[active=true]:text-sky-600 data-[active=true]:dark:bg-sky-900/50 "
@@ -212,24 +112,10 @@ class SideBarRoot:
             ),
         )
 
-    def __new__(
-        cls,
-        *nav_items: NavItem | SectionHeader,
-        title: str = "OrbitLab",
-    ) -> tuple[rx.Component, str]:
-        """Create a new sidebar component instance.
-
-        Parameters:
-            nav_items: A sequence of navigation items to display in the sidebar.
-            title: The sidebar Title.
-
-        Returns:
-            A Reflex component representing the complete sidebar and its ID.
-
-        Raises:
-            RuntimeError: If the default_page is not found in the nav_items.
-        """
+    def __new__(cls, *nav_items: SidebarNavItem | SidebarSectionHeader, title: str = "OrbitLab") -> rx.Component:
+        """Create a new sidebar component instance."""
         cls.sidebar_id = str(uuid.uuid4())
+        collapsed = SideBarStateManager.registered.get(cls.sidebar_id, {}).to(dict).get("collapsed", False).to(bool)
         return rx.el.aside(
             rx.el.div(
                 rx.el.div(
@@ -238,7 +124,7 @@ class SideBarRoot:
                             OrbitLabLogo(),
                             rx.el.span(
                                 title,
-                                data_collapsed=SideBarStateManager.registered.get(cls.sidebar_id).collapsed,
+                                data_collapsed=collapsed,
                                 class_name=(
                                     "text-lg font-bold text-nowrap text-gray-800 dark:text-gray-100 "
                                     "data-[collapsed=true]:hidden"
@@ -254,37 +140,83 @@ class SideBarRoot:
                                 class_name="text-gray-500 dark:text-gray-400",
                             ),
                             on_click=lambda: SideBarStateManager.toggle(cls.sidebar_id),
-                            data_collapsed=SideBarStateManager.registered.get(cls.sidebar_id).collapsed,
+                            data_collapsed=collapsed,
                             class_name=(
                                 "p-1.5 rounded-md hover:bg-gray-100 dark:hover:bg-gray-800 "
                                 "data-[collapsed=true]:rotate-180"
                             ),
                             style={"transition": "transform 0.3s ease-in-out"},
                         ),
-                        data_collapsed=SideBarStateManager.registered.get(cls.sidebar_id).collapsed,
+                        data_collapsed=collapsed,
                         class_name="flex items-center justify-between p-3 data-[collapsed=true]:flex-col",
                     ),
                     rx.el.nav(
                         *[
-                            cls.__section_header__(item) if "title" in item else cls.__nav_item__(item)
+                            cls.__section_header__(header=item, collapsed=collapsed)
+                            if isinstance(item, SidebarSectionHeader) else
+                            cls.__nav_item__(nav_item=item, collapsed=collapsed)
                             for item in nav_items
                         ],
                         class_name="flex flex-col gap-1 p-2",
                     ),
                 ),
-                rx.el.div(cls.__settings_menu__(), class_name="p-2"),
+                rx.el.div(
+                    Menu(
+                        rx.el.button(
+                            rx.el.div(
+                                rx.icon("settings", size=20),
+                                rx.el.span(
+                                    "Settings",
+                                    data_collapsed=collapsed,
+                                    class_name="text-sm font-medium data-[collapsed=true]:hidden",
+                                ),
+                                class_name="flex items-center gap-3",
+                            ),
+                            data_collapsed=collapsed,
+                            class_name=(
+                                "flex items-start w-full px-3 py-2.5 rounded-lg text-gray-500 dark:text-gray-400 "
+                                "hover:bg-gray-100 dark:hover:bg-gray-800 hover:text-gray-800 "
+                                "dark:hover:text-gray-200 data-[collapsed=true]:justify-center"
+                            ),
+                        ),
+                        Menu.Item(
+                            "Cluster Settings",
+                            on_click=rx.console_log("Cluster Settings"), #TODO: Add Cluster settings config page/dialog
+                        ),
+                        Menu.Item(
+                            "Administration",
+                            on_click=rx.console_log("Administration"), #TODO: Add admin settings config page/dialog
+                        ),
+                        Menu.Separator(),
+                        Menu.Item(
+                            rx.color_mode_cond(
+                                light=rx.el.div(
+                                    rx.icon("moon", size=12, class_name="text-[#1E63E9]"),
+                                    rx.text("Dark Mode"),
+                                    class_name="w-full flex items-center justify-between",
+                                ),
+                                dark=rx.el.div(
+                                    rx.icon("sun", size=12, class_name="text-amber-500"),
+                                    rx.text("Light Mode"),
+                                    class_name="w-full flex items-center justify-between",
+                                ),
+                            ),
+                            on_click=rx.toggle_color_mode,
+                        ),
+                        data_collapsed=collapsed,
+                    ),
+                    class_name="p-2",
+                ),
                 class_name="flex flex-col justify-between h-full",
             ),
-            data_collapsed=SideBarStateManager.registered.get(cls.sidebar_id).collapsed,
+            data_collapsed=collapsed,
             on_mount=SideBarStateManager.register(cls.sidebar_id),
             class_name=(
                 "h-screen flex flex-col justify-between "
                 "border-r border-gray-200 dark:border-white/[0.08] "
                 "transition-all duration-300 ease-in-out "
                 "w-64 data-[collapsed=true]:w-14 "
-                # === Light mode chrome ===
                 "bg-gradient-to-b from-gray-50/95 to-gray-200/80 "
-                # === Dark mode chrome ===
                 "dark:from-[#0E1015]/95 dark:to-[#181B22]/90 "
                 "shadow-[inset_0_0_0.5px_rgba(255,255,255,0.1)] "
                 "hover:ring-1 hover:ring-[#36E2F4]/30"
@@ -293,17 +225,11 @@ class SideBarRoot:
 
 
 class SideBarNamespace(SimpleNamespace):
-    """A namespace for sidebar-related components and utilities.
-
-    Attributes:
-        __call__: The main SideBarRoot component factory.
-        NavItem: TypedDict for navigation item structure.
-        Manager: State manager for sidebar registration and control.
-    """
+    """A namespace for sidebar-related components and utilities."""
 
     __call__ = staticmethod(SideBarRoot)
-    SectionHeader = staticmethod(SectionHeader)
-    NavItem = staticmethod(NavItem)
+    SectionHeader = staticmethod(SidebarSectionHeader)
+    NavItem = staticmethod(SidebarNavItem)
     Manager = SideBarStateManager
 
 

@@ -4,48 +4,38 @@ import json
 
 import reflex as rx
 
-from orbitlab.clients.proxmox.client import Proxmox
-from orbitlab.clients.proxmox.models import ApplianceInfo
-from orbitlab.data_types import ApplianceType, CustomApplianceStepType, ManifestKind, StorageContentType
-from orbitlab.manifest.client import ManifestClient
-from orbitlab.manifest.schemas.appliances import BaseApplianceManifest, FilePush, Step
+from orbitlab.clients.proxmox.appliances import ApplianceInfo, ProxmoxAppliances
+from orbitlab.data_types import ApplianceType, CustomApplianceStepType
+from orbitlab.manifest.appliances import FilePush, Step
+from orbitlab.manifest.nodes import NodeManifest
 from orbitlab.web import components
-from orbitlab.web.states.certificates import CertificateManifestsState
+from orbitlab.web.states.manifests import ManifestsState
 
-from .models import ApplianceItemDownload
+from .models import ApplianceItemDownload, Network
 
 
-class DownloadApplianceState(rx.State):
-    """State management for downloading appliances from Proxmox.
+class DownloadApplianceState(ManifestsState):
+    """State management for downloading appliances from Proxmox."""
 
-    This class handles the retrieval and filtering of available appliances
-    that can be downloaded from Proxmox nodes, including both system and
-    turnkey appliances.
-    """
-
-    appliance_view: ApplianceType = ApplianceType.SYSTEM
-    query_string: str = ""
-    download_configs: dict[str, ApplianceItemDownload] = rx.field(default_factory=dict)
-    existing: list[str] = rx.field(
-        default_factory=lambda: ManifestClient().get_existing_by_kind(kind=ManifestKind.BASE_APPLIANCE),
-    )
+    appliance_view: rx.Field[ApplianceType] = rx.field(default=ApplianceType.SYSTEM)
+    query_string: rx.Field[str] = rx.field(default="")
+    download_configs: rx.Field[dict[str, ApplianceItemDownload]] = rx.field(default_factory=dict)
 
     @rx.var
     def available_appliances(self) -> list[ApplianceInfo]:
         """Get the list of available appliances from Proxmox that are not already downloaded."""
         appliances = []
-        try:
-            node = next(iter(ManifestClient().get_existing_by_kind(kind=ManifestKind.NODE).keys()))
-        except StopIteration:
+        node = next(iter(self.node_names), None)
+        if not node:
             return appliances
-        else:
-            download_configs = {}
-            for appliance in Proxmox().list_appliances(node=node).root:
-                if appliance.template in self.existing:
-                    continue
-                appliances.append(appliance)
-                download_configs[appliance.template] = ApplianceItemDownload()
-            self.download_configs = download_configs
+
+        download_configs = {}
+        for appliance in ProxmoxAppliances().list_appliances():
+            if appliance.template in self.base_appliance_names:
+                continue
+            appliances.append(appliance)
+            download_configs[appliance.template] = ApplianceItemDownload()
+        self.download_configs = download_configs
         return sorted(appliances, key=lambda apl: apl.template)
 
     @rx.var
@@ -75,44 +65,54 @@ class DownloadApplianceState(rx.State):
     @rx.var
     def available_nodes(self) -> list[str]:
         """Get the list of available node names from the manifest client."""
-        return list(ManifestClient().get_existing_by_kind(kind=ManifestKind.NODE))
+        return NodeManifest.get_existing()
 
 
-class CreateApplianceState(CertificateManifestsState):
+class CreateApplianceState(ManifestsState):
     """State management for custom appliance creation dialog.
 
     This state class manages the form data, workflow steps configuration,
     and upload progress for creating custom appliances from base appliances.
     """
+    memory_gb: int = 2
+    swap_gb: int = 1
     form_data: rx.Field[dict] = rx.field(default_factory=dict)
     step_order: rx.Field[list[components.SortableItem]] = rx.field(default_factory=list)
     steps_config: rx.Field[dict[int, Step]] = rx.field(default_factory=dict)
-    uploading: rx.Field[bool] = False
-    upload_progress: rx.Field[int] = 0
-    script_step: rx.Field[int | None] = None
-    script_data: rx.Field[str] = ""
-    files_step: rx.Field[int | None] = None
-    files_data: rx.Field[list[FilePush] | None] = None
-
-    @rx.var(cache=False)
-    def base_appliances(self) -> list[str]:
-        """Get the list of available base appliance names from the manifest client."""
-        return list(ManifestClient().get_existing_by_kind(kind=ManifestKind.BASE_APPLIANCE).keys())
+    network_order: rx.Field[list[components.SortableItem]] = rx.field(default_factory=list)
+    networks: rx.Field[dict[int, Network]] = rx.field(default_factory=dict)
+    uploading: rx.Field[bool] = rx.field(default=False)
+    upload_progress: rx.Field[int] = rx.field(default=0)
+    script_value: rx.Field[str] = rx.field(default="")
+    default_script_value: rx.Field[str] = rx.field(default="")
+    files_data: rx.Field[list[FilePush] | None]  = rx.field(default=None)
 
     @rx.var(cache=False)
     def nodes(self) -> list[str]:
         """Get the list of available node names from the manifest client."""
-        return list(ManifestClient().get_existing_by_kind(kind=ManifestKind.NODE))
+        return NodeManifest.get_existing()
+
+    @rx.var
+    def node_manifest(self) -> NodeManifest | None:
+        if self.node:
+            return NodeManifest.load(self.node)
+        return None
 
     @rx.var
     def available_storage(self) -> list[str]:
         """Get the available storage options for the selected node."""
-        if self.node:
-            node_manifest = ManifestClient().load(self.node, kind=ManifestKind.NODE)
-            return [
-                store.name for store in node_manifest.spec.storage.root if StorageContentType.VZTMPL in store.content
-            ]
+        # TODO: Fix
         return []
+
+    @rx.var
+    def available_networks(self) -> list[str]:
+        return []
+        # TODO: Fix (use Sectors instead)
+
+    @rx.var
+    def available_subnets(self) -> dict[str, dict[str, str]]:
+        return {}
+        # TODO: Fix (use Sectors instead)
 
     @rx.var
     def step_types(self) -> list[str]:
@@ -146,28 +146,6 @@ class CreateApplianceState(CertificateManifestsState):
         return json.loads(certs)
 
     @rx.var
-    def default_script_value(self) -> str:
-        """Get the default script value for the currently selected script step."""
-        if self.script_step is not None:
-            return self.steps_config[self.script_step].script or ""
-        return ""
-
-    @rx.var
     def step_names_in_order(self) -> list[str]:
         """Get the names of workflow steps in their configured order."""
         return [self.steps_config[step["id"]].name for step in self.step_order]
-
-
-def get_base_appliances() -> list[BaseApplianceManifest]:
-    """Get all available base appliance manifests."""
-    client = ManifestClient()
-    return [
-        client.load(name, kind=ManifestKind.BASE_APPLIANCE)
-        for name in client.get_existing_by_kind(kind=ManifestKind.BASE_APPLIANCE)
-    ]
-
-
-class AppliancesState(rx.State):
-    """State management for appliance-related data."""
-
-    base_appliances: list[BaseApplianceManifest] = rx.field(default_factory=get_base_appliances)

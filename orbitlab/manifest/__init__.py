@@ -1,1 +1,1 @@
-"""Manifest Client."""
+"""Manifest Schemas."""

@@ -6,11 +6,13 @@ import reflex as rx
 
 from orbitlab.web.components.sidebar import SideBar
 from orbitlab.web.pages.layout import DefaultLayout
+from orbitlab.web.utilities import require_configuration
 
 
-def nodes_page(page: Callable[[], rx.Component]) -> rx.Component:
+def nodes_page(page: Callable[[], rx.Component]) -> Callable[[], rx.Component]:
     """Create a nodes page layout wrapper."""
 
+    @require_configuration
     def wrapped() -> rx.Component:
         return DefaultLayout(
             SideBar(
