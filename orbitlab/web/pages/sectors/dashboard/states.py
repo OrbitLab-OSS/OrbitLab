@@ -59,8 +59,11 @@ class SectorAppliancesTableState(CacheBuster, rx.State):
     @rx.var(deps=["_cached_gateway_appliance"])
     def gateway_appliance(self) -> str:
         """Get the gateway appliance name from the cluster manifest."""
-        cluster_manifest = ClusterManifest.load(name=next(iter(ClusterManifest.get_existing())))
-        return cluster_manifest.metadata.gateway_appliance
+        name = next(iter(ClusterManifest.get_existing()), None)
+        if name:
+            cluster_manifest = ClusterManifest.load(name=name)
+            return cluster_manifest.metadata.gateway_appliance
+        return ""
 
     @rx.var
     def downloaded_gateway_version(self) -> str:
