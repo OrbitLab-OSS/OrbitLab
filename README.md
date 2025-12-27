@@ -4,6 +4,7 @@
 > ***Do not run in production. Use at your own risk.***
 
 [Screenshots](/docs/orbitlab_screenshots.md)
+[Roadmap](/docs/roadmap.md)
 
 # OrbitLab
 
