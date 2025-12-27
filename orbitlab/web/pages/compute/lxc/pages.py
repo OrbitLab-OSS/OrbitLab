@@ -5,7 +5,7 @@ import reflex as rx
 from orbitlab.web.components import Buttons, Dialog, PageHeader
 from orbitlab.web.pages.compute.layout import compute_page
 
-from .dialogs import CreateApplianceDialog, DownloadApplianceDialog
+from .dialogs import CustomApplianceDialog, DownloadApplianceDialog
 from .tables import BaseApplianceTable, CustomApplianceTable
 
 
@@ -19,7 +19,7 @@ def appliances_page() -> rx.Component:
             Buttons.Secondary(
                 "Create Custom Appliance",
                 icon="pen",
-                on_click=Dialog.open(CreateApplianceDialog.dialog_id),
+                on_click=Dialog.open(CustomApplianceDialog.dialog_id),
             ),
             Buttons.Primary(
                 "Download Base Appliance",
@@ -30,7 +30,5 @@ def appliances_page() -> rx.Component:
         BaseApplianceTable(),
         CustomApplianceTable(),
         DownloadApplianceDialog(),
-        CreateApplianceDialog(),
-        # RunCustomApplianceWorkflowDialog(),
         class_name="w-full h-full flex flex-col",
     )

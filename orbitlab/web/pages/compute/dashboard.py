@@ -2,7 +2,7 @@
 
 import reflex as rx
 
-from orbitlab.web.components import PageHeader
+from orbitlab.web import components
 
 from .layout import compute_page
 
@@ -12,8 +12,9 @@ from .layout import compute_page
 def compute_dashboard() -> rx.Component:
     """Proxmox Nodes Page."""
     return rx.el.div(
-        PageHeader(
+        components.PageHeader(
             "Compute Management",
+            components.Buttons.Primary("Create LXC"),
         ),
         class_name="w-full h-full",
     )

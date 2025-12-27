@@ -9,8 +9,16 @@ import reflex as rx
 from orbitlab.clients.proxmox import ProxmoxNetworks
 from orbitlab.clients.proxmox.appliances import ProxmoxAppliances
 from orbitlab.constants import NetworkSettings
-from orbitlab.data_types import ClusterMode, FrontendEvents, InitializationState, OrbitLabApplianceType
+from orbitlab.data_types import (
+    ClusterMode,
+    FrontendEvents,
+    InitializationState,
+    OrbitLabApplianceType,
+    StorageContentType,
+    StorageProfile,
+)
 from orbitlab.manifest.cluster import ClusterManifest
+from orbitlab.manifest.nodes import NodeManifest
 from orbitlab.services.discovery import DiscoveryService
 from orbitlab.web.components import Buttons, Callout, Dialog, FieldSet, Input, OrbitLabLogo, Select
 from orbitlab.web.states.utilities import EventGroup
@@ -29,22 +37,71 @@ class SplashPageState(rx.State):
     subtitle: rx.Field[str] = rx.field(default="")
     initialization_state: rx.Field[InitializationState] = rx.field(default_factory=_initialized)
     initialization_error: rx.Field[str] = rx.field(default="")
-    nodes: rx.Field[list[str]] = rx.field(default_factory=list)
-    vztmpls: rx.Field[list[str]] = rx.field(default_factory=list)
-    rootdirs: rx.Field[list[str]] = rx.field(default_factory=list)
-    backups: rx.Field[list[str]] = rx.field(default_factory=list)
-    images: rx.Field[list[str]] = rx.field(default_factory=list)
-    snippets: rx.Field[list[str]] = rx.field(default_factory=list)
-    isos: rx.Field[list[str]] = rx.field(default_factory=list)
-    imports: rx.Field[list[str]] = rx.field(default_factory=list)
     cluster_mode: rx.Field[ClusterMode | None] = rx.field(default=None)
+    node: rx.Field[str] = rx.field(default="")
+
+    @rx.var
+    def nodes(self) -> list[str]:
+        """Return a list of node names once cluster_mode is set."""
+        if self.cluster_mode is None:
+            return []
+        return ClusterManifest.load(name=next(iter(ClusterManifest.get_existing()))).list_nodes()
+
+    @rx.var
+    def vztmpls(self) -> list[str]:
+        """Return a list of storage names containing LXC templates for the selected node."""
+        if self.node:
+            return NodeManifest.load(name=self.node).list_storages(content_type=StorageContentType.VZTMPL)
+        return []
+
+    @rx.var
+    def rootdirs(self) -> list[str]:
+        """Return a list of storage names containing root directories for the selected node."""
+        if self.node:
+            return NodeManifest.load(name=self.node).list_storages(content_type=StorageContentType.ROOTDIR)
+        return []
+
+    @rx.var
+    def backups(self) -> list[str]:
+        """Return a list of storage names containing backups for the selected node."""
+        if self.node:
+            return NodeManifest.load(name=self.node).list_storages(content_type=StorageContentType.BACKUP)
+        return []
+
+    @rx.var
+    def images(self) -> list[str]:
+        """Return a list of storage names containing images for the selected node."""
+        if self.node:
+            return NodeManifest.load(name=self.node).list_storages(content_type=StorageContentType.IMAGES)
+        return []
+
+    @rx.var
+    def snippets(self) -> list[str]:
+        """Return a list of storage names containing snippets for the selected node."""
+        if self.node:
+            return NodeManifest.load(name=self.node).list_storages(content_type=StorageContentType.SNIPPETS)
+        return []
+
+    @rx.var
+    def isos(self) -> list[str]:
+        """Return a list of storage names containing ISO images for the selected node."""
+        if self.node:
+            return NodeManifest.load(name=self.node).list_storages(content_type=StorageContentType.ISO)
+        return []
+
+    @rx.var
+    def imports(self) -> list[str]:
+        """Return a list of storage names containing importable content for the selected node."""
+        if self.node:
+            return NodeManifest.load(name=self.node).list_storages(content_type=StorageContentType.IMPORT)
+        return []
 
     @rx.var
     def storage_profiles(self) -> dict[str, str]:
         """Return available storage profiles for OrbitLab configuration."""
         match self.cluster_mode:
             case ClusterMode.LOCAL:
-                return {"Local (ZFS/LVM)": "local"}  # TODO: detect ZFS/LVM configurations
+                return {"Local (ZFS/LVM)": "local"}
             case ClusterMode.CLUSTER:
                 return {
                     "Local (ZFS/LVM)": "local",
@@ -52,6 +109,13 @@ class SplashPageState(rx.State):
                 }
             case _:
                 return {}
+
+    @rx.var
+    def default_storage_profile(self) -> str:
+        """Return the default storage profile based on available options."""
+        if self.cluster_mode == ClusterMode.LOCAL:
+            return "local"
+        return ""
 
 
 class ConfigureDefaultsDialog(EventGroup):
@@ -61,12 +125,14 @@ class ConfigureDefaultsDialog(EventGroup):
     def run_download(cls) -> None:
         """Download the latest OrbitLab gateway appliance and update the cluster manifest."""
         cluster_manifest = ClusterManifest.load(name=next(iter(ClusterManifest.get_existing())))
-        # TODO: Use storage from selected profile
+        storage = cluster_manifest.spec.defaults.storage.vztmpl or \
+            cluster_manifest.default_node().get_storage(content_type=StorageContentType.VZTMPL)
         latest_gateway = ProxmoxAppliances().download_latest_orbitlab_appliance(
-            storage="local",
+            storage=storage,
             appliance_type=OrbitLabApplianceType.SECTOR_GATEWAY,
         )
         cluster_manifest.metadata.gateway_appliance = latest_gateway
+        cluster_manifest.metadata.initialized = True
         cluster_manifest.save()
 
     @staticmethod
@@ -84,8 +150,15 @@ class ConfigureDefaultsDialog(EventGroup):
     async def configure_defaults(state: SplashPageState, form: dict) -> FrontendEvents:
         """Finalize OrbitLab settings by saving the cluster manifest with user-provided configuration."""
         cluster_manifest = ClusterManifest.load(name=next(iter(ClusterManifest.get_existing())))
-        cluster_manifest.spec.defaults.storage_profile = form["storage_profile"]
-        cluster_manifest.spec.defaults.node = form.get("primary_node", "")
+        cluster_manifest.spec.defaults.storage_profile = StorageProfile(value=form["storage_profile"])
+        cluster_manifest.spec.defaults.node = form["primary_node"]
+        cluster_manifest.spec.defaults.storage.backup = form.get("backup", "")
+        cluster_manifest.spec.defaults.storage.images = form.get("images", "")
+        cluster_manifest.spec.defaults.storage.rootdir = form.get("rootdir", "")
+        cluster_manifest.spec.defaults.storage.snippets = form.get("snippets", "")
+        cluster_manifest.spec.defaults.storage.vztmpl = form.get("vztmpl", "")
+        cluster_manifest.spec.defaults.storage.iso = form.get("iso", "")
+        cluster_manifest.spec.defaults.storage.imports = form.get("imports", "")
         cluster_manifest.save()
         async with state:
             state.initialization_state = InitializationState.RUNNING
@@ -93,6 +166,12 @@ class ConfigureDefaultsDialog(EventGroup):
             Dialog.close(ConfigureDefaultsDialog.dialog_id),
             ConfigureDefaultsDialog.setup_appliances,
         ]
+
+    @staticmethod
+    @rx.event
+    async def set_node(state: SplashPageState, node: str) -> None:
+        """Set the selected node in the state."""
+        state.node = node
 
     dialog_id: Final = "configure-defaults-dialog"
     form_id: Final = "configure-defaults-form"
@@ -102,35 +181,103 @@ class ConfigureDefaultsDialog(EventGroup):
         return Dialog(
             "Configure OrbitLab Defaults",
             rx.el.form(
-                Callout(
-                    "All except the Storage Profile are optional. These settings can be changed later, if needed.",
-                    type="info",
-                ),
                 FieldSet(
-                    "General",
+                    "General (Required)",
                     FieldSet.Field(
                         "Storage Profile: ",
                         Select(
                             SplashPageState.storage_profiles,
+                            default_value=SplashPageState.default_storage_profile,
                             placeholder="Select a storage profile",
                             form=cls.form_id,
                             name="storage_profile",
                             required=True,
                         ),
                     ),
-                ),
-                FieldSet(
-                    "Default Settings",
                     FieldSet.Field(
                         "Proxmox Node: ",
                         Select(
-                            rx.Var.create(SplashPageState.nodes).to(list[str]),
+                            SplashPageState.nodes,
+                            on_change=cls.set_node,
                             placeholder="Select Proxmox Node",
                             form=cls.form_id,
                             name="primary_node",
+                            required=True,
                         ),
                     ),
-                    # TODO: Add Storage Defaults
+                ),
+                FieldSet(
+                    "Storage (Optional)",
+                    FieldSet.Field(
+                        "LXC Template: ",
+                        Select(
+                            SplashPageState.vztmpls,
+                            placeholder="Select Storage",
+                            form=cls.form_id,
+                            name="vztmpl",
+                            disabled=SplashPageState.vztmpls.length() == 0,
+                        ),
+                    ),
+                    FieldSet.Field(
+                        "LX Root FS: ",
+                        Select(
+                            SplashPageState.rootdirs,
+                            placeholder="Select Storage",
+                            form=cls.form_id,
+                            name="rootdir",
+                            disabled=SplashPageState.rootdirs.length() == 0,
+                        ),
+                    ),
+                    FieldSet.Field(
+                        "VM Disks: ",
+                        Select(
+                            SplashPageState.images,
+                            placeholder="Select Storage",
+                            form=cls.form_id,
+                            name="images",
+                            disabled=SplashPageState.images.length() == 0,
+                        ),
+                    ),
+                    FieldSet.Field(
+                        "Snippets: ",
+                        Select(
+                            SplashPageState.snippets,
+                            placeholder="Select Storage",
+                            form=cls.form_id,
+                            name="snippets",
+                            disabled=SplashPageState.snippets.length() == 0,
+                        ),
+                    ),
+                    FieldSet.Field(
+                        "ISOs: ",
+                        Select(
+                            SplashPageState.isos,
+                            placeholder="Select Storage",
+                            form=cls.form_id,
+                            name="iso",
+                            disabled=SplashPageState.isos.length() == 0,
+                        ),
+                    ),
+                    FieldSet.Field(
+                        "Imports: ",
+                        Select(
+                            SplashPageState.imports,
+                            placeholder="Select Storage",
+                            form=cls.form_id,
+                            name="import",
+                            disabled=SplashPageState.imports.length() == 0,
+                        ),
+                    ),
+                    FieldSet.Field(
+                        "Back Ups: ",
+                        Select(
+                            SplashPageState.backups,
+                            placeholder="Select Storage",
+                            form=cls.form_id,
+                            name="backup",
+                            disabled=SplashPageState.backups.length() == 0,
+                        ),
+                    ),
                 ),
                 id=cls.form_id,
                 on_submit=cls.configure_defaults,
@@ -140,6 +287,7 @@ class ConfigureDefaultsDialog(EventGroup):
                 class_name="w-full flex justify-end mt-4",
             ),
             dialog_id=cls.dialog_id,
+            class_name="max-w-[50vw] w-[50vw] max-h-[80vh] h-[80vh]",
         )
 
 
@@ -268,6 +416,7 @@ class SplashPage(EventGroup):
                 state.subtitle = f"Configuring {node.name} (this may take a few minutes)..."
             await rx.run_in_thread(discovery_service.NodeManagement(node.name).configure_networking)
         async with state:
+            state.cluster_mode = cluster_manifest.metadata.mode
             state.initialization_state = InitializationState.BACKPLANE
         return Dialog.open(ConfigureBackplaneDialog.dialog_id)
 
@@ -280,18 +429,23 @@ class SplashPage(EventGroup):
         async with state:
             state.subtitle = "Configuring Backplane..."
 
+        skip_controller = False
         if controller := ProxmoxNetworks().describe_evpn_controller():
-            async with state:
-                state.initialization_state = InitializationState.ABORTED
-                state.initialization_error = (
-                    f"An EVPN Controller '{controller.controller}' already exists. "
-                    "Only one EVPN controller may exist in Proxmox. Delete the current controller and retry."
-                )
-            return Dialog.open(InvalidProxmoxConfigurationDialog.dialog_id)
-        await rx.run_in_thread(lambda: ProxmoxNetworks().create_backplane(cluster=cluster_manifest))
+            if not controller.is_orbitlab_controller:
+                async with state:
+                    state.initialization_state = InitializationState.ABORTED
+                    state.initialization_error = (
+                        f"An EVPN Controller '{controller.controller}' already exists. "
+                        "Only one EVPN controller may exist in Proxmox. Delete the current controller and retry."
+                    )
+                return Dialog.open(InvalidProxmoxConfigurationDialog.dialog_id)
+            skip_controller = True
+        await rx.run_in_thread(
+            lambda: ProxmoxNetworks().create_backplane(cluster=cluster_manifest, skip_controller=skip_controller),
+        )
+        cluster_manifest.spec.backplane.create_ipam_manifest()
         async with state:
             state.initialization_state = InitializationState.FINALIZE
-            state.nodes = [node.name for node in cluster_manifest.get_nodes()]
         return Dialog.open(ConfigureDefaultsDialog.dialog_id)
 
     @staticmethod

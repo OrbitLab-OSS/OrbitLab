@@ -5,6 +5,7 @@ from typing import Annotated
 
 from pydantic import BaseModel, Field
 
+from orbitlab.clients.proxmox.cluster.models import NodeStatus
 from orbitlab.data_types import ManifestKind, StorageContentType
 
 from .base import BaseManifest, Metadata, Spec
@@ -42,3 +43,28 @@ class NodeManifest(BaseManifest[NodeMetadata, NodeSpec]):
     """OrbitLab manifest representing a Proxmox cluster node."""
 
     kind: Annotated[ManifestKind, SerializeEnum] = ManifestKind.NODE
+
+    def list_storages(self, content_type: StorageContentType) -> list[str]:
+        """List storage names that support the specified content type."""
+        return [storage.name for storage in self.spec.storage if content_type in storage.content]
+
+    def get_storage(self, content_type: StorageContentType) -> str:
+        """Get the first storage name that supports the specified content type."""
+        return next(iter(self.list_storages(content_type=content_type)))
+
+    @classmethod
+    def from_node_status(cls, node: NodeStatus, storage: list[dict]) -> "NodeManifest":
+        """Create a NodeManifest instance from a NodeStatus object and storage list."""
+        manifest = cls.model_validate({
+            "name": node.name,
+            "metadata": {
+                "ip": node.ip,
+                "online": node.online,
+                "maintenance_mode": node.maintenance_mode,
+            },
+            "spec": {
+                "storage": storage,
+            },
+        })
+        manifest.save()
+        return manifest

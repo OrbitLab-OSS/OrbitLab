@@ -4,6 +4,7 @@ from orbitlab.clients.proxmox import ProxmoxCluster, ProxmoxNetworks
 from orbitlab.clients.proxmox.appliances import ProxmoxAppliances
 from orbitlab.manifest.appliances import BaseApplianceManifest
 from orbitlab.manifest.cluster import ClusterManifest
+from orbitlab.manifest.nodes import NodeManifest
 
 
 class NodeManagement:
@@ -56,16 +57,21 @@ class DiscoveryService:
         status = self.cluster.get_status()
         if len(status.get_nodes()) == invalid_node_count:
             return None
-        mtu = self.networks.get_mtu()
-        cluster_manifest = status.to_cluster_manifest(
-            mtu=mtu,
+
+        cluster_manifest = ClusterManifest.create(
+            cluster=status.get_cluster(),
+            mtu=self.networks.get_mtu(),
             reserved_tags=[vnet.tag for vnet in self.networks.list_vnets()],
         )
         ha_status = self.cluster.get_ha_status()
         storage_resources = self.cluster.list_storage_resources()
+
         for node in status.get_nodes():
             node.maintenance_mode = ha_status.in_maintenance_mode(node=node.name)
-            node_manifest = node.to_manifest(storage=storage_resources.get_storage_for_node(node=node.name))
+            node_manifest = NodeManifest.from_node_status(
+                node=node,
+                storage=storage_resources.get_storage_for_node(node=node.name),
+            )
             cluster_manifest.add_node(node=node_manifest)
         return cluster_manifest
 

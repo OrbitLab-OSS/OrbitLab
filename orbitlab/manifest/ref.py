@@ -15,8 +15,8 @@ class Ref(BaseModel):
 
     Attributes:
         ref (str): The reference string in the format 'kind/filename.yaml'.
-        _kind (Kind | None): The kind of the referenced manifest.
-        _name (str): The name of the referenced manifest.
+        kind (Kind | None): The kind of the referenced manifest.
+        name (str): The name of the referenced manifest.
     """
 
     ref: str

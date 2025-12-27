@@ -1,6 +1,7 @@
 """OrbitLab utilities."""
 
 import inspect
+import os
 from base64 import b64encode
 from collections.abc import Callable
 from typing import Any, TypeVar
@@ -120,7 +121,7 @@ def custom_download(  # noqa: C901, PLR0912
                 is_data_url,
                 data.to(str),
                 (
-                    CREATE_OBJECT_URL.call(create_new_blob(data, mime_type))
+                    CREATE_OBJECT_URL.call(create_new_blob(data, mime_type)) # pyright: ignore[reportArgumentType]
                     if isinstance(data, rx.vars.ArrayVar)
                     else f"data:{mime_type};base64,"
                     + BASE64_ENCODE.call(
@@ -164,6 +165,7 @@ def create_new_blob(data: rx.vars.ArrayVar, mime_type: str):  # noqa: ANN201, D1
 
 
 def require_configuration(page: Callable[[], rx.Component]) -> Callable[[], rx.Component]:
+    """Decorator to require that the configuration is complete before rendering the page."""
     def wrapped() -> rx.Component:
         return rx.cond(
             SplashPageState.initialization_state == InitializationState.COMPLETE,
@@ -171,3 +173,8 @@ def require_configuration(page: Callable[[], rx.Component]) -> Callable[[], rx.C
             rx.el.div(on_mount=rx.redirect("/")),
         )
     return wrapped
+
+
+def is_production() -> bool:
+    """Return True if the application is running in production mode, False otherwise."""
+    return not bool(os.environ.get("ORBITLAB_DEV"))

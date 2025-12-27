@@ -1,23 +1,29 @@
 """Schema definition for LXC template manifests in OrbitLab."""
 
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Annotated, Literal
+from typing import TYPE_CHECKING, Annotated, Literal, Self
 
 from pydantic import BaseModel, Field
 
 from orbitlab.clients.proxmox.appliances.models import ApplianceInfo, StoredAppliance
-from orbitlab.data_types import CustomApplianceStepType, ManifestKind
+from orbitlab.data_types import CustomApplianceStepType, CustomApplianceWorkflowStatus, ManifestKind
 from orbitlab.manifest.ref import Ref
+from orbitlab.manifest.sector import SectorManifest
+from orbitlab.services.vault.client import SecretVault
 
 from .base import BaseManifest, Metadata, Spec
 from .serialization import SerializeEnum, SerializePath
+
+if TYPE_CHECKING:
+    from orbitlab.web.pages.compute.lxc.models import CreateCustomApplianceForm
 
 
 class BaseApplianceMetadata(Metadata):
     """Metadata for an LXC appliance template."""
 
     description: str = ""
+    download_date: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
 class BaseApplianceSpec(Spec):
@@ -33,10 +39,17 @@ class BaseApplianceManifest(BaseManifest[BaseApplianceMetadata, BaseApplianceSpe
 
     kind: Annotated[ManifestKind, SerializeEnum] = ManifestKind.BASE_APPLIANCE
 
+    @property
+    def ostemplate(self) -> str:
+        """Return the Proxmox ostemplate string for this appliance."""
+        return f"{self.spec.storage}:vztmpl/{self.spec.template}"
+
     @classmethod
-    def create_from_appliance_info(cls, node_ref: Ref, storage: str, appliance: ApplianceInfo) -> None:
+    def create_from_appliance_info(
+        cls, node_ref: Ref, storage: str, appliance: ApplianceInfo,
+    ) -> "BaseApplianceManifest":
         """Create a BaseApplianceManifest from appliance info and save it."""
-        cls.model_validate({
+        manifest = cls.model_validate({
             "name": appliance.template,
             "metadata": {
                 "description": appliance.description,
@@ -46,10 +59,12 @@ class BaseApplianceManifest(BaseManifest[BaseApplianceMetadata, BaseApplianceSpe
                 "template": appliance.template,
                 "storage": storage,
             },
-        }).save()
+        })
+        manifest.save()
+        return manifest
 
     @classmethod
-    def create_from_stored_appliance(cls, node_ref: Ref, appliance: StoredAppliance) -> "BaseApplianceManifest":
+    def create_from_stored_appliance(cls, node_ref: Ref, appliance: StoredAppliance) -> Self:
         """Create a BaseApplianceManifest from a stored appliance and save it."""
         return cls.model_validate({
             "name": appliance.template,
@@ -67,100 +82,138 @@ class BaseApplianceManifest(BaseManifest[BaseApplianceMetadata, BaseApplianceSpe
 class CustomApplianceMetadata(Metadata):
     """Metadata for a custom appliance template."""
 
-    name: str
-    created_on: datetime
+    created_on: datetime = datetime.now(UTC)
     last_update: datetime | None = None
     last_execution: datetime | None = None
+    status: Annotated[CustomApplianceWorkflowStatus, SerializeEnum]
+    logs: list[str] = Field(default_factory=list)
 
 
-class FilePush(BaseModel):
-    """Model for file push operations.
+class File(BaseModel):
+    """Model for file push operations."""
 
-    Represents a file that needs to be pushed from a source location
-    to a destination location during appliance configuration.
-    """
     source: Annotated[Path, SerializePath]
-    destination: Annotated[Path | Literal[""], SerializePath] = ""
-
-    def configured(self) -> bool:
-        """Check if the file push operation is properly configured."""
-        return bool(self.destination)
+    destination: Annotated[Path, SerializePath]
 
 
 class Step(BaseModel):
-    """Model for configuration steps in custom appliance creation.
+    """Model for configuration steps in custom appliance creation."""
 
-    Represents a single step in the appliance configuration process,
-    which can include script execution, file operations, or secret management.
-    """
-    type: Annotated[CustomApplianceStepType | Literal[""], SerializeEnum] = Field(default="")
-    name: str = Field(default="")
-    script: str | None = Field(default=None)
-    files: list[FilePush] | None = Field(default=None)
-    secrets: list[str] | None = Field(default=None)
+    type: Annotated[CustomApplianceStepType, SerializeEnum]
+    name: str
 
-    @property
-    def valid(self) -> bool:
-        """Check if the step has valid configuration."""
-        files = [file.configured() for file in self.files] if self.files else [False]
-        return any([self.script, *files, self.secrets])
 
-    def validate(self) -> str:
-        """Validate the step configuration and return any error messages."""
-        if not self.name:
-            return "Step name is not provided."
-        if self.type == CustomApplianceStepType.FILES:
-            if not self.files:
-                return "No files uploaded for files step."
-            for file in self.files:
-                if not file.destination:
-                    return f"File {file.source} as no specified destination."
-        if self.type == CustomApplianceStepType.SCRIPT and not self.script:
-            return "Script step has no configured shell script."
-        return ""
+class ScriptStep(Step):
+    """A configuration step that executes a script during custom appliance creation."""
+
+    type: Literal[CustomApplianceStepType.SCRIPT] = CustomApplianceStepType.SCRIPT
+    script: str
+
+
+class FileStep(Step):
+    """A configuration step that handles pushing files during custom appliance creation."""
+
+    type: Literal[CustomApplianceStepType.FILES] = CustomApplianceStepType.FILES
+    files: list[File]
 
 
 class Network(BaseModel):
-    """Model for network configuration settings.
+    """Model for network configuration settings."""
 
-    This model defines network settings including bridge configuration
-    and IP address configuration types for both IPv4 and IPv6.
-    """
-    name: str = ""
-    subnet: str = ""
+    sector: Ref
+    subnet: str
 
 
 class CustomApplianceSpec(Spec):
-    """Specification for a custom appliance template.
+    """Specification for a custom appliance template."""
 
-    Defines the configuration parameters for creating a custom LXC appliance,
-    including base appliance, resources, networking, and configuration steps.
-    """
     base_appliance: str
     node: str
     storage: str
+    rootfs: str
     memory: int
     swap: int
-    certificate_authorities: list[str] | None
-    steps: list[Step]
+    certificate_authorities: list[str] = Field(default_factory=list)
+    steps: list[FileStep | ScriptStep]
     networks: list[Network]
 
 
 class CustomApplianceManifest(BaseManifest[CustomApplianceMetadata, CustomApplianceSpec]):
-    """Custom LXC Appliance Manifest.
+    """Custom LXC Appliance Manifest."""
 
-    Represents a manifest for creating custom LXC appliances with 
-    specific configurations, steps, and network settings.
-    """
     kind: Annotated[ManifestKind, SerializeEnum] = ManifestKind.CUSTOM_APPLIANCE
 
-    def to_create_params(self) -> dict[str, str | int]:
-        """Convert the manifest specification to Proxmox LXC creation parameters."""
-        #TODO: Finish after IPAM integration
+    @property
+    def volume_id(self) -> str:
+        """Return the Proxmox volume ID string for this custom appliance."""
+        return f"{self.spec.storage}:vztmpl/{self.name}.tar.gz"
+
+    def set_workflow_status(self, status: CustomApplianceWorkflowStatus) -> None:
+        """Set the workflow status of the custom appliance and update dates, if necessary."""
+        self.metadata.status = status
+        if status == CustomApplianceWorkflowStatus.PENDING:
+            self.metadata.last_execution = datetime.now(UTC)
+        self.save()
+
+    def workflow_log(self, message: str, *, truncate: bool = False) -> None:
+        """Append a message to the workflow log, optionally truncating existing logs."""
+        if truncate:
+            self.metadata.logs = []
+        self.metadata.logs.append(message)
+        self.save()
+
+    def workflow_params(self, vmid: str) -> dict[str, str]:
+        """Generate the parameters required to create a Proxmox LXC container from this manifest."""
+        networks: dict[str, str] = {}
+        for index, network in enumerate(self.spec.networks):
+            sector = SectorManifest.load(name=network.sector.name)
+            ipam = sector.get_ipam()
+            ip = ipam.assign_ip(subnet_name=network.subnet, vmid=vmid)
+            networks[f"net{index}"] = (
+                f"name=eth{index},"
+                f"bridge={network.sector.name},"
+                f"ip={ip.with_prefixlen},"
+                f"gw={sector.get_subnet(name=network.subnet).default_gateway.ip}"
+            )
+        base = BaseApplianceManifest.load(name=self.spec.base_appliance)
         return {
-            "hostname": f"oca-{self.name}",
-            "ostemplate": self.spec.base_appliance,
-            "rootfs": f"{self.spec.storage}:8",
-            "memory": self.spec.memory,
-            "swap": self.spec.swap,
+            "ssh-public-keys": "",
+            "features": "nesting=1",
+            "cores": "2",
+            "unprivileged": "1",
+            "onboot": "0",
+            "vmid": vmid,
+            "memory": f"{self.spec.memory * 1024}",
+            "swap": f"{self.spec.swap * 1024}",
+            "ostemplate": base.ostemplate,
+            "hostname": f"oca-wf-{vmid}",
+            "rootfs": f"{self.spec.rootfs}:8",
+            "password": SecretVault.generate_random_password(),
+            **networks,
         }
+
+    @classmethod
+    def create(cls, form: "CreateCustomApplianceForm") -> Self:
+        """Create a manifest from the CreateCustomAppliance form data."""
+        manifest = cls.model_validate({
+            "name": form.name,
+            "metadata": {},
+            "spec": {
+                "base_appliance": form.base_appliance,
+                "node": form.node,
+                "storage": form.storage,
+                "memory": form.memory,
+                "swap": form.swap,
+                "certificate_authorities": form.certificate_authorities,
+                "steps": form.workflow_steps,
+                "networks": [
+                    {
+                        "sector": SectorManifest.load(name=config.sector).to_ref(),
+                        "subnet": config.subnet,
+                    }
+                    for config in form.networks
+                ],
+            },
+        })
+        manifest.save()
+        return manifest

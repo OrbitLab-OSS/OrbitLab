@@ -1,23 +1,22 @@
 """OrbitLab LXC Tables."""
 
+from datetime import UTC, datetime
+
 import reflex as rx
 
-from orbitlab.data_types import FrontendEvents
-from orbitlab.manifest.appliances import BaseApplianceManifest, CustomApplianceManifest, Step
+from orbitlab.clients.proxmox.appliances import ProxmoxAppliances
+from orbitlab.data_types import CustomApplianceWorkflowStatus, FrontendEvents
+from orbitlab.manifest.appliances import BaseApplianceManifest, CustomApplianceManifest, FileStep, ScriptStep
 from orbitlab.services.discovery import DiscoveryService
 from orbitlab.web import components
 from orbitlab.web.states.manifests import ManifestsState
 from orbitlab.web.states.utilities import EventGroup
 
-from .dialogs import CreateApplianceDialog
+from .dialogs import CustomApplianceDialog, CustomApplianceState, DeleteConfirmationDialog
 
 
 class BaseApplianceTable(EventGroup):
-    """A table component for displaying base appliance manifests.
-
-    This class provides functionality to display base appliances in a table format
-    with refresh capabilities and discovery management features.
-    """
+    """A table component for displaying base appliance manifests."""
 
     @staticmethod
     @rx.event
@@ -25,6 +24,19 @@ class BaseApplianceTable(EventGroup):
         """Run appliance discovery and refresh the base appliances list."""
         await rx.run_in_thread(DiscoveryService().discover_appliances)
         return ManifestsState.cache_clear("base_appliances")
+
+    @staticmethod
+    @rx.event(background=True)
+    async def re_download_appliance(_: rx.State, name: str) -> FrontendEvents:
+        """Re-download the specified appliance by name."""
+        appliance = BaseApplianceManifest.load(name=name)
+        await rx.run_in_thread(lambda: ProxmoxAppliances().download_appliance(appliance=appliance))
+        appliance.metadata.download_date = datetime.now(UTC)
+        appliance.save()
+        return [
+            ManifestsState.cache_clear("base_appliances"),
+            rx.toast.success(f"Appliance {name} download complete!"),
+        ]
 
     @classmethod
     def __table_row__(cls, appliance: BaseApplianceManifest) -> rx.Component:
@@ -47,11 +59,23 @@ class BaseApplianceTable(EventGroup):
                 class_name="px-6 py-4 whitespace-nowrap text-sm text-gray-700 dark:text-gray-300",
             ),
             rx.el.td(
+                rx.moment(appliance.metadata.download_date, from_now_during=172800, format="YYYY-MM-DD HH:mm:ss"),
+                class_name="px-6 py-4 whitespace-nowrap text-sm text-gray-700 dark:text-gray-300",
+            ),
+            rx.el.td(
                 components.Menu(
                     components.Buttons.Icon("ellipsis-vertical"),
                     components.Menu.Item(
+                        "Re-Download",
+                        on_click=[
+                            rx.toast.info(f"Re-downloading {appliance.name}..."),
+                            BaseApplianceTable.re_download_appliance(appliance.name),
+                        ],
+                    ),
+                    components.Menu.Separator(),
+                    components.Menu.Item(
                         "Create Custom Appliance",
-                        on_click=CreateApplianceDialog.create_appliance_from_base(appliance.name),
+                        on_click=CustomApplianceDialog.create_appliance_from_base(appliance.name),
                     ),
                 ),
                 class_name="px-6 py-4 whitespace-nowrap text-sm text-gray-700 dark:text-gray-300",
@@ -77,6 +101,7 @@ class BaseApplianceTable(EventGroup):
                             rx.el.th("Node", class_name=header_class),
                             rx.el.th("Storage", class_name=header_class),
                             rx.el.th("Description", class_name=header_class),
+                            rx.el.th("Date Downloaded", class_name=header_class),
                             rx.el.th("", class_name=header_class),
                         ),
                         class_name="bg-white/60 dark:bg-white/[0.03] backdrop-blur-sm",
@@ -120,16 +145,21 @@ class BaseApplianceTable(EventGroup):
         )
 
 
-class CustomApplianceTable:
-    """A table component for displaying custom appliance manifests.
+class CustomApplianceTable(EventGroup):
+    """A table component for displaying custom appliance manifests."""
 
-    This class provides functionality to display custom appliances in a table format
-    with details about their base appliances, certificate authorities, workflow steps,
-    and creation dates.
-    """
+    @staticmethod
+    @rx.event
+    async def edit_appliance(_: rx.State, name: str) -> FrontendEvents:
+        """Edit a custom appliance by name and open the dialog."""
+        appliance = CustomApplianceManifest.load(name=name)
+        return [
+            CustomApplianceState.load_appliance(appliance),
+            components.Dialog.open(CustomApplianceDialog.dialog_id),
+        ]
 
     @classmethod
-    def __step_info__(cls, step: Step, index: int) -> rx.Component:
+    def __step_info__(cls, step: ScriptStep | FileStep, index: int) -> rx.Component:
         """Create a component displaying step information with index and type badge."""
         return rx.el.div(
             rx.text(f"{index + 1}. {step.name} ", rx.el.span(components.Badge(step.type, color_scheme="blue"))),
@@ -156,6 +186,21 @@ class CustomApplianceTable:
                 class_name="px-6 py-4 whitespace-nowrap text-sm text-gray-700 dark:text-gray-300 space-x-1",
             ),
             rx.el.td(
+                rx.match(
+                    appliance.metadata.status,
+                    (
+                        CustomApplianceWorkflowStatus.SUCCEEDED,
+                        components.Badge(appliance.metadata.status, color_scheme="green"),
+                    ),
+                    (
+                        CustomApplianceWorkflowStatus.FAILED,
+                        components.Badge(appliance.metadata.status, color_scheme="red"),
+                    ),
+                    components.Badge(appliance.metadata.status, color_scheme="blue"),
+                ),
+                class_name="px-6 py-4 whitespace-nowrap text-sm text-gray-700 dark:text-gray-300",
+            ),
+            rx.el.td(
                 components.HoverCard(
                     rx.text(rx.Var.create(appliance.spec.steps).to(list).length(), class_name="w-full pl-10"),
                     rx.foreach(appliance.spec.steps, lambda step, index: cls.__step_info__(step, index)),
@@ -167,12 +212,29 @@ class CustomApplianceTable:
                 class_name="px-6 py-4 whitespace-nowrap text-sm text-gray-700 dark:text-gray-300",
             ),
             rx.el.td(
+                rx.cond(
+                    rx.Var.create(appliance.metadata.last_execution).is_none(),
+                    rx.text("Not Ran"),
+                    rx.moment(appliance.metadata.last_execution, local=True, from_now_during=1209600000),
+                ),
+                class_name="px-6 py-4 whitespace-nowrap text-sm text-gray-700 dark:text-gray-300",
+            ),
+            rx.el.td(
                 components.Menu(
                     components.Buttons.Icon("ellipsis-vertical"),
                     components.Menu.Item(
+                        "Edit",
+                        on_click=cls.edit_appliance(appliance.name),
+                    ),
+                    components.Menu.Item(
                         "Rerun Workflow",
-                        on_click=rx.console_log("NOT IMPLEMENTED")
-                        # on_click=RunCustomApplianceWorkflowDialog.run(appliance),
+                        on_click=CustomApplianceDialog.run_workflow(appliance.name),
+                    ),
+                    components.Menu.Separator(),
+                    components.Menu.Item(
+                        "Delete",
+                        on_click=DeleteConfirmationDialog.confirm_deletion(appliance.name),
+                        danger=True,
                     ),
                 ),
                 class_name="px-6 py-4 whitespace-nowrap text-sm text-gray-700 dark:text-gray-300",
@@ -198,8 +260,10 @@ class CustomApplianceTable:
                             rx.el.th("Name", class_name=header_class),
                             rx.el.th("Base Appliance", class_name=header_class),
                             rx.el.th("Trusted CAs", class_name=header_class),
+                            rx.el.th("Workflow Status", class_name=header_class),
                             rx.el.th("Workflow Steps", class_name=header_class),
                             rx.el.th("Date Created", class_name=header_class),
+                            rx.el.th("Last Execution", class_name=header_class),
                             rx.el.th("", class_name=header_class),
                         ),
                         class_name="bg-white/60 dark:bg-white/[0.03] backdrop-blur-sm",
@@ -225,6 +289,8 @@ class CustomApplianceTable:
                     "transition-all duration-200"
                 ),
             ),
+            CustomApplianceDialog(),
+            DeleteConfirmationDialog(),
             header=components.Card.Header(
                 rx.el.div(
                     rx.el.h3("Custom Appliances"),

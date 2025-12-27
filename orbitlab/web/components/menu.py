@@ -4,11 +4,14 @@ from typing import NotRequired, TypedDict, Unpack
 
 import reflex as rx
 
+from orbitlab.data_types import FrontendEvents
 
-class ItemProps(TypedDict):
+
+class ItemProps(TypedDict, total=False):
     """Type definition for optional menu item component properties."""
-    on_click: rx.EventHandler[rx.event.no_args_event_spec] | rx.event.EventSpec | rx.Var | rx.event.EventCallback
+    on_click: FrontendEvents
     class_name: NotRequired[str]
+    danger: bool
 
 
 class MenuItem:
@@ -16,13 +19,16 @@ class MenuItem:
 
     def __new__(cls, child: str | rx.Component, **props: Unpack[ItemProps]) -> rx.Component:
         """Create and return the menu item component."""
+        danger = props.pop("danger", False)
         props["class_name"] = (
             "p-3 rounded-full text-[rgb(0,150,255)] transition-all duration-200 ease-in-out "
             "hover:border hover:scale-105 hover:text-[rgb(0,200,255)] hover:bg-[rgba(0,150,255,0.1)] "
             "hover:border-[rgba(0,200,255,0.5)] hover:shadow-[0_0_6px_rgba(0,150,255,0.25)] cursor-pointer "
+            "data-[danger=true]:text-[#DC2626] data-[danger=true]:hover:border-[#DC2626]/50 "
+            "data-[danger=true]:hover:bg-[#DC2626]/20 "
             f"{props.get('class_name', '')}"
         )
-        return rx.dropdown_menu.item(child, **props)
+        return rx.dropdown_menu.item(child, data_danger=danger, **props) # pyright: ignore[reportArgumentType]
 
 
 class Props(TypedDict, total=False):

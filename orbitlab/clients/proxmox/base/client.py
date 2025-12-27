@@ -22,12 +22,7 @@ from orbitlab.clients.proxmox.exceptions import HTTPConfigError, PVECommandError
 from orbitlab.constants import ProxmoxRE
 from orbitlab.data_types import TaskStatus
 
-from .models import (
-    VMID,
-    ProxmoxAuth,
-    ProxmoxTaskStatus,
-    ProxmoxTermProxy,
-)
+from .models import VMID, ProxmoxAuth, ProxmoxTaskStatus, ProxmoxTermProxy, Task
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -137,14 +132,15 @@ class RemoteExecution:
                 sslopt={"cert_reqs": ssl.CERT_NONE},
             )
             self.ws.send(payload=self.remote_config.auth_message)
-            self.__recv__(command="")
+            self.__recv__()
+            print("CONNECTED")
 
     def __parse_frame__(self, frame: bytes, username: bytes) -> list[bytes]:
         """Parse WebSocket frame data by removing escape sequences and filtering out username lines."""
         frame = frame.replace(b"\x1b[?2004l", b"").replace(b"\x1b[?2004", b"")
         return [line for line in frame.split(sep=b"\r\n") if line and username not in line]
 
-    def __recv__(self, *, command: str, capture: bool = False) -> bytes:
+    def __recv__(self, *, command: str = "", capture: bool = False) -> bytes:
         """Receive and process WebSocket frame data from the remote connection."""
         if self.ws is None or self.remote_config is None:
             raise TypeError
@@ -156,15 +152,17 @@ class RemoteExecution:
                 output.extend(self.__parse_frame__(frame=frame, username=username))
             if b"\x1b[?" in frame and username in frame:
                 break
+        print(output)
         return b"\n".join(output).strip()
 
     def __pct_exec__(self, vmid: str, filename: str) -> None:
         """Execute a bash script file inside a Proxmox LXC container."""
-        command = f"pct exec {vmid} -- bash {filename}"
+        command = f"pct exec {vmid} -- bash {filename} && rm -f {filename}"
         self.run_command(command=command)
 
-    def __pct_push__(self, vmid: str, source: str, destination: str) -> None:
+    def __pct_push__(self, vmid: str, source: str, destination: Path) -> None:
         """Push a file from host to Proxmox LXC container."""
+        self.run_command(command=f"pct exec {vmid} -- mkdir -p {destination.parent}")
         command = f"pct push {vmid} {source} {destination}"
         self.run_command(command=command)
 
@@ -176,38 +174,44 @@ class RemoteExecution:
 
     def run_command(self, command: str, *, check_output: bool = False) -> bytes | None:
         """Execute a command on the remote Proxmox node or locally via subprocess."""
+        print("COMMAND", command)
         if self.ws:
             self.ws.send(payload=f"0:{len(command)}:{command}\n")
             self.ws.send(payload="0:1:\n")
             output = self.__recv__(command=command, capture=True)
         else:
-            #TODO: Properly implement subprocess local execution
             output = subprocess.check_output(args=command)
         if check_output:
             return output
         return None
 
-    def write_file(self, source: Path, destination: Path, chunk_size: int = 4096) -> None:
-        """Write a file to the remote Proxmox node using base64 encoding."""
-        heredoc = f"cat << 'EOF' | base64 -d > {destination}"
+    def lxc_push_file(self, vmid: str, source: Path, destination: Path) -> None:
+        """Push a file from the host to a Proxmox LXC container."""
         if self.ws:
-            self.ws.send(f"0:{len(heredoc)}:{heredoc}\n")
-            with source.open("rb") as _file:
-                while chunk := _file.read(chunk_size):
-                    encoded = base64.b64encode(chunk).decode()
-                    self.ws.send(f"0:{len(encoded)}:{encoded}\n")
-            end_heredoc = "EOF"
-            self.ws.send(f"0:{len(end_heredoc)}:{end_heredoc}\n")
-            self.ws.send("0:1:\n")
-            self.__recv__(command="")
-        # TODO: Implement local file writing
+            chunk_size = 4096
+            with tempfile.NamedTemporaryFile() as file:
+                heredoc = f"cat << 'EOF' | base64 -d > {file.name}"
+                self.ws.send(payload=f"0:{len(heredoc)}:{heredoc}\n")
+                self.ws.send(payload="0:1:\n")
+                with source.open("rb") as _file:
+                    while chunk := _file.read(chunk_size):
+                        encoded = base64.b64encode(chunk).decode()
+                        self.ws.send(payload=f"0:{len(encoded)}:{encoded}\n")
+                        self.ws.send(payload="0:1:\n")
+                end_heredoc = "EOF"
+                self.ws.send(payload=f"0:{len(end_heredoc)}:{end_heredoc}\n")
+                self.ws.send(payload="0:1:\n")
+                self.__recv__()
+        self.__pct_push__(vmid=vmid, source=file.name, destination=destination)
+        self.run_command(command=f"rm -f {file.name}")
 
     def lxc_execute_script(self, vmid: str, content: str) -> None:
         """Execute a script inside an LXC container."""
         with tempfile.NamedTemporaryFile() as file:
             command = ProxmoxRE.SCRIPT.format(filename=file.name, content=content)
             self.run_command(command=command)
-            self.__pct_push__(vmid=vmid, source=file.name, destination=file.name)
+            self.__pct_push__(vmid=vmid, source=file.name, destination=Path(file.name))
+            self.run_command(command=f"rm -f {file.name}")
             self.__pct_exec__(vmid=vmid, filename=file.name)
 
 
@@ -333,17 +337,7 @@ class Proxmox:
         return self.get(f"/nodes/{node}/tasks/{upid}/status", model=ProxmoxTaskStatus)
 
     def wait_for_task(self, node: str, upid: str, interval: int = 3, timeout: int = 900) -> None:
-        """Wait for a Proxmox task to complete, polling its status at regular intervals.
-
-        Args:
-            node (str): The node name.
-            upid (str): The unique task identifier (UPID).
-            interval (int, optional): Polling interval in seconds. Defaults to 3.
-            timeout (int, optional): Maximum time to wait in seconds. Defaults to 900.
-
-        Raises:
-            TimeoutError: If the task does not complete within the specified timeout.
-        """
+        """Wait for a Proxmox task to complete, polling its status at regular intervals."""
         task = self.get_task_status(node, upid)
         start_time = time.time()
         while task.status == TaskStatus.RUNNING:
@@ -353,16 +347,10 @@ class Proxmox:
                 raise TimeoutError(msg)
             task = self.get_task_status(node, upid)
 
-    def create_connection(self, node: str) -> RemoteExecution:
-        """Create a remote execution connection to a Proxmox node.
-
-        Args:
-            node (str): The Proxmox node name.
-            node_ip (str): The IP address of the node.
-
-        Returns:
-            RemoteExecution: A remote execution instance for running commands.
-        """
+    def create_connection(self, node: str = "") -> RemoteExecution:
+        """Create a remote execution connection to a Proxmox node."""
+        if not node:
+            node = self.__node__
         if self.http_config.configured:
             proxy = self.create(f"/nodes/{node}/termproxy", model=ProxmoxTermProxy)
             websocket_url = (
@@ -379,3 +367,12 @@ class Proxmox:
                 ),
             )
         return RemoteExecution(node=node)
+
+    def create_lxc(self, *, node: str, params: dict[str, str], start: bool = False) -> None:
+        """Create an LXC container on the specified Proxmox node with the given parameters."""
+        task = self.create(path=f"/nodes/{node}/lxc", model=Task, **params)
+        self.wait_for_task(node=task.node, upid=task.upid)
+        if start:
+            vmid = params["vmid"]
+            task = self.create(path=f"/nodes/{node}/lxc/{vmid}/status/start", model=Task)
+            self.wait_for_task(node=task.node, upid=task.upid)

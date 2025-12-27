@@ -1,16 +1,15 @@
 """Proxmox Appliances Client."""
 
-from typing import TYPE_CHECKING
+import hashlib
+import time
 
 import httpx
 
 from orbitlab.clients.proxmox.base import Proxmox, Task
-from orbitlab.data_types import ApplianceType, OrbitLabApplianceType
+from orbitlab.data_types import ApplianceType, CustomApplianceWorkflowStatus, OrbitLabApplianceType
+from orbitlab.manifest.appliances import BaseApplianceManifest, CustomApplianceManifest, FileStep, ScriptStep
 
 from .models import ApplianceInfo, Appliances, LatestRelease, StoredAppliances
-
-if TYPE_CHECKING:
-    from orbitlab.manifest.appliances import BaseApplianceManifest
 
 
 class ProxmoxAppliances(Proxmox):
@@ -37,7 +36,7 @@ class ProxmoxAppliances(Proxmox):
     def download_appliance(self, appliance: "BaseApplianceManifest") -> None:
         """Download an LXC appliance to the specified storage on a Proxmox node."""
         params = {"storage": appliance.spec.storage, "template": appliance.spec.template}
-        task = self.create(path=f"/nodes/{appliance.spec.node}/aplinfo", model=Task, **params)
+        task = self.create(path=f"/nodes/{appliance.spec.node.name}/aplinfo", model=Task, **params)
         self.wait_for_task(node=task.node, upid=task.upid)
 
     def download_latest_orbitlab_appliance(self, storage: str, appliance_type: OrbitLabApplianceType) -> str:
@@ -60,3 +59,70 @@ class ProxmoxAppliances(Proxmox):
         """List stored appliance templates in the specified storage on a Proxmox node."""
         params = {"content": "vztmpl"}
         return self.get(f"/nodes/{node}/storage/{storage}/content", model=StoredAppliances, **params)
+
+    def run_workflow(self, appliance: CustomApplianceManifest) -> None:
+        """Run the workflow to create a custom appliance on Proxmox."""
+        try:
+            # Create and Start LXC
+            vmid = str(self.get_next_vmid())
+            params = appliance.workflow_params(vmid=vmid)
+            appliance.set_workflow_status(status=CustomApplianceWorkflowStatus.STARTING)
+            appliance.workflow_log(message=f"Creating and starting LXC {vmid}", truncate=True)
+            self.create_lxc(node=appliance.spec.node, params=params, start=True)
+            time.sleep(10)
+            # Run Workflow Steps
+            conn = self.create_connection(node=appliance.spec.node)
+            appliance.set_workflow_status(status=CustomApplianceWorkflowStatus.RUNNING)
+            for step in appliance.spec.steps:
+                if isinstance(step, FileStep):
+                    appliance.workflow_log(message=f"Executing Files Step: {step.name}")
+                    for file in step.files:
+                        appliance.workflow_log(message=f"Pushing File: {file.source} to {file.destination}")
+                        conn.lxc_push_file(vmid=vmid, source=file.source, destination=file.destination)
+                elif isinstance(step, ScriptStep):
+                    appliance.workflow_log(message=f"Executing Script Step: {step.name}")
+                    conn.lxc_execute_script(vmid=vmid, content=step.script)
+            if not appliance.spec.steps:
+                appliance.workflow_log(message="No steps to execute")
+            # Shutdown LXC
+            appliance.workflow_log(message=f"Shutting Down LXC {vmid}")
+            task = self.create(path=f"/nodes/{appliance.spec.node}/lxc/{vmid}/status/shutdown", model=Task)
+            appliance.set_workflow_status(status=CustomApplianceWorkflowStatus.FINALIZING)
+            self.wait_for_task(node=task.node, upid=task.upid)
+            # Create Appliance via vzdump
+            appliance.workflow_log(message=f"Converting LXC {vmid} to appliance")
+            params = {"vmid": vmid, "quiet": 1, "compress": "gzip", "dumpdir": "/var/tmp"}
+            task = self.create(path=f"/nodes/{appliance.spec.node}/vzdump", model=Task, **params)
+            self.wait_for_task(node=task.node, upid=task.upid)
+            temp_name = hashlib.sha256(appliance.name.encode()).hexdigest()
+            conn.run_command(command=f"mv /var/tmp/vzdump-lxc-{vmid}-*.tar.gz /var/tmp/pveupload-{temp_name}")
+            conn.run_command(command="rm -f /var/tmp/*.log")  # Remove vzdump log file
+            params = {
+                "content": "vztmpl",
+                "filename": f"{appliance.name}.tar.gz",
+                "tmpfilename": f"/var/tmp/pveupload-{temp_name}",
+            }
+            task = self.create(
+                path=f"/nodes/{appliance.spec.node}/storage/{appliance.spec.storage}/upload",
+                model=Task,
+                **params,
+            )
+            self.wait_for_task(node=task.node, upid=task.upid)
+            # Delete LXC
+            appliance.workflow_log(message=f"Destroying LXC {vmid}")
+            params = {"destroy-unreferenced-disks": 1, "force": 1, "purge": 1}
+            task = self.delete(path=f"/nodes/{self.__node__}/lxc/{vmid}", model=Task, **params)
+            self.wait_for_task(node=task.node, upid=task.upid)
+        except Exception as err:  # noqa: BLE001
+            appliance.workflow_log(message=f"{err}")
+            appliance.set_workflow_status(status=CustomApplianceWorkflowStatus.FAILED)
+        else:
+            appliance.set_workflow_status(status=CustomApplianceWorkflowStatus.SUCCEEDED)
+
+    def delete_custom_appliance(self, appliance: CustomApplianceManifest) -> None:
+        """Delete a custom appliance from the specified Proxmox storage."""
+        task = self.delete(
+            path=f"/nodes/{appliance.spec.node}/storage/{appliance.spec.storage}/content/{appliance.volume_id}",
+            model=Task,
+        )
+        self.wait_for_task(node=task.node, upid=task.upid)

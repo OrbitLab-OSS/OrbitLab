@@ -5,10 +5,6 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field, RootModel
 
-from orbitlab import data_types
-from orbitlab.constants import NetworkSettings
-from orbitlab.manifest.cluster import ClusterManifest
-from orbitlab.manifest.nodes import NodeManifest
 from orbitlab.manifest.serialization import PveBool, PveContentList
 
 
@@ -22,22 +18,6 @@ class NodeStatus(BaseModel):
     ip: ipaddress.IPv4Address | None = None
     name: str
     maintenance_mode: bool = False
-
-    def to_manifest(self, storage: list[dict]) -> NodeManifest:
-        """Convert the node status to a NodeManifest object."""
-        manifest = NodeManifest.model_validate({
-            "name": self.node_id,
-            "metadata": {
-                "ip": self.ip,
-                "online": self.online,
-                "maintenance_mode": self.maintenance_mode,
-            },
-            "spec": {
-                "storage": storage,
-            },
-        })
-        manifest.save()
-        return manifest
 
 
 class ClusterStatus(BaseModel):
@@ -65,39 +45,6 @@ class ProxmoxClusterStatus(RootModel[list[Annotated[ClusterStatus | NodeStatus, 
     def get_cluster(self) -> ClusterStatus | None:
         """Get the cluster status from the cluster status list."""
         return next(iter(item for item in self.root if isinstance(item, ClusterStatus)), None)
-
-    def to_cluster_manifest(self, mtu: int, reserved_tags: list[int]) -> ClusterManifest:
-        """Convert the cluster status to a cluster manifest."""
-        cluster = self.get_cluster()
-        zone_tag = next(i for i in range(NetworkSettings.BACKPLANE.ZONE_TAG, 100) if i not in reserved_tags)
-        vnet_tag = next(i for i in range(NetworkSettings.BACKPLANE.VNET_TAG, 1000) if i not in reserved_tags)
-        manifest = ClusterManifest.model_validate({
-            "name": cluster.name if cluster else "OrbitLab",
-            "metadata": {
-                "mode": data_types.ClusterMode.CLUSTER if cluster else data_types.ClusterMode.LOCAL,
-                "version": cluster.version if cluster else 0,
-                "quorate": cluster.quorate if cluster else False,
-                "mtu": mtu,
-            },
-            "spec": {
-                "backplane": {
-                    "zone_id": NetworkSettings.BACKPLANE.NAME,
-                    "vnet_id": NetworkSettings.BACKPLANE.NAME,
-                    "zone_tag": zone_tag,
-                    "vnet_tag": vnet_tag,
-                    "mtu": mtu - 50,
-                    "cidr_block": NetworkSettings.BACKPLANE.DEFAULT_CIDR,
-                    "gateway": NetworkSettings.BACKPLANE.DEFAULT_GATEWAY,
-                    "controller": {
-                        "id": NetworkSettings.BACKPLANE.NAME,
-                        "asn": NetworkSettings.BACKPLANE.ASN,
-                    },
-                },
-                "nodes": [node.model_dump() for node in self.get_nodes()],
-            },
-        })
-        manifest.save()
-        return manifest
 
 
 class HANode(BaseModel):

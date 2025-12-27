@@ -135,6 +135,7 @@ class SectorsTable(EventGroup):
 
 
 class StatusTable(EventGroup):
+    """A table component for displaying the status of sector appliances."""
 
     @classmethod
     def __table_row__(
@@ -192,7 +193,7 @@ class StatusTable(EventGroup):
                             rx.el.th("Appliance Type", class_name=header_class),
                             rx.el.th("Latest Version", class_name=header_class),
                             rx.el.th("Downloaded Version", class_name=header_class),
-                            rx.el.th("", class_name=header_class),  # Menu Column
+                            rx.el.th("", class_name=header_class),
                         ),
                         class_name="bg-white/60 dark:bg-white/[0.03] backdrop-blur-sm",
                     ),

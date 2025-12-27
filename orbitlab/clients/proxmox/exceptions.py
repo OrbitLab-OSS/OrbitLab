@@ -1,9 +1,6 @@
 """Exception classes for Proxmox."""
 
 
-from typing import Final
-
-
 class PVECommandError(Exception):
     """Raised when a pvesh command fails."""
 
@@ -29,19 +26,4 @@ class HTTPConfigError(Exception):
             msg (str): The error message describing the configuration issue.
         """
         super().__init__(msg)
-        self.msg = msg
-
-
-class ApplianceNotFoundError(Exception):
-    def __init__(self, appliance_id: str):
-        super().__init__(f"Appliance '{appliance_id}' not found.")
-        self.appliance_id = appliance_id
-
-
-class ProxmoxClientError(Exception):
-    EVPNControllerExists: Final = "EVPNControllerExists"
-
-    def __init__(self, err: str, msg: str) -> None:
-        super().__init__(f"{err}: {msg}")
-        self.err = err
         self.msg = msg
