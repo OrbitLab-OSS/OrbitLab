@@ -65,6 +65,11 @@ class EVPNController(BaseModel):
     controller: str
     peers: PeerList
 
+    @property
+    def is_orbitlab_controller(self) -> bool:
+        """Check if this controller is the OrbitLab backplane controller."""
+        return self.controller == NetworkSettings.BACKPLANE.NAME
+
 
 class BackplaneZone(BaseModel):
     """Represents a Proxmox SDN backplane zone configuration."""

@@ -17,6 +17,7 @@ class ManifestsState(CacheBuster, rx.State):
 
     @rx.var
     def nodes(self) -> list[NodeManifest]:
+        """Get all existing node manifests."""
         return [NodeManifest.load(name=name) for name in NodeManifest.get_existing()]
 
     @rx.var(deps=["_cached_certificates"])
@@ -38,6 +39,11 @@ class ManifestsState(CacheBuster, rx.State):
     def custom_appliances(self) -> list[CustomApplianceManifest]:
         """Get all existing custom appliance manifests."""
         return [CustomApplianceManifest.load(name=name) for name in CustomApplianceManifest.get_existing()]
+
+    @rx.var(deps=["_cached_sectors"])
+    def sectors(self)-> list[SectorManifest]:
+        """Get all existing sector manifests."""
+        return [SectorManifest.load(name=name) for name in SectorManifest.get_existing()]
 
     @rx.var
     def node_names(self) -> list[str]:
@@ -64,14 +70,13 @@ class ManifestsState(CacheBuster, rx.State):
         """Get all root certificate authority manifests from the certificates list."""
         return [cert for cert in self.certificates if cert.metadata.type == CertificateTypes.INTERMEDIATE]
 
-    @rx.var(deps=["_cached_sectors"])
-    def sectors(self)-> list[SectorManifest]:
-        return [SectorManifest.load(name=name) for name in SectorManifest.get_existing()]
-
 
 class ClusterDefaults(ManifestsState):
+    """State management for cluster default settings."""
+
     @rx.var
     def proxmox_node(self) -> str:
+        """Get the default Proxmox node name from the cluster manifest, or an empty string if not set."""
         name = next(iter(ClusterManifest.get_existing()), "")
         if name:
             cluster = ClusterManifest.load(name=name)

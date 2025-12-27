@@ -144,6 +144,7 @@ class SelectProps(TypedDict, total=False):
     name: str
     form: str
     required: bool
+    disabled: bool | rx.Var[bool]
 
 
 class Select:
@@ -160,7 +161,11 @@ class Select:
             return rx.select.item(option, value=option, class_name=class_name)
         return rx.select.item(option[0], value=option[1], class_name=class_name)
 
-    def __new__(cls, options: rx.Var[list[str] | dict[str, str]], **props: Unpack[SelectProps]) -> rx.Component:
+    def __new__(
+        cls,
+        options: rx.Var[list[str] | dict[str, str]] | rx.vars.ArrayVar,
+        **props: Unpack[SelectProps],
+    ) -> rx.Component:
         """Create and return the select component."""
         error = props.pop("error", "Invalid selection")
         wrapper_class = props.pop("class_name", "")
@@ -174,7 +179,7 @@ class Select:
             "dark:text-gray-100 dark:border-white/[0.08] "
             "hover:ring-1 hover:ring-[#36E2F4]/30 "
             "focus:ring-2 focus:ring-[#36E2F4]/40 focus:border-[#36E2F4]/40 "
-            "shadow-[inset_0_0_0.5px_rgba(255,255,255,0.1)]"
+            "shadow-[inset_0_0_0.5px_rgba(255,255,255,0.1)] disabled:opacity-50"
         )
         return rx.el.div(
             rx.el.div(

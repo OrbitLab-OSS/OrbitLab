@@ -3,7 +3,7 @@
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from .schemas.base import BaseManifest, ManifestKind
+    from .base import BaseManifest, ManifestKind
 
 
 class ManifestNotFoundError(Exception):

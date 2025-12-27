@@ -4,14 +4,7 @@
   - [x] EVPN Controller
   - [x] EVPN Zone
   - [x] VNet (user-defined CIDR or 10.200.0.0/16)
-  - [ ] DNS (CoreDNS)
   - [x] IPAM (Track IP registration)
-- [ ] Storage (Linstor)
-  - [ ] Install
-  - [ ] Configure
-
-# Phase 2
-
 - [x] Sectors (VNets)
   - [x] VXLAN
   - [x] VNet
@@ -19,22 +12,48 @@
     - [x] Custom LXC Appliance
     - [x] FRR
     - [x] NFTables
-  - [ ] DNS (CoreDNS)
   - [x] IPAM (Track IP registration)
+
+# Phase 2
+
+- [ ] Logging
+  - [ ] Clients
+  - [ ] Application
+- [ ] Custom LXC Appliances
+  - [x] General Configuration
+  - [x] Network Configuration
+  - [x] Workflow Steps
+    - [x] Uploaded Files
+    - [x] Custom Bash Scripts
+  - [ ] Edit Existing Custom Appliances
+- [ ] Sector DNS (CoreDNS)
+  - [ ] Add/Remove A Records
 
 # Phase 3
 
-- Custom LXC Appliances
-- HAproxy Ingress
-  - User vmbr0 and VNet to provide external access (Home LAN)
-- RDS (Opt-In)
-  - ETCD Backend Service
-  - Patroni/PostgreSQL
-
+- [ ] HAproxy Ingress: vmbr0 and sector to provide external access (Home LAN)
+  - [ ] HTTP
+  - [ ] HTTPS
+  - [ ] TCP
+  - [ ] UDP 
+- [ ] DataCores (RDS-like DB service)
+  - [ ] ETCD: Key/Value mgmt for Patroni
+  - [ ] Patroni/PostgreSQL
+    - [ ] Update DNS A record on role change
+    - [ ] Health checks for monitoring
+- [ ] Sector Public Access
+  - [ ] Cloudflared
+  - [ ] Tailscale
+  - [ ] Pangolin
 
 # Phase 4
 
-- Public Access
-  - Cloudflared
-  - ?
-- Reverse-Proxy Auth (?)
+- [ ] Full Cluster Support
+  - [ ] Replicate application across nodes
+    - [ ] Create processes in all nodes for HA
+    - [ ] Detect new version and Update
+  - [ ] Shared Storage (Linstor)
+    - [ ] Install
+    - [ ] Configure
+- [ ] Reverse-Proxy Auth (? - Not to sure about this)
+  - [ ] Authelia/Authentik

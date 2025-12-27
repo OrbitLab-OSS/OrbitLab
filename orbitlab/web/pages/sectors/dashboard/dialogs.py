@@ -248,13 +248,15 @@ class DeleteSectorDialog(EventGroup):
     async def start_sector_delete(_: rx.State, sector: SectorManifest) -> FrontendEvents:
         """Delete a sector and clean up associated resources including IPAM, secrets, and cluster references."""
         await rx.run_in_thread(lambda: ProxmoxNetworks().delete_sector(sector=sector))
-        sector_gateway = sector.get_gateway()
-        backplane_ip = sector_gateway.backplane_address
-        IpamManifest.load(
-            name=NetworkSettings.BACKPLANE.IPAM,
-        ).release_ip(subnet_name=NetworkSettings.BACKPLANE.NAME, ip=backplane_ip)
+        if sector.spec.gateway:
+            backplane_ip = sector.spec.gateway.backplane_address
+            IpamManifest.load(
+                name=NetworkSettings.BACKPLANE.IPAM,
+            ).release_ip(subnet_name=NetworkSettings.BACKPLANE.NAME, ip=backplane_ip)
+        sector_gw_password = f"/orbitlab/sector/gateway/{sector.metadata.tag}"
+        if sector_gw_password in SecretManifest.get_existing():
+            SecretManifest.load(name=sector_gw_password).delete()
         IpamManifest.load(name=sector.spec.ipam.name).delete()
-        SecretManifest.load(name=sector_gateway.password.name).delete()
         ClusterManifest.load(name=next(iter(ClusterManifest.get_existing()))).remove_sector(tag=sector.metadata.tag)
         sector.delete()
         return [

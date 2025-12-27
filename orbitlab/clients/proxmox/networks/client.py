@@ -30,11 +30,15 @@ class ProxmoxNetworks(Proxmox):
 
     def __sgwtool_frr_set__(self, sector: SectorManifest, backplane_gateway: IPv4Address) -> str:
         """Generate sgwtool frr set command for configuring FRR routing on the sector gateway."""
-        gateway = sector.get_gateway()
+        if not sector.spec.gateway:
+            raise ValueError
         sector_flags = " ".join(
             [f"--sector-subnet-addr {subnet.default_gateway}" for subnet in sector.spec.subnets],
         )
-        backplane_flags = f"--backplane-assigned-addr {gateway.backplane_address} --backplane-gw-ip {backplane_gateway}"
+        backplane_flags = (
+            f"--backplane-assigned-addr {sector.spec.gateway.backplane_address} "
+            f"--backplane-gw-ip {backplane_gateway}"
+        )
         return f"/usr/local/bin/sgwtool frr set {sector_flags}  {backplane_flags}"
 
     def __sgwtool_nftables_set__(self, primary_ip: IPv4Address, backplane: IPv4Network) -> str:
@@ -61,15 +65,16 @@ class ProxmoxNetworks(Proxmox):
         self.set(path=f"/cluster/sdn/controllers/{cluster.spec.backplane.controller.id}", **params)
         self.__apply_changes__()
 
-    def create_backplane(self, cluster: ClusterManifest) -> None:
+    def create_backplane(self, cluster: ClusterManifest, *, skip_controller: bool = False) -> None:
         """Create the backplane network configuration."""
-        controller_params = {
-            "controller": cluster.spec.backplane.controller.id,
-            "type": "evpn",
-            "asn": cluster.spec.backplane.controller.asn,
-            "peers": cluster.spec.backplane.controller.peer_list,
-        }
-        self.create(path="/cluster/sdn/controllers", model=None, **controller_params)
+        if not skip_controller:
+            controller_params = {
+                "controller": cluster.spec.backplane.controller.id,
+                "type": "evpn",
+                "asn": cluster.spec.backplane.controller.asn,
+                "peers": cluster.spec.backplane.controller.peer_list,
+            }
+            self.create(path="/cluster/sdn/controllers", model=None, **controller_params)
         zone_params = {
             "type": "evpn",
             "zone": cluster.spec.backplane.zone_id,
@@ -105,13 +110,12 @@ class ProxmoxNetworks(Proxmox):
     def create_sector(self, sector: SectorManifest) -> None:
         """Create a new sector network with associated gateway container."""
         cluster_manifest = ClusterManifest.load(name=next(iter(ClusterManifest.get_existing())))
-        backplane = cluster_manifest.get_backplane()
 
         zone_params = {
             "type": "vxlan",
             "zone": sector.name,
-            "peers": ",".join([str(peer) for peer in backplane.controller.peers]),
-            "mtu": backplane.mtu,
+            "peers": ",".join([str(peer) for peer in cluster_manifest.spec.backplane.controller.peers]),
+            "mtu": cluster_manifest.spec.backplane.mtu,
         }
         self.create(path="/cluster/sdn/zones", model=None, **zone_params)
         vnet_params = {
@@ -145,7 +149,9 @@ class ProxmoxNetworks(Proxmox):
             "memory": "256",
             "swap": "256",
             "net0": f"name=eth0,bridge={sector.name}",
-            "net1": f"name=eth1,bridge={backplane.vnet_id},ip={address},gw={backplane.gateway}",
+            "net1": (
+                f"name=eth1,bridge={cluster_manifest.spec.backplane.vnet_id},ip={address},gw={cluster_manifest.spec.backplane.gateway}"
+            ),
             "rootfs": "local-zfs:8",
             "unprivileged": "1",
             "vmid": vmid,
@@ -159,11 +165,19 @@ class ProxmoxNetworks(Proxmox):
         task = self.create(path=f"/nodes/{self.__node__}/lxc/{vmid}/status/start", model=Task)
         self.wait_for_task(node=task.node, upid=task.upid)
         conn = self.create_connection(node=self.__node__)
+        configure_frr_command = self.__sgwtool_frr_set__(
+            sector=sector,
+            backplane_gateway=cluster_manifest.spec.backplane.gateway,
+        )
+        configure_nftables_command = self.__sgwtool_nftables_set__(
+            primary_ip=sector.primary_gateway,
+            backplane=cluster_manifest.spec.backplane.cidr_block,
+        )
         conn.lxc_execute_script(
             vmid=vmid,
             content=(
-                f"{self.__sgwtool_frr_set__(sector=sector, backplane_gateway=backplane.gateway)}\n"
-                f"{self.__sgwtool_nftables_set__(primary_ip=sector.primary_gateway, backplane=backplane.cidr_block)}\n"
+                f"{configure_frr_command}\n"
+                f"{configure_nftables_command}\n"
                 "/usr/local/bin/sgwtool frr restart\n"
                 "/usr/local/bin/sgwtool nftables restart\n"
             ),
@@ -171,10 +185,11 @@ class ProxmoxNetworks(Proxmox):
 
     def delete_sector(self, sector: SectorManifest) -> None:
         """Delete a sector network and its associated gateway container."""
-        gateway = sector.get_gateway()
-        params = {"destroy-unreferenced-disks": 1, "force": 1, "purge": 1}
-        task = self.delete(path=f"/nodes/{self.__node__}/lxc/{gateway.vmid}", model=Task, **params)
-        self.wait_for_task(node=task.node, upid=task.upid)
+        if sector.spec.gateway:
+            params = {"destroy-unreferenced-disks": 1, "force": 1, "purge": 1}
+            task = self.delete(path=f"/nodes/{self.__node__}/lxc/{sector.spec.gateway.vmid}", model=Task, **params)
+            self.wait_for_task(node=task.node, upid=task.upid)
+
         for subnet in sector.spec.subnets:
             subnet_id = str(subnet.cidr_block).replace("/", "-")
             self.delete(f"/cluster/sdn/vnets/{sector.name}/subnets/{sector.name}-{subnet_id}", model=None)

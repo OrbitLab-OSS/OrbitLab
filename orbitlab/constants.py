@@ -1,5 +1,6 @@
 """Constants for OrbitLab."""
 
+import os
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Final, LiteralString
@@ -8,7 +9,8 @@ from typing import Final, LiteralString
 class Directories(SimpleNamespace):
     """Directory paths for OrbitLab file system structure."""
 
-    ORBITLAB_ROOT: Final = Path("./TEST_ROOT")  # TODO: Change to "/etc/pve/orbitlab"
+    ORBITLAB_ROOT: Final = Path().cwd() / "TEST_ROOT" if \
+        bool(os.environ.get("ORBITLAB_DEV")) else Path("/etc/pve/orbitlab")
     MANIFEST_ROOT: Final = ORBITLAB_ROOT / "manifests"
     WORKFLOW_FILES_ROOT: Final = ORBITLAB_ROOT / "workflow-files"
 

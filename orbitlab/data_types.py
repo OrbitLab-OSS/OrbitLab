@@ -131,6 +131,13 @@ class StorageContentType(StrEnum):
     IMPORT = auto()
 
 
+class StorageProfile(StrEnum):
+    """Enumeration of possible storage profiles in OrbitLab."""
+
+    LOCAL = auto()
+    LINSTOR = auto()
+
+
 class StorageType(StrEnum):
     """Enumeration of possible storage types in OrbitLab."""
 
@@ -158,6 +165,8 @@ class ApplianceType(StrEnum):
 
 
 class OrbitLabApplianceType(StrEnum):
+    """Enumeration of possible OrbitLab appliance types."""
+
     SECTOR_GATEWAY = "SectorGateway"
 
 
@@ -176,11 +185,15 @@ class CustomApplianceStepType(StrEnum):
 
 
 class ClusterMode(StrEnum):
+    """Enumeration of possible cluster modes in OrbitLab."""
+
     LOCAL = auto()
     CLUSTER = auto()
 
 
 class InitializationState(StrEnum):
+    """Enumeration of possible initialization states in OrbitLab."""
+
     NOT_STARTED = auto()
     RUNNING = auto()
     BACKPLANE = auto()
@@ -190,6 +203,19 @@ class InitializationState(StrEnum):
 
 
 class SectorState(StrEnum):
+    """Enumeration of possible sector states in OrbitLab."""
+
     PENDING = auto()
     AVAILABLE = auto()
     DELETING = auto()
+
+
+class CustomApplianceWorkflowStatus(StrEnum):
+    """Enumeration of possible workflow statuses for custom appliances in OrbitLab."""
+
+    PENDING = auto()
+    STARTING = auto()
+    RUNNING = auto()
+    FINALIZING = auto()
+    SUCCEEDED = auto()
+    FAILED = auto()

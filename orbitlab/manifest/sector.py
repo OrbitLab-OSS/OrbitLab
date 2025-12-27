@@ -6,7 +6,9 @@ from typing import Annotated
 
 from pydantic import BaseModel, Field
 
+from orbitlab.constants import NetworkSettings
 from orbitlab.data_types import ManifestKind, SectorState
+from orbitlab.manifest.ipam import IpamManifest
 
 from .base import BaseManifest, Metadata, Spec
 from .ref import Ref
@@ -41,6 +43,9 @@ class Subnet(BaseModel):
         """Get the gateway IP address for this subnet."""
         return IPv4Interface(f"{next(iter(self.cidr_block.hosts()))}/{self.cidr_block.prefixlen}")
 
+    def available_ips(self) -> int:
+        """Return the number of available IP addresses in the subnet."""
+        return len(list(self.cidr_block.hosts())) - NetworkSettings.RESERVED_USABLE_IPS - len(self.assignments)
 
 class Gateway(BaseModel):
     """A gateway configuration for sector network infrastructure."""
@@ -89,8 +94,6 @@ class SectorManifest(BaseManifest[SectorMetadata, SectorSpec]):
         )
         self.save()
 
-    def get_gateway(self) -> Gateway:
-        """Get the gateway configuration for this sector."""
-        if self.spec.gateway:
-            return self.spec.gateway
-        raise ValueError
+    def get_ipam(self) -> IpamManifest:
+        """Load and return the IpamManifest associated with this sector."""
+        return IpamManifest.load(name=self.spec.ipam.name)

@@ -1,26 +1,66 @@
 """OrbitLab LXC Models."""
 
 import json
-from datetime import UTC, datetime
+from pathlib import Path
+from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
-from orbitlab.manifest.appliances import (
-    CustomApplianceManifest,
-    CustomApplianceMetadata,
-    CustomApplianceSpec,
-    Network,
-    Step,
-)
+from orbitlab.data_types import CustomApplianceStepType
+
+
+class NetworkConfig(BaseModel):
+    """Network configuration for an LXC container."""
+
+    sector: str = ""
+    subnet: str = ""
+    available_subnets: dict[str, str] = Field(default_factory=dict)
+
+
+class FileConfig(BaseModel):
+    """File Configuration Model."""
+
+    source: Path
+    destination: Path | str = ""
+
+    def configured(self) -> bool:
+        """Check if the file push operation is properly configured."""
+        return bool(self.destination)
+
+
+class WorkflowStep(BaseModel):
+    """Workflow Step Model."""
+
+    type: CustomApplianceStepType | Literal[""] = Field(default="")
+    name: str = Field(default="")
+    script: str | None = Field(default=None)
+    files: list[FileConfig] | None = Field(default=None)
+    secrets: list[str] | None = Field(default=None)
+
+    @property
+    def valid(self) -> bool:
+        """Check if the step has valid configuration."""
+        files = [file.configured() for file in self.files] if self.files else [False]
+        return any([self.script, *files, self.secrets])
+
+    def validate(self) -> str:
+        """Validate the step configuration and return any error messages."""
+        if not self.name:
+            return "Step name is not provided."
+        if self.type == CustomApplianceStepType.FILES:
+            if not self.files:
+                return "No files uploaded for files step."
+            for file in self.files:
+                if not file.destination:
+                    return f"File {file.source} as no specified destination."
+        if self.type == CustomApplianceStepType.SCRIPT and not self.script:
+            return "Script step has no configured shell script."
+        return ""
 
 
 class CreateCustomApplianceForm(BaseModel):
-    """Form model for creating custom appliances.
+    """Form model for creating custom appliances."""
 
-    This model validates and structures the form data required to create
-    a custom appliance from a base appliance, including configuration
-    settings and workflow steps.
-    """
     name: str
     base_appliance: str
     node: str
@@ -28,8 +68,8 @@ class CreateCustomApplianceForm(BaseModel):
     memory: int
     swap: int
     certificate_authorities: list[str] | None
-    workflow_steps: list[Step]
-    networks: list[Network]
+    workflow_steps: list[WorkflowStep]
+    networks: list[NetworkConfig]
 
     @field_validator("certificate_authorities", mode="plain")
     @classmethod
@@ -39,33 +79,10 @@ class CreateCustomApplianceForm(BaseModel):
             return json.loads(value)
         return None
 
-    def generate_manifest(self) -> CustomApplianceManifest:
-        """Generate a `CustomApplianceManifest` from the form data."""
-        return CustomApplianceManifest(
-            name=self.name,
-            metadata=CustomApplianceMetadata(
-                name=self.name,
-                created_on=datetime.now(UTC),
-            ),
-            spec=CustomApplianceSpec(
-                base_appliance=self.base_appliance,
-                node=self.node,
-                storage=self.storage,
-                memory=self.memory,
-                swap=self.swap,
-                certificate_authorities=self.certificate_authorities,
-                steps=self.workflow_steps,
-                networks=self.networks,
-            ),
-        )
-
 
 class ApplianceItemDownload(BaseModel):
-    """Model for appliance item download information.
+    """Model for appliance item download information."""
 
-    This model tracks the download status and storage configuration
-    for appliance items.
-    """
     node: str = ""
     storage: str = ""
     available_storage: list[str] = Field(default_factory=list)

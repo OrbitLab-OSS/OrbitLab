@@ -5,114 +5,123 @@ import json
 import reflex as rx
 
 from orbitlab.clients.proxmox.appliances import ApplianceInfo, ProxmoxAppliances
-from orbitlab.data_types import ApplianceType, CustomApplianceStepType
-from orbitlab.manifest.appliances import FilePush, Step
+from orbitlab.data_types import ApplianceType, CustomApplianceStepType, StorageContentType
+from orbitlab.manifest.appliances import BaseApplianceManifest, CustomApplianceManifest
+from orbitlab.manifest.cluster import ClusterManifest
 from orbitlab.manifest.nodes import NodeManifest
+from orbitlab.manifest.sector import SectorManifest
 from orbitlab.web import components
-from orbitlab.web.states.manifests import ManifestsState
 
-from .models import ApplianceItemDownload, Network
+from .models import ApplianceItemDownload, FileConfig, NetworkConfig, WorkflowStep
 
 
-class DownloadApplianceState(ManifestsState):
+class DownloadApplianceState(rx.State):
     """State management for downloading appliances from Proxmox."""
 
     appliance_view: rx.Field[ApplianceType] = rx.field(default=ApplianceType.SYSTEM)
     query_string: rx.Field[str] = rx.field(default="")
     download_configs: rx.Field[dict[str, ApplianceItemDownload]] = rx.field(default_factory=dict)
+    nodes: rx.Field[list[str]] = rx.field(default_factory=NodeManifest.get_existing)
+    selected_node: rx.Field[str] = rx.field(default="")
+
+    _turnkey_appliances: rx.Field[list[ApplianceInfo]] = rx.field(default_factory=list)
+    _system_appliances: rx.Field[list[ApplianceInfo]] = rx.field(default_factory=list)
 
     @rx.var
-    def available_appliances(self) -> list[ApplianceInfo]:
-        """Get the list of available appliances from Proxmox that are not already downloaded."""
-        appliances = []
-        node = next(iter(self.node_names), None)
-        if not node:
-            return appliances
+    def turnkey_appliances(self) -> list[ApplianceInfo]:
+        """Get the list of turnkey appliances filtered by the query string."""
+        if self.query_string:
+            return [apl for apl in self._turnkey_appliances if self.query_string in apl.template.lower()]
+        return self._turnkey_appliances
 
-        download_configs = {}
+    @rx.var
+    def system_appliances(self) -> list[ApplianceInfo]:
+        """Get the list of system appliances filtered by the query string."""
+        if self.query_string:
+            return [apl for apl in self._system_appliances if self.query_string in apl.template.lower()]
+        return self._system_appliances
+
+    @rx.event
+    async def load(self) -> None:
+        """Load available appliances from Proxmox, filtering out existing ones and updating state."""
+        self.reset()
+        default_node: str = ClusterManifest.load(name=next(iter(ClusterManifest.get_existing()))).spec.defaults.node
+        default_storages = NodeManifest.load(name=default_node).list_storages(content_type=StorageContentType.VZTMPL)
+        existing = BaseApplianceManifest.get_existing()
         for appliance in ProxmoxAppliances().list_appliances():
-            if appliance.template in self.base_appliance_names:
+            if appliance.template in existing:
                 continue
-            appliances.append(appliance)
-            download_configs[appliance.template] = ApplianceItemDownload()
-        self.download_configs = download_configs
-        return sorted(appliances, key=lambda apl: apl.template)
-
-    @rx.var
-    def available_system_appliances(self) -> list[ApplianceInfo]:
-        """Get the list of available system appliances filtered by query string."""
-        system_appliances = []
-        for apl in self.available_appliances:
-            if apl.is_turnkey:
-                continue
-            if self.query_string and self.query_string not in apl.template.lower():
-                continue
-            system_appliances.append(apl)
-        return system_appliances
-
-    @rx.var
-    def available_turnkey_appliances(self) -> list[ApplianceInfo]:
-        """Get the list of available turnkey appliances filtered by query string."""
-        turnkey_appliances = []
-        for apl in self.available_appliances:
-            if not apl.is_turnkey:
-                continue
-            if self.query_string and self.query_string not in apl.template.lower():
-                continue
-            turnkey_appliances.append(apl)
-        return turnkey_appliances
-
-    @rx.var
-    def available_nodes(self) -> list[str]:
-        """Get the list of available node names from the manifest client."""
-        return NodeManifest.get_existing()
+            if appliance.is_turnkey:
+                self.turnkey_appliances.append(appliance)
+            else:
+                self.system_appliances.append(appliance)
+            self.download_configs[appliance.template] = ApplianceItemDownload(
+                node=default_node,
+                available_storage=default_storages,
+            )
 
 
-class CreateApplianceState(ManifestsState):
-    """State management for custom appliance creation dialog.
+class CustomApplianceState(rx.State):
+    """State management for custom appliance creation dialog."""
+    nodes: rx.Field[list[str]] = rx.field(default_factory=NodeManifest.get_existing)
+    base_appliances: rx.Field[list[str]] = rx.field(default_factory=BaseApplianceManifest.get_existing)
 
-    This state class manages the form data, workflow steps configuration,
-    and upload progress for creating custom appliances from base appliances.
-    """
     memory_gb: int = 2
     swap_gb: int = 1
+
     form_data: rx.Field[dict] = rx.field(default_factory=dict)
     step_order: rx.Field[list[components.SortableItem]] = rx.field(default_factory=list)
-    steps_config: rx.Field[dict[int, Step]] = rx.field(default_factory=dict)
+    steps_config: rx.Field[dict[int, WorkflowStep]] = rx.field(default_factory=dict)
     network_order: rx.Field[list[components.SortableItem]] = rx.field(default_factory=list)
-    networks: rx.Field[dict[int, Network]] = rx.field(default_factory=dict)
+    networks: rx.Field[dict[int, NetworkConfig]] = rx.field(default_factory=dict)
     uploading: rx.Field[bool] = rx.field(default=False)
     upload_progress: rx.Field[int] = rx.field(default=0)
     script_value: rx.Field[str] = rx.field(default="")
     default_script_value: rx.Field[str] = rx.field(default="")
-    files_data: rx.Field[list[FilePush] | None]  = rx.field(default=None)
-
-    @rx.var(cache=False)
-    def nodes(self) -> list[str]:
-        """Get the list of available node names from the manifest client."""
-        return NodeManifest.get_existing()
+    files_data: rx.Field[list[FileConfig] | None]  = rx.field(default=None)
 
     @rx.var
-    def node_manifest(self) -> NodeManifest | None:
-        if self.node:
-            return NodeManifest.load(self.node)
-        return None
+    def node(self) -> str:
+        """Get the selected node name from form data."""
+        return self.form_data.get("node", "")
 
     @rx.var
     def available_storage(self) -> list[str]:
         """Get the available storage options for the selected node."""
-        # TODO: Fix
+        if self.node:
+            return NodeManifest.load(name=self.node).list_storages(content_type=StorageContentType.VZTMPL)
         return []
 
     @rx.var
-    def available_networks(self) -> list[str]:
+    def available_rootfs(self) -> list[str]:
+        """Get the available rootfs options for the selected node."""
+        if self.node:
+            return NodeManifest.load(name=self.node).list_storages(content_type=StorageContentType.ROOTDIR)
         return []
-        # TODO: Fix (use Sectors instead)
 
     @rx.var
-    def available_subnets(self) -> dict[str, dict[str, str]]:
-        return {}
-        # TODO: Fix (use Sectors instead)
+    def storage(self) -> str:
+        """Get the selected storage name from form data."""
+        if "storage" in self.form_data:
+            return self.form_data["storage"]
+        cluster = ClusterManifest.load(name=next(iter(ClusterManifest.get_existing())))
+        return cluster.get_storage(content_type=StorageContentType.VZTMPL)
+
+    @rx.var
+    def rootfs(self) -> str:
+        """Get the selected rootfs name from form data."""
+        if "rootfs" in self.form_data:
+            return self.form_data["rootfs"]
+        cluster = ClusterManifest.load(name=next(iter(ClusterManifest.get_existing())))
+        return cluster.get_storage(content_type=StorageContentType.ROOTDIR)
+
+    @rx.var
+    def sectors(self) -> dict[str, str]:
+        """Get a mapping of sector display names to sector names."""
+        return {
+            f"{sector.name} ({sector.spec.cidr_block})": sector.name
+            for sector in [SectorManifest.load(name=name) for name in SectorManifest.get_existing()]
+        }
 
     @rx.var
     def step_types(self) -> list[str]:
@@ -130,16 +139,6 @@ class CreateApplianceState(ManifestsState):
         return self.form_data.get("base_appliance", "")
 
     @rx.var
-    def node(self) -> str:
-        """Get the selected node name from form data."""
-        return self.form_data.get("node", "")
-
-    @rx.var
-    def storage(self) -> str:
-        """Get the selected storage name from form data."""
-        return self.form_data.get("storage", "")
-
-    @rx.var
     def root_certs(self) -> list[str]:
         """Get the selected root CAs from form data."""
         certs = self.form_data.get("certificate_authorities") or "[]"
@@ -149,3 +148,43 @@ class CreateApplianceState(ManifestsState):
     def step_names_in_order(self) -> list[str]:
         """Get the names of workflow steps in their configured order."""
         return [self.steps_config[step["id"]].name for step in self.step_order]
+
+    @rx.event
+    async def load_appliance(self, appliance: CustomApplianceManifest) -> None:
+        """Populate the state with data from an existing custom appliance manifest for editing."""
+        self.reset()
+        self.memory_gb = appliance.spec.memory
+        self.swap_gb = appliance.spec.swap
+        self.form_data = {
+            "name": appliance.name,
+            "base_appliance": appliance.spec.base_appliance,
+            "node": appliance.spec.node,
+            "storage": appliance.spec.storage,
+            "rootfs": appliance.spec.rootfs,
+            "certificate_authorities": appliance.spec.certificate_authorities,
+        }
+        for index, step in enumerate(appliance.spec.steps):
+            self.step_order.append({"id": index})
+            self.steps_config[index] = WorkflowStep.model_validate(step.model_dump())
+        for index, network in enumerate(appliance.spec.networks):
+            self.network_order.append({"id": index})
+            self.networks[index] = NetworkConfig(
+                sector=network.sector.name,
+                subnet=network.subnet,
+                available_subnets = {
+                    f"{subnet.name} ({subnet.cidr_block}, Available: {subnet.available_ips()}) ": subnet.name
+                    for subnet in SectorManifest.load(name=network.sector.name).spec.subnets
+                },
+            )
+
+
+class DeleteCustomApplianceState(rx.State):
+    """State management for deleting a custom appliance, including confirmation logic."""
+
+    name: str = "UNKNOWN"
+    confirmation: str = ""
+
+    @rx.var
+    def delete_disabled(self) -> bool:
+        """Return True if the delete action should be disabled (name and confirmation do not match)."""
+        return self.name != self.confirmation

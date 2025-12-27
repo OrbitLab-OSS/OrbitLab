@@ -43,7 +43,7 @@ class CacheBuster(rx.State, mixin=True):
     by toggling internal tracking variables that force recomputation.
     """
 
-    def __init_subclass__(cls, **kwargs: dict) -> None:
+    def __init_subclass__(cls, **kwargs: bool) -> None:
         """Initialize subclass and add cached tracking variables for computed vars."""
         super().__init_subclass__(**kwargs)
         for var in cls.computed_vars:
