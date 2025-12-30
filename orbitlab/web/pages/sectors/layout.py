@@ -17,6 +17,7 @@ def sectors_page(page: Callable[[], rx.Component]) -> Callable[[], rx.Component]
         return DefaultLayout(
             SideBar(
                 SideBar.NavItem(icon="layout-dashboard", text="Dashboard", href="/sectors"),
+                SideBar.NavItem(icon="file-box", text="Sector Appliances", href="/sectors/appliances"),
                 title="Sectors",
             ),
             page(),

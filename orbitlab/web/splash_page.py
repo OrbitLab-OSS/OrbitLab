@@ -131,7 +131,12 @@ class ConfigureDefaultsDialog(EventGroup):
             storage=storage,
             appliance_type=OrbitLabApplianceType.SECTOR_GATEWAY,
         )
-        cluster_manifest.metadata.gateway_appliance = latest_gateway
+        latest_backplane_dns = ProxmoxAppliances().download_latest_orbitlab_appliance(
+            storage=storage,
+            appliance_type=OrbitLabApplianceType.BACKPLANE_DNS,
+        )
+        cluster_manifest.metadata.sector_gateway_appliance = latest_gateway
+        cluster_manifest.metadata.backplane_dns_appliance = latest_backplane_dns
         cluster_manifest.metadata.initialized = True
         cluster_manifest.save()
 

@@ -1,6 +1,6 @@
 """OrbitLab Cluster Manifest Schema."""
 
-from ipaddress import IPv4Address, IPv4Network
+from ipaddress import IPv4Address, IPv4Interface, IPv4Network
 from typing import Annotated, Self
 
 from pydantic import BaseModel, Field
@@ -25,7 +25,9 @@ class ClusterMetadata(Metadata):
     quorate: bool
     mtu: int
     reserved_tags: list[int] = Field(default_factory=list)
-    gateway_appliance: str = ""
+    sector_gateway_appliance: str = ""
+    sector_dns_appliance: str = ""
+    backplane_dns_appliance: str = ""
 
 
 class Controller(BaseModel):
@@ -41,13 +43,6 @@ class Controller(BaseModel):
         return ",".join([str(peer) for peer in self.peers])
 
 
-class AssignedAddress(BaseModel):
-    """Represents an assigned backplane IP address for a sector router."""
-
-    network_id: str
-    address: Annotated[IPv4Address, SerializeIP]
-
-
 class Backplane(BaseModel):
     """Represents the backplane network configuration for the cluster."""
 
@@ -59,7 +54,6 @@ class Backplane(BaseModel):
     mtu: int
     cidr_block: Annotated[IPv4Network, SerializeIP]
     gateway: Annotated[IPv4Address, SerializeIP]
-    assignments: list[AssignedAddress] = Field(default_factory=list)
 
     def create_ipam_manifest(self) -> None:
         """Create an IPAM manifest for the backplane network configuration."""
@@ -76,18 +70,6 @@ class Backplane(BaseModel):
                 }],
             },
         }).save()
-
-
-class Subnet(BaseModel):
-    """Represents a subnet within a network configuration."""
-
-    cidr_block: Annotated[IPv4Network, SerializeIP]
-    name: str
-
-    @property
-    def gateway(self) -> IPv4Address:
-        """Return the gateway IP address for this subnet (the first host IP address from the subnet's CIDR block)."""
-        return next(iter(self.cidr_block.hosts()))
 
 
 class DefaultStorageSelections(BaseModel):
@@ -128,6 +110,30 @@ class ClusterManifest(BaseManifest[ClusterMetadata, ClusterSpec]):
     def exit_nodes(self) -> str:
         """Return a comma-separated string of all cluster node names."""
         return ",".join([node.name for node in self.spec.nodes])
+
+    def assign_ip(self, vmid: int) -> IPv4Interface:
+        """Assign an IP address to the given VMID using the backplane IPAM manifest."""
+        return IpamManifest.load(name=constants.NetworkSettings.BACKPLANE.IPAM).assign_ip(
+            subnet_name=constants.NetworkSettings.BACKPLANE.NAME,
+            vmid=vmid,
+        )
+
+    def get_assigned_ip(self, vmid: int) -> IPv4Interface:
+        """Retrieve the assigned IP address for the given VMID from the backplane IPAM manifest."""
+        assignment = IpamManifest.load(name=constants.NetworkSettings.BACKPLANE.IPAM).get_assigned_ip(
+            subnet_name=constants.NetworkSettings.BACKPLANE.NAME,
+            vmid=vmid,
+        )
+        if not assignment:
+            raise ValueError
+        return assignment
+
+    def release_ip(self, vmid: int) -> None:
+        """Release the IP address assigned to the given VMID using the backplane IPAM manifest."""
+        IpamManifest.load(name=constants.NetworkSettings.BACKPLANE.IPAM).release_ip(
+            subnet_name=constants.NetworkSettings.BACKPLANE.NAME,
+            vmid=vmid,
+        )
 
     def add_node(self, node: NodeManifest) -> None:
         """Add a node to the cluster and update the backplane controller peers."""

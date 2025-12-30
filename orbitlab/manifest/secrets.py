@@ -35,23 +35,15 @@ class SecretManifest(BaseManifest[SecretMetadata, SecretSpec]):
     kind: Annotated[ManifestKind, SerializeEnum] = ManifestKind.SECRET
 
     @classmethod
-    def create_gateway_password(cls, sector_name: str, sector_tag: int) -> "SecretManifest":
-        """Create a password a Sector Gateway."""
-        secret_name = f"/orbitlab/sector/gateway/{sector_tag}"
-        version = SecretVault().create(
-            secret_name=Path(secret_name),
-            value=SecretVault.generate_random_password(),
+    def create_lxc_password(cls, lxc_id: str, password: str) -> Self:
+        """Create and store a password for an LXC container in the secret vault."""
+        secret_name = f"/orbitlab/lxc/{lxc_id}"
+        version = SecretVault().create(secret_name=Path(secret_name), value=password)
+        manifest = cls(
+            name=secret_name.replace("/", "."),
+            metadata=SecretMetadata(description=f"Password for LXC {lxc_id}"),
+            spec=SecretSpec(secret_name=secret_name, version=version),
         )
-        manifest = cls.model_validate({
-            "name": secret_name.replace("/", "."),
-            "metadata": {
-                "description": f"{sector_name} Sector Gateway root password.",
-            },
-            "spec": {
-                "secret_name": secret_name,
-                "version": version,
-            },
-        })
         manifest.save()
         return manifest
 

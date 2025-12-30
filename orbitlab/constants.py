@@ -69,6 +69,7 @@ SCRIPT = """cat <<EOF > {filename}
 #!/bin/bash
 set -euo pipefail
 {content}
+rm -f {filename}
 EOF
 """
 

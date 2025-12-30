@@ -1,15 +1,10 @@
 """OrbitLab Networks Dashboard States."""
 
-import re
 from ipaddress import IPv4Network
 
 import reflex as rx
 
-from orbitlab.clients.proxmox.appliances import ProxmoxAppliances
 from orbitlab.clients.proxmox.networks import AttachedInstances
-from orbitlab.data_types import OrbitLabApplianceType
-from orbitlab.manifest.cluster import ClusterManifest
-from orbitlab.web.states.utilities import CacheBuster
 
 from .models import SectorSpec
 
@@ -51,29 +46,3 @@ class DeleteSectorDialogState(rx.State):
     def delete_disabled(self) -> bool:
         """Check if the delete button should be disabled."""
         return self.confirmation != self.sector_id
-
-
-class SectorAppliancesTableState(CacheBuster, rx.State):
-    """Sector Appliances Table State."""
-
-    @rx.var(deps=["_cached_gateway_appliance"])
-    def gateway_appliance(self) -> str:
-        """Get the gateway appliance name from the cluster manifest."""
-        name = next(iter(ClusterManifest.get_existing()), None)
-        if name:
-            cluster_manifest = ClusterManifest.load(name=name)
-            return cluster_manifest.metadata.gateway_appliance
-        return ""
-
-    @rx.var
-    def downloaded_gateway_version(self) -> str:
-        """Extract the version number from the downloaded gateway appliance filename."""
-        if match := re.match(r"sector-gateway-(\d+\.\d+\.\d).tar.gz", self.gateway_appliance):
-            return match.groups()[0]
-        return "Err"
-
-    @rx.var
-    def latest_gateway_version(self) -> str:
-        """Get the latest gateway appliance version from Proxmox."""
-        latest = ProxmoxAppliances().get_latest_release(appliance_type=OrbitLabApplianceType.SECTOR_GATEWAY)
-        return latest.version

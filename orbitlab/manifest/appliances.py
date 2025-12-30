@@ -144,7 +144,7 @@ class CustomApplianceManifest(BaseManifest[CustomApplianceMetadata, CustomApplia
     kind: Annotated[ManifestKind, SerializeEnum] = ManifestKind.CUSTOM_APPLIANCE
 
     @property
-    def volume_id(self) -> str:
+    def ostemplate(self) -> str:
         """Return the Proxmox volume ID string for this custom appliance."""
         return f"{self.spec.storage}:vztmpl/{self.name}.tar.gz"
 
@@ -162,7 +162,7 @@ class CustomApplianceManifest(BaseManifest[CustomApplianceMetadata, CustomApplia
         self.metadata.logs.append(message)
         self.save()
 
-    def workflow_params(self, vmid: str) -> dict[str, str]:
+    def workflow_params(self, vmid: int) -> dict[str, str | int]:
         """Generate the parameters required to create a Proxmox LXC container from this manifest."""
         networks: dict[str, str] = {}
         for index, network in enumerate(self.spec.networks):

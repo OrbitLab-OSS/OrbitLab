@@ -168,6 +168,8 @@ class OrbitLabApplianceType(StrEnum):
     """Enumeration of possible OrbitLab appliance types."""
 
     SECTOR_GATEWAY = "SectorGateway"
+    SECTOR_DNS = "SectorDNS"
+    BACKPLANE_DNS = "BackplaneDNS"
 
 
 class TaskStatus(StrEnum):
@@ -219,3 +221,10 @@ class CustomApplianceWorkflowStatus(StrEnum):
     FINALIZING = auto()
     SUCCEEDED = auto()
     FAILED = auto()
+
+
+class LXCStatus(StrEnum):
+    STARTING = auto()
+    RUNNING = auto()
+    STOPPING = auto()
+    TERMINATING = auto()

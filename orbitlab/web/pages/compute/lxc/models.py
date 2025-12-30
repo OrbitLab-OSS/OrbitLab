@@ -87,3 +87,19 @@ class ApplianceItemDownload(BaseModel):
     storage: str = ""
     available_storage: list[str] = Field(default_factory=list)
     downloading: bool = False
+
+
+class CreateLXCForm(BaseModel):
+    """Form model for creating LXC containers."""
+
+    node: str
+    appliance: str
+    name: str
+    rootfs: str
+    disk_size: int
+    cores: int
+    memory: int
+    swap: int
+    password: str
+    sector: str
+    subnet: str

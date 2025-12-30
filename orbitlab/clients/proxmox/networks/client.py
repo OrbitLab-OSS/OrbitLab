@@ -7,9 +7,8 @@ from pydantic import RootModel
 from orbitlab.clients.proxmox.base import Proxmox, Task
 from orbitlab.constants import NetworkSettings
 from orbitlab.manifest.cluster import ClusterManifest
-from orbitlab.manifest.ipam import IpamManifest
-from orbitlab.manifest.secrets import SecretManifest
 from orbitlab.manifest.sector import SectorManifest
+from orbitlab.services.pki.client import SecretVault
 
 from .models import (
     ComputeConfig,
@@ -30,13 +29,15 @@ class ProxmoxNetworks(Proxmox):
 
     def __sgwtool_frr_set__(self, sector: SectorManifest, backplane_gateway: IPv4Address) -> str:
         """Generate sgwtool frr set command for configuring FRR routing on the sector gateway."""
-        if not sector.spec.gateway:
+        if not sector.spec.gateway_vmid:
             raise ValueError
+        cluster_manifest = ClusterManifest.load(name=next(iter(ClusterManifest.get_existing())))
+        backplane_address = cluster_manifest.get_assigned_ip(vmid=sector.spec.gateway_vmid)
         sector_flags = " ".join(
             [f"--sector-subnet-addr {subnet.default_gateway}" for subnet in sector.spec.subnets],
         )
         backplane_flags = (
-            f"--backplane-assigned-addr {sector.spec.gateway.backplane_address} "
+            f"--backplane-assigned-addr {backplane_address} "
             f"--backplane-gw-ip {backplane_gateway}"
         )
         return f"/usr/local/bin/sgwtool frr set {sector_flags}  {backplane_flags}"
@@ -135,32 +136,37 @@ class ProxmoxNetworks(Proxmox):
             self.create(f"/cluster/sdn/vnets/{sector.name}/subnets", model=None, **subnet_params)
         self.__apply_changes__()
 
-        vmid = str(self.get_next_vmid())
+    def create_sector_gateway(self, sector: SectorManifest) -> None:
+        """Create and configure a sector gateway LXC container on Proxmox for the given sector."""
+        cluster_manifest = ClusterManifest.load(name=next(iter(ClusterManifest.get_existing())))
 
-        backplane_ipam = IpamManifest.load(name=NetworkSettings.BACKPLANE.IPAM)
-        address = backplane_ipam.assign_ip(subnet_name=NetworkSettings.BACKPLANE.NAME, vmid=vmid)
+        vmid = self.get_next_vmid()
+        address = cluster_manifest.assign_ip(vmid=vmid)
 
-        secret = SecretManifest.create_gateway_password(sector_name=sector.name, sector_tag=sector.metadata.tag)
         params = {
             "features": "nesting=1",
-            "ostemplate": f"local:vztmpl/{cluster_manifest.metadata.gateway_appliance}",
+            "ostemplate": f"local:vztmpl/{cluster_manifest.metadata.sector_gateway_appliance}",
             "hostname": sector.gateway_name,
             "cores": "1",
             "memory": "256",
             "swap": "256",
             "net0": f"name=eth0,bridge={sector.name}",
             "net1": (
-                f"name=eth1,bridge={cluster_manifest.spec.backplane.vnet_id},ip={address},gw={cluster_manifest.spec.backplane.gateway}"
+                "name=eth1,"
+                f"bridge={cluster_manifest.spec.backplane.vnet_id},"
+                f"ip={address},"
+                f"gw={cluster_manifest.spec.backplane.gateway}"
             ),
             "rootfs": "local-zfs:8",
             "unprivileged": "1",
             "vmid": vmid,
             "ssh-public-keys": "",
-            "password": secret.get_current_value(),
+            "password": SecretVault.generate_random_password(),
+            "searchdomain": f"{sector.name}.orbitlab.internal",
             "onboot": "1",
         }
         task = self.create(path=f"/nodes/{self.__node__}/lxc", model=Task, **params)
-        sector.set_gateway(backplane_address=address, vmid=vmid, password_ref=secret.to_ref())
+        sector.set_gateway(vmid=vmid)
         self.wait_for_task(node=task.node, upid=task.upid)
         task = self.create(path=f"/nodes/{self.__node__}/lxc/{vmid}/status/start", model=Task)
         self.wait_for_task(node=task.node, upid=task.upid)
@@ -170,7 +176,7 @@ class ProxmoxNetworks(Proxmox):
             backplane_gateway=cluster_manifest.spec.backplane.gateway,
         )
         configure_nftables_command = self.__sgwtool_nftables_set__(
-            primary_ip=sector.primary_gateway,
+            primary_ip=sector.primary_gateway.ip,
             backplane=cluster_manifest.spec.backplane.cidr_block,
         )
         conn.lxc_execute_script(
@@ -183,12 +189,60 @@ class ProxmoxNetworks(Proxmox):
             ),
         )
 
+    def create_sector_dns(self, sector: SectorManifest) -> None:
+        """Create and configure a sector DNS LXC container on Proxmox for the given sector."""
+        cluster_manifest = ClusterManifest.load(name=next(iter(ClusterManifest.get_existing())))
+
+        vmid = self.get_next_vmid()
+        address = cluster_manifest.assign_ip(vmid=vmid)
+
+        params = {
+            "features": "nesting=1",
+            "ostemplate": f"local:vztmpl/{cluster_manifest.metadata.sector_dns_appliance}",
+            "hostname": sector.dns_name,
+            "cores": "1",
+            "memory": "256",
+            "swap": "256",
+            "net0": (
+                "name=eth0,"
+                f"bridge={sector.name},"
+                f"ip={sector.dns_address.with_prefixlen},"
+                f"gw={sector.primary_gateway.ip}"
+            ),
+            "net1": (
+                "name=eth1,"
+                f"ip={address.with_prefixlen},"
+                f"bridge={cluster_manifest.spec.backplane.vnet_id},"
+                f"gw={cluster_manifest.spec.backplane.gateway}"
+            ),
+            "rootfs": "local-zfs:8",
+            "unprivileged": "1",
+            "vmid": vmid,
+            "ssh-public-keys": "",
+            "password": SecretVault.generate_random_password(),
+            "searchdomain": f"{sector.name}.orbitlab.internal",
+            "onboot": "1",
+        }
+        task = self.create(path=f"/nodes/{self.__node__}/lxc", model=Task, **params)
+        sector.set_dns(vmid=vmid)
+        self.wait_for_task(node=task.node, upid=task.upid)
+        task = self.create(path=f"/nodes/{self.__node__}/lxc/{vmid}/status/start", model=Task)
+        self.wait_for_task(node=task.node, upid=task.upid)
+
     def delete_sector(self, sector: SectorManifest) -> None:
         """Delete a sector network and its associated gateway container."""
-        if sector.spec.gateway:
+        cluster_manifest = ClusterManifest.load(name=next(iter(ClusterManifest.get_existing())))
+        if sector.spec.gateway_vmid:
             params = {"destroy-unreferenced-disks": 1, "force": 1, "purge": 1}
-            task = self.delete(path=f"/nodes/{self.__node__}/lxc/{sector.spec.gateway.vmid}", model=Task, **params)
+            task = self.delete(path=f"/nodes/{self.__node__}/lxc/{sector.spec.gateway_vmid}", model=Task, **params)
             self.wait_for_task(node=task.node, upid=task.upid)
+            cluster_manifest.release_ip(vmid=sector.spec.gateway_vmid)
+
+        if sector.spec.dns_vmid:
+            params = {"destroy-unreferenced-disks": 1, "force": 1, "purge": 1}
+            task = self.delete(path=f"/nodes/{self.__node__}/lxc/{sector.spec.dns_vmid}", model=Task, **params)
+            self.wait_for_task(node=task.node, upid=task.upid)
+            cluster_manifest.release_ip(vmid=sector.spec.dns_vmid)
 
         for subnet in sector.spec.subnets:
             subnet_id = str(subnet.cidr_block).replace("/", "-")
@@ -201,7 +255,7 @@ class ProxmoxNetworks(Proxmox):
         """List all compute instances attached to a specific sector network."""
         sector = SectorManifest.load(name=sector_id)
         bridges = self.get(path=f"/nodes/{self.__node__}/sdn/zones/{sector_id}/bridges", model=ZoneBridges)
-        instances: dict[str, ComputeConfig] = {}
+        instances: dict[int, ComputeConfig] = {}
         for vm in bridges.get_vms():
             if not vm.vmid:
                 continue

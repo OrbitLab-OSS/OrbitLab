@@ -155,12 +155,12 @@ class RemoteExecution:
         print(output)
         return b"\n".join(output).strip()
 
-    def __pct_exec__(self, vmid: str, filename: str) -> None:
+    def __pct_exec__(self, vmid: int, filename: str) -> None:
         """Execute a bash script file inside a Proxmox LXC container."""
-        command = f"pct exec {vmid} -- bash {filename} && rm -f {filename}"
+        command = f"pct exec {vmid} -- bash {filename}"
         self.run_command(command=command)
 
-    def __pct_push__(self, vmid: str, source: str, destination: Path) -> None:
+    def __pct_push__(self, vmid: int, source: str, destination: Path) -> None:
         """Push a file from host to Proxmox LXC container."""
         self.run_command(command=f"pct exec {vmid} -- mkdir -p {destination.parent}")
         command = f"pct push {vmid} {source} {destination}"
@@ -185,7 +185,7 @@ class RemoteExecution:
             return output
         return None
 
-    def lxc_push_file(self, vmid: str, source: Path, destination: Path) -> None:
+    def lxc_push_file(self, vmid: int, source: Path, destination: Path) -> None:
         """Push a file from the host to a Proxmox LXC container."""
         if self.ws:
             chunk_size = 4096
@@ -205,7 +205,7 @@ class RemoteExecution:
         self.__pct_push__(vmid=vmid, source=file.name, destination=destination)
         self.run_command(command=f"rm -f {file.name}")
 
-    def lxc_execute_script(self, vmid: str, content: str) -> None:
+    def lxc_execute_script(self, vmid: int, content: str) -> None:
         """Execute a script inside an LXC container."""
         with tempfile.NamedTemporaryFile() as file:
             command = ProxmoxRE.SCRIPT.format(filename=file.name, content=content)
@@ -368,7 +368,7 @@ class Proxmox:
             )
         return RemoteExecution(node=node)
 
-    def create_lxc(self, *, node: str, params: dict[str, str], start: bool = False) -> None:
+    def create_lxc(self, *, node: str, params: dict[str, str | int], start: bool = False) -> None:
         """Create an LXC container on the specified Proxmox node with the given parameters."""
         task = self.create(path=f"/nodes/{node}/lxc", model=Task, **params)
         self.wait_for_task(node=task.node, upid=task.upid)

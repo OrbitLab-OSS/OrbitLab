@@ -42,6 +42,8 @@ class ProxmoxAppliances(Proxmox):
     def download_latest_orbitlab_appliance(self, storage: str, appliance_type: OrbitLabApplianceType) -> str:
         """Download the latest appliance template from GitHub releases."""
         latest = self.get_latest_release(appliance_type=appliance_type)
+        if not latest:
+            return ""
         appliance = latest.get_appliance_asset()
         checksum_algorithm, checksum = appliance.digest.split(":")
         params = {
@@ -64,7 +66,7 @@ class ProxmoxAppliances(Proxmox):
         """Run the workflow to create a custom appliance on Proxmox."""
         try:
             # Create and Start LXC
-            vmid = str(self.get_next_vmid())
+            vmid = self.get_next_vmid()
             params = appliance.workflow_params(vmid=vmid)
             appliance.set_workflow_status(status=CustomApplianceWorkflowStatus.STARTING)
             appliance.workflow_log(message=f"Creating and starting LXC {vmid}", truncate=True)
@@ -122,7 +124,7 @@ class ProxmoxAppliances(Proxmox):
     def delete_custom_appliance(self, appliance: CustomApplianceManifest) -> None:
         """Delete a custom appliance from the specified Proxmox storage."""
         task = self.delete(
-            path=f"/nodes/{appliance.spec.node}/storage/{appliance.spec.storage}/content/{appliance.volume_id}",
+            path=f"/nodes/{appliance.spec.node}/storage/{appliance.spec.storage}/content/{appliance.ostemplate}",
             model=Task,
         )
         self.wait_for_task(node=task.node, upid=task.upid)

@@ -1,18 +1,17 @@
 """OrbitLab Sector Manifest."""
 
 from datetime import UTC, datetime
-from ipaddress import IPv4Address, IPv4Interface, IPv4Network
+from ipaddress import IPv4Interface, IPv4Network
 from typing import Annotated
 
 from pydantic import BaseModel, Field
 
-from orbitlab.constants import NetworkSettings
 from orbitlab.data_types import ManifestKind, SectorState
 from orbitlab.manifest.ipam import IpamManifest
 
 from .base import BaseManifest, Metadata, Spec
 from .ref import Ref
-from .serialization import SerializeEnum, SerializeIP, SerializeIPList
+from .serialization import SerializeEnum, SerializeIP
 
 
 class SectorMetadata(Metadata):
@@ -36,24 +35,11 @@ class Subnet(BaseModel):
 
     cidr_block: Annotated[IPv4Network, SerializeIP]
     name: str
-    assignments: Annotated[list[IPAssignment], Field(default_factory=list)]
 
     @property
     def default_gateway(self) -> IPv4Interface:
         """Get the gateway IP address for this subnet."""
         return IPv4Interface(f"{next(iter(self.cidr_block.hosts()))}/{self.cidr_block.prefixlen}")
-
-    def available_ips(self) -> int:
-        """Return the number of available IP addresses in the subnet."""
-        return len(list(self.cidr_block.hosts())) - NetworkSettings.RESERVED_USABLE_IPS - len(self.assignments)
-
-class Gateway(BaseModel):
-    """A gateway configuration for sector network infrastructure."""
-
-    backplane_address: Annotated[IPv4Interface, SerializeIP]
-    vmid: str | int
-    password: Ref
-    sector_addresses: Annotated[list[IPv4Interface], SerializeIPList]
 
 
 class SectorSpec(Spec):
@@ -61,7 +47,8 @@ class SectorSpec(Spec):
 
     cidr_block: Annotated[IPv4Network, SerializeIP]
     subnets: list[Subnet]
-    gateway: Gateway | None = None
+    gateway_vmid: int | None = None
+    dns_vmid: int | None = None
     ipam: Ref
 
 
@@ -73,25 +60,39 @@ class SectorManifest(BaseManifest[SectorMetadata, SectorSpec]):
     @property
     def gateway_name(self) -> str:
         """Get the gateway name for this sector."""
-        return f"{self.name}gw"
+        return f"{self.name}-gw"
 
     @property
-    def primary_gateway(self) -> IPv4Address:
-        """Get the primary gateway IP address for this sector."""
-        return next(iter(self.spec.cidr_block.hosts()))
+    def dns_name(self) -> str:
+        """Get the DNS name for this sector."""
+        return f"{self.name}-dns"
+
+    @property
+    def primary_gateway(self) -> IPv4Interface:
+        """Get the primary gateway interface for this sector."""
+        return IPv4Interface(f"{self.spec.cidr_block.network_address + 1}/{self.spec.cidr_block.prefixlen}")
+
+    @property
+    def dns_address(self) -> IPv4Interface:
+        """Get the DNS IP address for this sector."""
+        return IPv4Interface(f"{self.primary_gateway.ip + 1}/{self.spec.cidr_block.prefixlen}")
 
     def get_subnet(self, name: str) -> Subnet:
         """Get a subnet by name."""
         return next(subnet for subnet in self.spec.subnets if subnet.name == name)
 
-    def set_gateway(self, backplane_address: IPv4Interface, vmid: str, password_ref: Ref) -> None:
+    def get_available_ips(self, subnet_name: str) -> int:
+        """Return the number of available IP addresses in the specified subnet."""
+        return self.get_ipam().get_subnet(name=subnet_name).available_ips()
+
+    def set_gateway(self, vmid: int) -> None:
         """Set the gateway configuration for this sector."""
-        self.spec.gateway = Gateway(
-            backplane_address=backplane_address,
-            vmid=vmid,
-            password=password_ref,
-            sector_addresses=[subnet.default_gateway for subnet in self.spec.subnets],
-        )
+        self.spec.gateway_vmid = vmid
+        self.save()
+
+    def set_dns(self, vmid: int) -> None:
+        """Set the DNS VM ID for this sector and save the manifest."""
+        self.spec.dns_vmid = vmid
         self.save()
 
     def get_ipam(self) -> IpamManifest:

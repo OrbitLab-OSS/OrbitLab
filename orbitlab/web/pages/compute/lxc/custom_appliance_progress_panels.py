@@ -1,4 +1,4 @@
-"""OrbitLab LXC Progress Panels."""
+"""OrbitLab Create Custom Appliance Progress Panels."""
 
 from pathlib import Path
 from typing import Final, cast
@@ -167,10 +167,14 @@ class NetworkConfigurationPanel(EventGroup):
     @rx.event
     async def set_network(state: CustomApplianceState, sort_id: int, sector: str) -> None:
         """Set the network name for a specific network configuration."""
+        sector_manifest = SectorManifest.load(name=sector)
         state.networks[sort_id].sector = sector
         state.networks[sort_id].available_subnets = {
-            f"{subnet.name} ({subnet.cidr_block}, Available: {subnet.available_ips()}) ": subnet.name
-            for subnet in SectorManifest.load(name=sector).spec.subnets
+            (
+                f"{subnet.name} ({subnet.cidr_block}, "
+                f"Available: {sector_manifest.get_available_ips(subnet_name=subnet.name)})"
+            ): subnet.name
+            for subnet in sector_manifest.spec.subnets
         }
 
     @staticmethod

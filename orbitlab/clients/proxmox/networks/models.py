@@ -15,7 +15,7 @@ from orbitlab.manifest.serialization import PeerList, PveBool
 class AttachedInstances(BaseModel):
     """Represents an attached instance with its identification and network details."""
 
-    vmid: str
+    vmid: int
     name: str
     ip: str
 
@@ -28,7 +28,9 @@ class ComputeConfig(BaseModel):
     @property
     def is_orbitlab_infra(self) -> bool:
         """Check if this compute node is OrbitLab infrastructure."""
-        return bool(re.match(pattern=r"olvn\d{4}gw", string=self.hostname))
+        if re.match(pattern=r"olvn\d{4}gw", string=self.hostname):
+            return True
+        return bool(re.match(pattern=r"olvn\d{4}-dns", string=self.hostname))
 
 
 class SectorAttachedInstances(BaseModel):
@@ -40,7 +42,7 @@ class SectorAttachedInstances(BaseModel):
     attached: list[AttachedInstances]
 
     @classmethod
-    def create(cls, sector: SectorManifest, instances: dict[str, ComputeConfig]) -> "SectorAttachedInstances":
+    def create(cls, sector: SectorManifest, instances: dict[int, ComputeConfig]) -> "SectorAttachedInstances":
         """Create a SectorAttachedInstances object from sector and instance data."""
         ipam = IpamManifest.load(name=sector.spec.ipam.name)
         return cls.model_validate({
@@ -124,7 +126,7 @@ class ZoneBridgePorts(BaseModel):
 
     name: str
     index: str | None = None
-    vmid: str | None = None
+    vmid: int | None = None
 
 
 class ZoneBridge(BaseModel):

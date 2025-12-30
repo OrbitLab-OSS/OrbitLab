@@ -7,11 +7,9 @@ from typing import Final
 import reflex as rx
 
 from orbitlab.clients.proxmox import ProxmoxNetworks
-from orbitlab.constants import NetworkSettings
 from orbitlab.data_types import FrontendEvents, SectorState
 from orbitlab.manifest.cluster import ClusterManifest
 from orbitlab.manifest.ipam import IpamManifest
-from orbitlab.manifest.secrets import SecretManifest
 from orbitlab.manifest.sector import SectorManifest
 from orbitlab.web import components
 from orbitlab.web.states.manifests import ManifestsState
@@ -79,7 +77,10 @@ class CreateSectorDialog(EventGroup):
     @rx.event(background=True)
     async def start_create_sector(_: rx.State, sector: SectorManifest) -> FrontendEvents:
         """Create the sector in Proxmox and update its state to available."""
-        await rx.run_in_thread(lambda: ProxmoxNetworks().create_sector(sector=sector))
+        networks = ProxmoxNetworks()
+        await rx.run_in_thread(func=lambda: networks.create_sector(sector=sector))
+        await rx.run_in_thread(func=lambda: networks.create_sector_gateway(sector=sector))
+        await rx.run_in_thread(func=lambda: networks.create_sector_dns(sector=sector))
         sector.metadata.state = SectorState.AVAILABLE
         sector.save()
         cluster_manifest = ClusterManifest.load(name=next(iter(ClusterManifest.get_existing())))
@@ -248,14 +249,6 @@ class DeleteSectorDialog(EventGroup):
     async def start_sector_delete(_: rx.State, sector: SectorManifest) -> FrontendEvents:
         """Delete a sector and clean up associated resources including IPAM, secrets, and cluster references."""
         await rx.run_in_thread(lambda: ProxmoxNetworks().delete_sector(sector=sector))
-        if sector.spec.gateway:
-            backplane_ip = sector.spec.gateway.backplane_address
-            IpamManifest.load(
-                name=NetworkSettings.BACKPLANE.IPAM,
-            ).release_ip(subnet_name=NetworkSettings.BACKPLANE.NAME, ip=backplane_ip)
-        sector_gw_password = f"/orbitlab/sector/gateway/{sector.metadata.tag}"
-        if sector_gw_password in SecretManifest.get_existing():
-            SecretManifest.load(name=sector_gw_password).delete()
         IpamManifest.load(name=sector.spec.ipam.name).delete()
         ClusterManifest.load(name=next(iter(ClusterManifest.get_existing()))).remove_sector(tag=sector.metadata.tag)
         sector.delete()
