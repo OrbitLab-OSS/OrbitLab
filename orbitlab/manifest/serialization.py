@@ -14,10 +14,11 @@ T = TypeVar("T", bound=StrEnum)
 
 def str_list_to_enum(enum: T) -> Callable[[T], list[T]]:
     """Convert a list of strings to the specified Enums."""
+
     def wrapped(string_list: str | list) -> list[T]:
         if not isinstance(string_list, list):
             string_list = string_list.split(",")
-        return [enum(i) for i in string_list] # pyright: ignore[reportCallIssue]
+        return [enum(i) for i in string_list]  # pyright: ignore[reportCallIssue]
 
     return wrapped
 

@@ -1,11 +1,12 @@
 """OrbitLab Compute Page Layout."""
+
 from collections.abc import Callable
 
 import reflex as rx
 
 from orbitlab.web.components.sidebar import SideBar
 from orbitlab.web.pages.layout import DefaultLayout
-from orbitlab.web.utilities import require_configuration
+from orbitlab.web.splash_page import require_configuration
 
 
 def compute_page(page: Callable[[], rx.Component]) -> Callable[[], rx.Component]:
@@ -17,7 +18,8 @@ def compute_page(page: Callable[[], rx.Component]) -> Callable[[], rx.Component]
             SideBar(
                 SideBar.NavItem(icon="layout-dashboard", text="Dashboard", href="/compute"),
                 SideBar.SectionHeader(title="LXC"),
-                SideBar.NavItem(icon="circle-chevron-right", text="Appliances", href="/compute/lxc/appliances"),
+                SideBar.NavItem(icon="container", text="Running", href="/compute/lxc/running"),
+                SideBar.NavItem(icon="file-box", text="Appliances", href="/compute/lxc/appliances"),
                 title="Compute",
             ),
             page(),

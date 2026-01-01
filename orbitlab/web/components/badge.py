@@ -1,14 +1,16 @@
 """Badge component for OrbitLab, styled for light/dark themes."""
 
-from typing import ClassVar, Literal, TypeAlias
+from typing import ClassVar, Literal
 
 import reflex as rx
 
-Colors: TypeAlias = Literal["default", "blue", "green", "red", "orange"]
-StatusContent: TypeAlias = str | rx.Component | rx.Var
+type Colors = Literal["default", "blue", "green", "red", "orange"]
+type StatusContent = str | rx.Component | rx.Var
 
 
 class WithStatus:
+    """Component wrapper that adds a status badge to another component."""
+
     color_classes: ClassVar[dict[Colors, str]] = {
         "default": (
             "bg-gradient-to-b from-gray-100 to-gray-200 "
@@ -48,7 +50,8 @@ class WithStatus:
         *,
         status_content: StatusContent | None = None,
         color: Colors = "default",
-    ):
+    ) -> rx.Component:
+        """Create and return the badge component."""
         if status_content is None:
             status_content = rx.fragment()
         return rx.el.div(
@@ -106,16 +109,8 @@ class Badge:
         color_scheme: Colors = "default",
         size: Literal["sm", "md", "lg"] = "md",
         icon: str | None = None,
-        **props: dict,
     ) -> rx.Component:
-        """Create an OrbitLab badge.
-
-        Args:
-            label: The text to display inside the badge.
-            color_scheme: The color style, e.g. "default", "blue", "green", "red", "orange".
-            size: One of "sm", "md", or "lg".
-            icon: Optional lucide-react icon name.
-        """
+        """Create an OrbitLab badge."""
         size_classes = {
             "sm": "text-xs px-2 py-0.5 rounded-md",
             "md": "text-sm px-2.5 py-0.5 rounded-lg",
@@ -135,5 +130,4 @@ class Badge:
                     "backdrop-blur-sm transition-all duration-200 ease-in-out"
                 ),
             ),
-            **props,
         )

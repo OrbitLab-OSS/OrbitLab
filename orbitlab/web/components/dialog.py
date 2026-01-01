@@ -4,11 +4,12 @@ from typing import TypedDict, Unpack
 
 import reflex as rx
 
-from orbitlab.web.states.utilities import EventGroup
+from orbitlab.web.utilities import EventGroup
 
 
 class DialogStateManager(rx.State):
     """State manager for tracking dialog open/close states."""
+
     registered: rx.Field[dict[str, bool]] = rx.field(default_factory=dict)
 
     @rx.event
@@ -50,8 +51,8 @@ class Dialog(EventGroup):
             rx.dialog.content(
                 rx.dialog.title(title),
                 *children,
-                on_open_auto_focus=on_open, # pyright: ignore[reportArgumentType]
-                on_close_auto_focus=on_close, # pyright: ignore[reportArgumentType]
+                on_open_auto_focus=on_open,  # pyright: ignore[reportArgumentType]
+                on_close_auto_focus=on_close,  # pyright: ignore[reportArgumentType]
                 **props,
             ),
             on_mount=DialogStateManager.register(dialog_id),

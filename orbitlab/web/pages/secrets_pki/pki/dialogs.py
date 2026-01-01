@@ -1,4 +1,5 @@
 """Dialog components for PKI certificate management."""
+
 import json
 from typing import Final
 
@@ -9,23 +10,17 @@ from orbitlab.services.pki.client import Certificates
 from orbitlab.services.pki.models import IntermediateCA, Subject
 from orbitlab.web.components import Badge, Buttons, CheckboxGroup, Dialog, FieldSet, Input, Select
 from orbitlab.web.components.menu import Menu
-from orbitlab.web.states.utilities import EventGroup
-from orbitlab.web.utilities import custom_download
+from orbitlab.web.utilities import EventGroup, custom_download
 
-from .states import CAState, IntermediateCAState, ManageCA, ManageIntermediateCerts
+from .states import CertificateAuthoritiesState, IntermediateCertificatesState, ManageCertificateState
 
 
 class CreateCertificateAuthorityDialog(EventGroup):
-    """Dialog component for creating a new certificate authority.
-
-    Provides a form interface for creating certificate authorities with
-    subject information and key usage settings. Extends EventGroup to
-    handle form submission and dialog management.
-    """
+    """Dialog component for creating a new certificate authority."""
 
     @staticmethod
     @rx.event
-    async def create_certificate_authority(state: CAState, form: dict) -> FrontendEvents:
+    async def create_certificate_authority(state: CertificateAuthoritiesState, form: dict) -> FrontendEvents:
         """Create a new certificate authority from form data."""
         manifest = Certificates().create_certificate_authority(
             subject=Subject(
@@ -147,15 +142,11 @@ class CreateCertificateAuthorityDialog(EventGroup):
 
 
 class ConfirmRevokeCADialog(EventGroup):
-    """Dialog component for confirming certificate authority revocation.
-
-    Provides a confirmation dialog with name verification before allowing
-    the user to revoke a certificate authority.
-    """
+    """Dialog component for confirming certificate authority revocation."""
 
     @staticmethod
     @rx.event
-    async def revoke_ca(state: ManageCA) -> FrontendEvents:
+    async def revoke_ca(state: ManageCertificateState) -> FrontendEvents:
         """Revoke the certificate authority and close related dialogs."""
         # TODO: Actually Revoke cert
         state.reset()
@@ -166,14 +157,14 @@ class ConfirmRevokeCADialog(EventGroup):
 
     @staticmethod
     @rx.event
-    async def cancel_revoke(state: ManageCA) -> FrontendEvents:
+    async def cancel_revoke(state: ManageCertificateState) -> FrontendEvents:
         """Cancel the certificate authority revocation process."""
         state.revoke_disabled = True
         return Dialog.close(ConfirmRevokeCADialog.dialog_id)
 
     @staticmethod
     @rx.event
-    async def ensure_ca_names_match(state: ManageCA, value: str) -> None:
+    async def ensure_ca_names_match(state: ManageCertificateState, value: str) -> None:
         """Enable or disable the revoke button based on name match."""
         if state.manifest.name == value:
             state.revoke_disabled = False
@@ -185,7 +176,7 @@ class ConfirmRevokeCADialog(EventGroup):
     def __new__(cls) -> rx.Component:
         """Create and return dialog component."""
         return Dialog(
-            f"Revoke {ManageCA.manifest.name}",
+            f"Revoke {ManageCertificateState.name}",
             rx.el.div(
                 rx.text(
                     "Revoking this Root CA will invalidate all Intermediate CAs and leaf certificates that uses this "
@@ -193,18 +184,22 @@ class ConfirmRevokeCADialog(EventGroup):
                 ),
                 rx.text(
                     "If you are sure you want to revoke ",
-                    rx.el.span(ManageCA.manifest.name, class_name="font-bold"),
+                    rx.el.span(ManageCertificateState.name, class_name="font-bold"),
                     rx.el.span(" type its name below."),
                 ),
                 class_name="w-full flex-col space-y-6 my-8",
             ),
             Input(
-                placeholder=ManageCA.manifest.name,
+                placeholder=ManageCertificateState.name,
                 on_change=cls.ensure_ca_names_match,
             ),
             rx.el.div(
                 Buttons.Secondary("Cancel", on_click=cls.cancel_revoke),
-                Buttons.Primary("Confirm", disabled=ManageCA.revoke_disabled, on_click=cls.revoke_ca),
+                Buttons.Primary(
+                    "Confirm",
+                    disabled=ManageCertificateState.revoke_disabled,
+                    on_click=cls.revoke_ca,
+                ),
                 class_name="w-full flex justify-end space-x-4",
             ),
             dialog_id=cls.dialog_id,
@@ -212,25 +207,22 @@ class ConfirmRevokeCADialog(EventGroup):
 
 
 class ManageCertificateAuthorityDialog:
-    """Dialog component for managing certificate authority details.
+    """Dialog component for managing certificate authority details."""
 
-    Provides functionality to view certificate authority information,
-    download certificates, and perform dangerous operations like revocation.
-    """
     dialog_id: Final = "manage-certificate-authority-dialog"
 
     def __new__(cls) -> rx.Component:
         """Create and return dialog component."""
         return Dialog(
-            f"Manage {ManageCA.manifest.name}",
+            f"Manage {ManageCertificateState.name}",
             rx.el.div(
                 rx.el.div(
                     Buttons.Primary(
                         "Download",
                         icon="download",
                         on_click=custom_download(
-                            data=ManageCA.manifest.metadata.certificate,
-                            filename=f"{ManageCA.manifest.name.lower().replace(' ', '_')}.crt",
+                            data=ManageCertificateState.certificate_data,
+                            filename=f"{ManageCertificateState.name.lower().replace(' ', '_')}.crt",
                             mime_type="application/x-pem-file",
                         ),
                     ),
@@ -252,59 +244,53 @@ class ManageCertificateAuthorityDialog:
                     rx.data_list.root(
                         rx.data_list.item(
                             rx.data_list.label("Common Name"),
-                            rx.data_list.value(ManageCA.manifest.metadata.common_name),
+                            rx.data_list.value(ManageCertificateState.common_name),
                         ),
                         rx.data_list.item(
                             rx.data_list.label("Issuer"),
-                            rx.data_list.value(
-                                rx.cond(
-                                    ManageCA.manifest.metadata.common_name == ManageCA.manifest.metadata.issuer,
-                                    "Self",
-                                    ManageCA.manifest.metadata.issuer,
-                                ),
-                            ),
+                            rx.data_list.value(ManageCertificateState.issuer),
                         ),
                         rx.data_list.item(
                             rx.data_list.label("Serial Number"),
-                            rx.data_list.value(ManageCA.manifest.metadata.serial_number),
+                            rx.data_list.value(ManageCertificateState.serial_number),
                         ),
                         rx.data_list.item(
                             rx.data_list.label("Organization"),
-                            rx.data_list.value(ManageCA.manifest.metadata.org),
+                            rx.data_list.value(ManageCertificateState.org),
                         ),
                         rx.data_list.item(
                             rx.data_list.label("Organizational Unit"),
-                            rx.data_list.value(ManageCA.manifest.metadata.org_unit),
+                            rx.data_list.value(ManageCertificateState.org_unit),
                         ),
                         rx.data_list.item(
                             rx.data_list.label("Country"),
-                            rx.data_list.value(ManageCA.manifest.metadata.country),
+                            rx.data_list.value(ManageCertificateState.country),
                         ),
                         rx.data_list.item(
                             rx.data_list.label("State or Province"),
-                            rx.data_list.value(ManageCA.manifest.metadata.state_or_province),
+                            rx.data_list.value(ManageCertificateState.state_or_province),
                         ),
                         rx.data_list.item(
                             rx.data_list.label("Locality"),
-                            rx.data_list.value(ManageCA.manifest.metadata.locality),
+                            rx.data_list.value(ManageCertificateState.locality),
                         ),
                         rx.data_list.item(
                             rx.data_list.label("Not Before"),
-                            rx.data_list.value(rx.moment(ManageCA.manifest.metadata.not_before)),
+                            rx.data_list.value(rx.moment(ManageCertificateState.not_before)),
                         ),
                         rx.data_list.item(
                             rx.data_list.label("Not After"),
-                            rx.data_list.value(rx.moment(ManageCA.manifest.metadata.not_after)),
+                            rx.data_list.value(rx.moment(ManageCertificateState.not_after)),
                         ),
                         rx.data_list.item(
                             rx.data_list.label("Fingerprint"),
-                            rx.data_list.value(ManageCA.manifest.metadata.fingerprint),
+                            rx.data_list.value(ManageCertificateState.fingerprint),
                         ),
                         rx.data_list.item(
                             rx.data_list.label("Key Usages"),
                             rx.data_list.value(
                                 rx.foreach(
-                                    ManageCA.manifest.metadata.key_usage,
+                                    ManageCertificateState.key_usage,
                                     lambda usage: Badge(usage, color_scheme="blue"),
                                 ),
                             ),
@@ -320,16 +306,11 @@ class ManageCertificateAuthorityDialog:
 
 
 class CreateIntermediateCADialog(EventGroup):
-    """Dialog component for creating a new intermediate certificate authority.
-
-    Provides a form interface for creating intermediate certificate authorities
-    with configuration options for common name, root CA selection, and domain
-    constraints. Extends EventGroup to handle form submission and dialog management.
-    """
+    """Dialog component for creating a new intermediate certificate authority."""
 
     @staticmethod
     @rx.event
-    async def create_intermediate_ca(state: IntermediateCAState, form: dict) -> FrontendEvents:
+    async def create_intermediate_ca(state: IntermediateCertificatesState, form: dict) -> FrontendEvents:
         """Create a new intermediate certificate authority from form data."""
         manifest = Certificates().create_intermediate_certificate(
             IntermediateCA(
@@ -372,7 +353,7 @@ class CreateIntermediateCADialog(EventGroup):
                     FieldSet.Field(
                         "Root CA: ",
                         Select(
-                            IntermediateCAState.certificate_authority_names,
+                            CertificateAuthoritiesState.names,
                             placeholder="Select Root CA",
                             form=cls.form_id,
                             name="root_ca",
@@ -405,31 +386,27 @@ class CreateIntermediateCADialog(EventGroup):
 
 
 class ConfirmRevokeIntermediateCADialog(EventGroup):
-    """Dialog component for confirming intermediate certificate authority revocation.
-
-    Provides a confirmation dialog with name verification before allowing
-    the user to revoke an intermediate certificate authority.
-    """
+    """Dialog component for confirming intermediate certificate authority revocation."""
 
     @staticmethod
     @rx.event
-    async def cancel_revoke(state: ManageIntermediateCerts) -> FrontendEvents:
+    async def cancel_revoke(state: ManageCertificateState) -> FrontendEvents:
         """Cancel the intermediate certificate authority revocation process."""
         state.revoke_disabled = True
         return Dialog.close(ConfirmRevokeIntermediateCADialog.dialog_id)
 
     @staticmethod
     @rx.event
-    async def ensure_ica_names_match(state: ManageIntermediateCerts, value: str) -> None:
+    async def ensure_ica_names_match(state: ManageCertificateState, value: str) -> None:
         """Enable or disable the revoke button based on name match."""
-        if state.manifest.name == value:
+        if state.name == value:
             state.revoke_disabled = False
         else:
             state.revoke_disabled = True
 
     @staticmethod
     @rx.event
-    async def revoke_ica(state: ManageIntermediateCerts) -> FrontendEvents:
+    async def revoke_ica(state: ManageCertificateState) -> FrontendEvents:
         """Revoke the intermediate certificate authority and close related dialogs."""
         # TODO: Actually Revoke cert
         state.reset()
@@ -443,7 +420,7 @@ class ConfirmRevokeIntermediateCADialog(EventGroup):
     def __new__(cls) -> rx.Component:
         """Create and return the dialog component."""
         return Dialog(
-            f"Revoke {ManageIntermediateCerts.manifest.name}",
+            f"Revoke {ManageCertificateState.name}",
             rx.el.div(
                 rx.text(
                     "Revoking this Root CA will invalidate all Intermediate CAs and leaf certificates that uses this "
@@ -451,18 +428,18 @@ class ConfirmRevokeIntermediateCADialog(EventGroup):
                 ),
                 rx.text(
                     "If you are sure you want to revoke ",
-                    rx.el.span(ManageIntermediateCerts.manifest.name, class_name="font-bold"),
+                    rx.el.span(ManageCertificateState.name, class_name="font-bold"),
                     rx.el.span(" type its name below."),
                 ),
                 class_name="w-full flex-col space-y-6 my-8",
             ),
             Input(
-                placeholder=ManageIntermediateCerts.manifest.name,
+                placeholder=ManageCertificateState.name,
                 on_change=cls.ensure_ica_names_match,
             ),
             rx.el.div(
                 Buttons.Secondary("Cancel", on_click=cls.cancel_revoke),
-                Buttons.Primary("Confirm", disabled=ManageIntermediateCerts.revoke_disabled, on_click=cls.revoke_ica),
+                Buttons.Primary("Confirm", disabled=ManageCertificateState.revoke_disabled, on_click=cls.revoke_ica),
                 class_name="w-full flex justify-end space-x-4",
             ),
             dialog_id=cls.dialog_id,
@@ -470,23 +447,24 @@ class ConfirmRevokeIntermediateCADialog(EventGroup):
 
 
 class ManageIntermediateCertDialog:
-    """Dialog component for managing intermediate certificate authority details.
-
-    Provides functionality to view intermediate certificate authority information,
-    download certificates, and perform dangerous operations like revocation.
-    """
+    """Dialog component for managing intermediate certificate authority details."""
 
     dialog_id: Final = "manage-intermediate-ca-dialog"
 
     def __new__(cls) -> rx.Component:
         """Create and return the dialog component."""
         return Dialog(
-            f"Manage {ManageIntermediateCerts.manifest.name}",
+            f"Manage {ManageCertificateState.name}",
             rx.el.div(
                 rx.el.div(
                     Buttons.Primary(
                         "Download",
                         icon="download",
+                        on_click=custom_download(
+                            data=ManageCertificateState.certificate_data,
+                            filename=f"{ManageCertificateState.name.lower().replace(' ', '_')}.crt",
+                            mime_type="application/x-pem-file",
+                        ),
                     ),
                     Buttons.Secondary(
                         "Close",
@@ -503,64 +481,64 @@ class ManageIntermediateCertDialog:
                     rx.data_list.root(
                         rx.data_list.item(
                             rx.data_list.label("Common Name"),
-                            rx.data_list.value(ManageIntermediateCerts.manifest.metadata.common_name),
+                            rx.data_list.value(ManageCertificateState.common_name),
                         ),
                         rx.data_list.item(
                             rx.data_list.label("Domain Constraint"),
-                            rx.data_list.value(ManageIntermediateCerts.manifest.metadata.domain_constraint),
+                            rx.data_list.value(ManageCertificateState.domain_constraint),
                         ),
                         rx.data_list.item(
                             rx.data_list.label("Issuer"),
                             rx.data_list.value(
                                 rx.cond(
-                                    ManageIntermediateCerts.manifest.metadata.common_name
-                                    == ManageIntermediateCerts.manifest.metadata.issuer,
+                                    ManageCertificateState.common_name
+                                    == ManageCertificateState.issuer,
                                     "Self",
-                                    ManageIntermediateCerts.manifest.metadata.issuer,
+                                    ManageCertificateState.issuer,
                                 ),
                             ),
                         ),
                         rx.data_list.item(
                             rx.data_list.label("Serial Number"),
-                            rx.data_list.value(ManageIntermediateCerts.manifest.metadata.serial_number),
+                            rx.data_list.value(ManageCertificateState.serial_number),
                         ),
                         rx.data_list.item(
                             rx.data_list.label("Organization"),
-                            rx.data_list.value(ManageIntermediateCerts.manifest.metadata.org),
+                            rx.data_list.value(ManageCertificateState.org),
                         ),
                         rx.data_list.item(
                             rx.data_list.label("Organizational Unit"),
-                            rx.data_list.value(ManageIntermediateCerts.manifest.metadata.org_unit),
+                            rx.data_list.value(ManageCertificateState.org_unit),
                         ),
                         rx.data_list.item(
                             rx.data_list.label("Country"),
-                            rx.data_list.value(ManageIntermediateCerts.manifest.metadata.country),
+                            rx.data_list.value(ManageCertificateState.country),
                         ),
                         rx.data_list.item(
                             rx.data_list.label("State or Province"),
-                            rx.data_list.value(ManageIntermediateCerts.manifest.metadata.state_or_province),
+                            rx.data_list.value(ManageCertificateState.state_or_province),
                         ),
                         rx.data_list.item(
                             rx.data_list.label("Locality"),
-                            rx.data_list.value(ManageIntermediateCerts.manifest.metadata.locality),
+                            rx.data_list.value(ManageCertificateState.locality),
                         ),
                         rx.data_list.item(
                             rx.data_list.label("Not Before"),
-                            rx.data_list.value(rx.moment(ManageIntermediateCerts.manifest.metadata.not_before)),
+                            rx.data_list.value(rx.moment(ManageCertificateState.not_before)),
                         ),
                         rx.data_list.item(
                             rx.data_list.label("Not After"),
-                            rx.data_list.value(rx.moment(ManageIntermediateCerts.manifest.metadata.not_after)),
+                            rx.data_list.value(rx.moment(ManageCertificateState.not_after)),
                         ),
                         rx.data_list.item(
                             rx.data_list.label("Fingerprint"),
-                            rx.data_list.value(ManageIntermediateCerts.manifest.metadata.fingerprint),
+                            rx.data_list.value(ManageCertificateState.fingerprint),
                         ),
                         rx.data_list.item(
                             rx.data_list.label("Key Usages"),
                             rx.data_list.value(
                                 rx.foreach(
-                                    ManageIntermediateCerts.manifest.metadata.key_usage,
+                                    ManageCertificateState.key_usage,
                                     lambda usage: Badge(usage, color_scheme="blue"),
                                 ),
                             ),

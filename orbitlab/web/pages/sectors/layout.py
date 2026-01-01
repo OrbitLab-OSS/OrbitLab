@@ -6,7 +6,7 @@ import reflex as rx
 
 from orbitlab.web.components.sidebar import SideBar
 from orbitlab.web.pages.layout import DefaultLayout
-from orbitlab.web.utilities import require_configuration
+from orbitlab.web.splash_page import require_configuration
 
 
 def sectors_page(page: Callable[[], rx.Component]) -> Callable[[], rx.Component]:

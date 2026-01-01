@@ -11,7 +11,7 @@ dependencies = [
     "pydantic==2.12.3",
     "pydantic-settings==2.11.0",
     "PyYAML==6.0.3",
-    "reflex==0.8.21",
+    "reflex==0.8.24",
     "websocket-client==1.9.0"
 ]
 

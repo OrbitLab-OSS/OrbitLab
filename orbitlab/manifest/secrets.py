@@ -1,4 +1,4 @@
-"""Schemas for secret, certificate, and SSH key manifests."""  # noqa: A005
+"""Schemas for secret, certificate, and SSH key manifests."""
 
 import hashlib
 from datetime import UTC, datetime, timedelta
@@ -49,9 +49,14 @@ class SecretManifest(BaseManifest[SecretMetadata, SecretSpec]):
 
     def get_current_value(self) -> str:
         """Get the current value of the secret from the vault."""
-        return SecretVault().get(
-            secret_name=self.spec.secret_name, version=self.spec.version,
-        ).secret_string.get_secret_value()
+        return (
+            SecretVault()
+            .get(
+                secret_name=self.spec.secret_name,
+                version=self.spec.version,
+            )
+            .secret_string.get_secret_value()
+        )
 
     def delete(self) -> None:
         """Delete the secret from the vault and remove the manifest."""

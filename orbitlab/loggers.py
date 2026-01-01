@@ -45,12 +45,14 @@ class OrbitLabLogger:
 # Create singleton instance at import time
 _logging_manager = OrbitLabLogger()
 
+
 @functools.lru_cache(maxsize=10)
 def get_client_logger(client: str) -> logging.Logger:
     """Return a logger configured for the specified client."""
     filename = _logging_manager.log_dir / "clients" / f"{client.lower()}.log"
     filename.parent.mkdir(parents=True, exist_ok=True)
     return _logging_manager.get_logger(name=client, filename=filename)
+
 
 @functools.lru_cache(maxsize=1)
 def get_application_logger() -> logging.Logger:

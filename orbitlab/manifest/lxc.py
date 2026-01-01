@@ -5,13 +5,13 @@ import string
 from ipaddress import IPv4Interface
 from typing import Annotated, Self
 
-from orbitlab.data_types import LXCStatus, ManifestKind
+from orbitlab.data_types import LXCState, LXCStatus, ManifestKind
 from orbitlab.manifest.appliances import CustomApplianceManifest
 from orbitlab.manifest.ref import Ref
 from orbitlab.manifest.secrets import SecretManifest
 from orbitlab.manifest.serialization import SerializeEnum, SerializeIP
 from orbitlab.services.discovery import BaseApplianceManifest
-from orbitlab.web.pages.compute.lxc.models import CreateLXCForm
+from orbitlab.web.pages.compute.lxc.running.models import CreateLXCForm
 
 from .base import BaseManifest, Metadata, Spec
 
@@ -27,7 +27,7 @@ class LXCMetadata(Metadata):
 class LXCSpec(Spec):
     """Specification schema for LXC containers."""
 
-    status: Annotated[LXCStatus, SerializeEnum] = LXCStatus.STARTING
+    status: Annotated[LXCState, SerializeEnum] = LXCState.STARTING
     node: str
     os_template: str
     disk_storage: str
@@ -58,7 +58,20 @@ class LXCManifest(BaseManifest[LXCMetadata, LXCSpec]):
         """Update the manifest to reflect that the container has been launched."""
         self.spec.vmid = vmid
         self.spec.address = address
-        self.spec.status = LXCStatus.RUNNING
+        self.spec.status = LXCState.RUNNING
+        self.save()
+
+    def set_status(self, status: LXCStatus) -> None:
+        """Update the container status in the manifest based on the provided LXCStatus."""
+        match status:
+            case LXCStatus.START:
+                self.spec.status = LXCState.RUNNING
+            case LXCStatus.REBOOT:
+                self.spec.status = LXCState.RUNNING
+            case LXCStatus.STOP:
+                self.spec.status = LXCState.STOPPED
+            case LXCStatus.SHUTDOWN:
+                self.spec.status = LXCState.STOPPED
         self.save()
 
     @classmethod

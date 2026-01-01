@@ -20,7 +20,7 @@ class Basic:
         """Create an OrbitLab-styled progress bar."""
         maximum = props.pop("maximum", 100)
         show_label = props.pop("show_label", True)
-        percent = rx.cond(maximum > 0, (value / maximum) * 100, 0) # pyright: ignore[reportOperatorIssue]
+        percent = rx.cond(maximum > 0, (value / maximum) * 100, 0)  # pyright: ignore[reportOperatorIssue]
         return rx.el.div(
             rx.el.div(
                 rx.progress(

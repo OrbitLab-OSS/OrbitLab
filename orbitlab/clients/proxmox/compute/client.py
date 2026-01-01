@@ -2,7 +2,8 @@
 
 from ipaddress import IPv4Address
 
-from orbitlab.clients.proxmox.base import Proxmox
+from orbitlab.clients.proxmox.base import Proxmox, Task
+from orbitlab.data_types import LXCStatus
 from orbitlab.manifest.lxc import LXCManifest
 from orbitlab.manifest.sector import SectorManifest
 
@@ -53,3 +54,9 @@ class ProxmoxCompute(Proxmox):
         self.create_lxc(node=lxc.spec.node, params=params, start=True)
         lxc.launched(vmid=vmid, address=address)
         self.__add_sector_record__(sector=sector, hostname=lxc.metadata.hostname, ip=address.ip)
+
+    def set_lxc_status(self, lxc: LXCManifest, status: LXCStatus) -> None:
+        """Set the status of an LXC container."""
+        task = self.create(path=f"/nodes/{lxc.spec.node}/lxc/{lxc.spec.vmid}/status/{status}", model=Task)
+        self.wait_for_task(node=task.node, upid=task.upid)
+        lxc.set_status(status=status)

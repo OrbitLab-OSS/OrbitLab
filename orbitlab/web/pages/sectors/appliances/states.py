@@ -11,7 +11,7 @@ from orbitlab.clients.proxmox.appliances import ProxmoxAppliances
 from orbitlab.constants import NetworkSettings
 from orbitlab.data_types import OrbitLabApplianceType, StorageContentType
 from orbitlab.manifest.cluster import ClusterManifest
-from orbitlab.web.states.utilities import CacheBuster
+from orbitlab.web.utilities import CacheBuster
 
 
 class SectorSpec(BaseModel):

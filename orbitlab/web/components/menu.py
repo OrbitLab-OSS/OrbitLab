@@ -9,15 +9,17 @@ from orbitlab.data_types import FrontendEvents
 
 class ItemProps(TypedDict, total=False):
     """Type definition for optional menu item component properties."""
+
     on_click: FrontendEvents
     class_name: NotRequired[str]
     danger: bool
+    disabled: bool | rx.Var[bool]
 
 
 class MenuItem:
     """A dropdown menu item component with hover effects and styling."""
 
-    def __new__(cls, child: str | rx.Component, **props: Unpack[ItemProps]) -> rx.Component:
+    def __new__(cls, text: str | rx.Component, **props: Unpack[ItemProps]) -> rx.Component:
         """Create and return the menu item component."""
         danger = props.pop("danger", False)
         props["class_name"] = (
@@ -25,14 +27,22 @@ class MenuItem:
             "hover:border hover:scale-105 hover:text-[rgb(0,200,255)] hover:bg-[rgba(0,150,255,0.1)] "
             "hover:border-[rgba(0,200,255,0.5)] hover:shadow-[0_0_6px_rgba(0,150,255,0.25)] cursor-pointer "
             "data-[danger=true]:text-[#DC2626] data-[danger=true]:hover:border-[#DC2626]/50 "
-            "data-[danger=true]:hover:bg-[#DC2626]/20 "
+            "data-[danger=true]:hover:bg-[#DC2626]/20 aria-disabled:opacity-50 "
             f"{props.get('class_name', '')}"
         )
-        return rx.dropdown_menu.item(child, data_danger=danger, **props) # pyright: ignore[reportArgumentType]
+        on_click = props.pop("on_click", rx.prevent_default)
+
+        return rx.dropdown_menu.item(
+            rx.el.button(text, on_click=on_click, disabled=props.get("disabled")),  # pyright: ignore[reportArgumentType]
+            data_danger=danger,
+            as_child=True,
+            **props,  # pyright: ignore[reportArgumentType]
+        )
 
 
 class Props(TypedDict, total=False):
     """Type definition for optional menu item component properties."""
+
     class_name: str
     data_collapsed: rx.Var[bool]
 

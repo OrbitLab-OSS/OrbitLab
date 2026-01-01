@@ -5,7 +5,7 @@ import reflex as rx
 from orbitlab.web import components
 
 from .layout import compute_page
-from .lxc.dialogs import LaunchApplianceDialog
+from .lxc.running.dialogs import LaunchApplianceDialog
 
 
 @rx.page("/compute")

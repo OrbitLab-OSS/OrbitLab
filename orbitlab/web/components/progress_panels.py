@@ -3,7 +3,7 @@
 import reflex as rx
 from reflex.components.component import BaseComponent
 
-from orbitlab.web.states.utilities import EventGroup
+from orbitlab.web.utilities import EventGroup
 
 from .buttons import Buttons
 
@@ -21,6 +21,7 @@ class ProgressPanelStateManager(rx.State):
 
 VALID_FORM_NAME_TYPES = str | rx.vars.LiteralStringVar | rx.vars.ConcatVarOperation
 
+
 class ProgressStep:
     """Represents a single step in a progress panel workflow."""
 
@@ -32,8 +33,8 @@ class ProgressStep:
 
     def __apply_form__(self, component: rx.Component | BaseComponent, form: str) -> None:
         """Recursively apply form attribute to component and its children."""
-        if hasattr(component, "name") and isinstance(component.name, VALID_FORM_NAME_TYPES): # pyright: ignore[reportAttributeAccessIssue]
-            component.custom_attrs["form"] = form # pyright: ignore[reportAttributeAccessIssue]
+        if hasattr(component, "name") and isinstance(component.name, VALID_FORM_NAME_TYPES):  # pyright: ignore[reportAttributeAccessIssue]
+            component.custom_attrs["form"] = form  # pyright: ignore[reportAttributeAccessIssue]
         for child in component.children:
             self.__apply_form__(child, form)
 

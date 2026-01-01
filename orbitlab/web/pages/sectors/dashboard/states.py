@@ -5,8 +5,19 @@ from ipaddress import IPv4Network
 import reflex as rx
 
 from orbitlab.clients.proxmox.networks import AttachedInstances
+from orbitlab.manifest.sector import SectorManifest
+from orbitlab.web.utilities import CacheBuster
 
 from .models import SectorSpec
+
+
+class SectorsState(CacheBuster, rx.State):
+    """State for managing and retrieving sector manifests in the dashboard."""
+
+    @rx.var(deps=["_cached_sectors"])
+    def sectors(self)-> list[SectorManifest]:
+        """Get all existing sector manifests."""
+        return [SectorManifest.load(name=name) for name in SectorManifest.get_existing()]
 
 
 class CreateSectorDialogState(rx.State):

@@ -39,7 +39,7 @@ class Subnet(BaseModel):
         """Get the next available IP address in the subnet."""
         assigned = [assigned.address.ip for assigned in self.assignments.values()]
         hosts = list(self.cidr_block.hosts())
-        usable = hosts[NetworkSettings.RESERVED_USABLE_IPS:]
+        usable = hosts[NetworkSettings.RESERVED_USABLE_IPS :]
         for ip in usable:
             if ip not in assigned:
                 return IPv4Interface(f"{ip}/{self.cidr_block.prefixlen}")

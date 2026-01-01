@@ -4,10 +4,10 @@ import reflex as rx
 
 from orbitlab.manifest.nodes import NodeManifest
 from orbitlab.web.components import Card
-from orbitlab.web.states.manifests import ManifestsState
-from orbitlab.web.states.utilities import EventGroup
+from orbitlab.web.utilities import EventGroup
 
 from .layout import nodes_page
+from .states import ProxmoxState
 
 
 class NodeRow(EventGroup):
@@ -91,7 +91,7 @@ def nodes_dashboard() -> rx.Component:
                         class_name="bg-white/60 dark:bg-white/[0.03] backdrop-blur-sm",
                     ),
                     rx.el.tbody(
-                        rx.foreach(ManifestsState.nodes, lambda node: NodeRow(node)),
+                        rx.foreach(ProxmoxState.nodes, lambda node: NodeRow(node)),
                         class_name=(
                             "divide-y divide-gray-200 dark:divide-white/[0.08] "
                             "bg-white/70 dark:bg-[#0E1015]/60 backdrop-blur-sm"

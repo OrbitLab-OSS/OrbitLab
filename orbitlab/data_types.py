@@ -1,10 +1,13 @@
 """Data types and enumerations for OrbitLab."""
 
 from enum import StrEnum, auto
+from types import FunctionType
 
 from reflex.event import EventCallback, EventHandler, EventSpec
 
-type FrontendEvents = EventCallback | EventHandler | EventSpec | list[EventCallback | EventHandler | EventSpec]
+type FrontendEvents = (
+    EventCallback | EventHandler | EventSpec | list[EventCallback | EventHandler | EventSpec] | FunctionType
+)
 
 
 class ManifestKind(StrEnum):
@@ -21,6 +24,7 @@ class ManifestKind(StrEnum):
     CERTIFICATE = auto()
     CSR = auto()
     SSH_KEY = auto()
+    AUTOSCALING = auto()
 
 
 class NodeStatus(StrEnum):
@@ -223,8 +227,28 @@ class CustomApplianceWorkflowStatus(StrEnum):
     FAILED = auto()
 
 
-class LXCStatus(StrEnum):
+class LXCState(StrEnum):
+    """Enumeration of possible LXC States in OrbitLab."""
+
     STARTING = auto()
     RUNNING = auto()
     STOPPING = auto()
+    STOPPED = auto()
+    RESTARTING = auto()
     TERMINATING = auto()
+
+
+class LXCStatus(StrEnum):
+    """Enumeration of possible LXC Status requests for Proxmox."""
+
+    REBOOT = auto()
+    START = auto()
+    STOP = auto()
+    SHUTDOWN = auto()
+
+
+class HealthCheckProtocol(StrEnum):
+    """Enumeration of possible Health Check Protocols in OrbitLab."""
+
+    HTTP = auto()
+    HTTPS = auto()

@@ -6,7 +6,7 @@ import reflex as rx
 
 from orbitlab.data_types import FrontendEvents, OrbitLabApplianceType
 from orbitlab.web import components
-from orbitlab.web.states.utilities import EventGroup
+from orbitlab.web.utilities import EventGroup
 
 from .states import SectorAppliancesTableState
 

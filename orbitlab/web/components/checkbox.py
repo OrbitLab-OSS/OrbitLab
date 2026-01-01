@@ -1,38 +1,52 @@
+"""OrbitLab Checkbox Group Component."""
+
 import json
 import uuid
-from typing import Literal
+from typing import Literal, TypedDict, Unpack
 
 import reflex as rx
+from reflex.event import EventSpec
+
+from orbitlab.web.utilities import EventGroup
 
 
-@rx.event
-async def set_input_value(_: rx.State, ref: str, current: str, value: str):
-    if not current:
-        current = "[]"
-    selected: list[str] = json.loads(current)
-    if value in selected:
-        selected.remove(value)
-    else:
-        selected.append(value)
-    return rx.set_value(ref, json.dumps(selected))
+class CheckboxGroupItem(EventGroup):
+    """Represents an item in a checkbox group with a label and value."""
 
+    @staticmethod
+    @rx.event
+    async def set_input_value(_: rx.State, ref: str, current: str, value: str) -> EventSpec:
+        """Toggle the presence of a value in the current selection and update the input value."""
+        if not current:
+            current = "[]"
+        selected: list[str] = json.loads(current)
+        if value in selected:
+            selected.remove(value)
+        else:
+            selected.append(value)
+        return rx.set_value(ref, json.dumps(selected))
 
-@rx.event
-async def update_selections(_: rx.State, ref: str, value: str):
-    get_element_by_id = rx.vars.FunctionStringVar.create("document.getElementById")
-    return rx.run_script(get_element_by_id.call(ref).to(dict).value, lambda result: set_input_value(ref, result, value))
+    @staticmethod
+    @rx.event
+    async def update_selections(_: rx.State, ref: str, value: str) -> EventSpec:
+        """Update the checkbox selections by toggling the specified value."""
+        get_element_by_id = rx.vars.FunctionStringVar.create("document.getElementById")
+        return rx.run_script(
+            javascript_code=get_element_by_id.call(ref).to(dict).value,
+            callback=lambda result: CheckboxGroupItem.set_input_value(ref, result, value),
+        )
 
-
-class CheckboxGroupItem:
-    def __init__(self, label: str, value: str) -> rx.Component:
+    def __init__(self, label: str, value: str) -> None:
+        """Initialize a CheckboxGroupItem with a label and value."""
         self.label = label
         self.value = value
 
     def render(self, input_id: str) -> rx.Component:
+        """Render the checkbox group item as a Reflex component."""
         return rx.checkbox_group.item(
             self.label,
             value=self.value,
-            on_click=update_selections(input_id, self.value),
+            on_click=CheckboxGroupItem.update_selections(input_id, self.value),
             class_name=(
                 "flex items-center gap-2 px-2 py-1 rounded-md "
                 "text-sm font-medium cursor-pointer select-none "
@@ -45,25 +59,23 @@ class CheckboxGroupItem:
         )
 
 
+class CheckboxGroupProps(TypedDict, total=False):
+    """TypedDict for properties of the CheckboxGroup component."""
+
+    direction: Literal["row", "column"]
+    form: str
+    name: str
+    required: bool
+
+
 class CheckboxGroup:
     """Group of OrbitLab-styled checkboxes that returns a list[str] when used in forms."""
 
     Item = staticmethod(CheckboxGroupItem)
 
-    def __new__(
-        cls,
-        *options: CheckboxGroupItem,
-        direction: Literal["row", "column"] = "column",
-        **props: dict,
-    ) -> rx.Component:
-        """Create a CheckboxGroup.
-
-        Args:
-            name: The form field name (required for form integration).
-            options: A list of labels or (label, value) tuples.
-            direction: 'row' or 'column' layout.
-            default: Optional list of initially checked values.
-        """
+    def __new__(cls, *options: CheckboxGroupItem, **props: Unpack[CheckboxGroupProps]) -> rx.Component:
+        """Create and return a checkbox group component."""
+        props.setdefault("direction", "column")
         input_id = str(uuid.uuid4())
         name = props.pop("name", None)
         form = props.pop("form", None)
@@ -71,7 +83,6 @@ class CheckboxGroup:
             rx.el.input(id=input_id, name=name, form=form, class_name="hidden"),
             rx.checkbox_group.root(
                 *[option.render(input_id=input_id) for option in options],
-                direction=direction,
                 **props,
             ),
         )

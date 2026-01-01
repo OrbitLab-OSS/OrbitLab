@@ -79,7 +79,7 @@ class Certificates:
         common_name = common_name[0].value
         if isinstance(common_name, bytes):
             common_name = common_name.decode()
-        return common_name # pyright: ignore[reportReturnType]
+        return common_name  # pyright: ignore[reportReturnType]
 
     def __get_signing_cert__(self, intermediate_ca: str) -> CertificateManifest:
         """Retrieve the manifest for the specified intermediate CA, ensuring it exists and is of the correct type."""
@@ -148,29 +148,31 @@ class Certificates:
         )
         version = self.vault.create(secret_name=secret_name, value=key_pem)
 
-        manifest = CertificateManifest.model_validate({
-            "name": subject.common_name,
-            "metadata": {
-                "type": CertificateTypes.ROOT,
-                "common_name": subject.common_name,
-                "issuer": subject.common_name,
-                "org": subject.org,
-                "org_unit": subject.org_unit,
-                "country": subject.country,
-                "state_or_province": subject.state_or_province,
-                "locality": subject.locality,
-                "not_before": not_before,
-                "not_after": not_after,
-                "fingerprint": self.__generate_fingerprint__(cert_pem),
-                "serial_number": str(serial_number),
-                "certificate": cert_pem,
-                "key_usage": key_usage,
+        manifest = CertificateManifest.model_validate(
+            {
+                "name": subject.common_name,
+                "metadata": {
+                    "type": CertificateTypes.ROOT,
+                    "common_name": subject.common_name,
+                    "issuer": subject.common_name,
+                    "org": subject.org,
+                    "org_unit": subject.org_unit,
+                    "country": subject.country,
+                    "state_or_province": subject.state_or_province,
+                    "locality": subject.locality,
+                    "not_before": not_before,
+                    "not_after": not_after,
+                    "fingerprint": self.__generate_fingerprint__(cert_pem),
+                    "serial_number": str(serial_number),
+                    "certificate": cert_pem,
+                    "key_usage": key_usage,
+                },
+                "spec": {
+                    "secret_name": str(secret_name),
+                    "version": version,
+                },
             },
-            "spec": {
-                "secret_name": str(secret_name),
-                "version": version,
-            },
-        })
+        )
         manifest.save()
         return manifest
 
@@ -221,7 +223,7 @@ class Certificates:
                 x509.KeyUsage(**KeyUsageTypes.to_x509_usage_params(root_manifest.metadata.key_usage)),
                 critical=True,
             )
-            .add_extension(x509.AuthorityKeyIdentifier.from_issuer_public_key(root_key.public_key()), critical=False) # pyright: ignore[reportArgumentType]
+            .add_extension(x509.AuthorityKeyIdentifier.from_issuer_public_key(root_key.public_key()), critical=False)  # pyright: ignore[reportArgumentType]
             .add_extension(x509.SubjectKeyIdentifier.from_public_key(private_key.public_key()), critical=False)
             .add_extension(
                 x509.NameConstraints(
@@ -231,7 +233,7 @@ class Certificates:
                 critical=True,
             )
         )
-        cert = builder.sign(private_key=root_key, algorithm=hashes.SHA256()) # pyright: ignore[reportArgumentType]
+        cert = builder.sign(private_key=root_key, algorithm=hashes.SHA256())  # pyright: ignore[reportArgumentType]
 
         key_pem = self.__key_to_pem__(private_key)
         cert_pem = self.__cert_to_pem__(cert)
@@ -242,30 +244,32 @@ class Certificates:
         )
         version = self.vault.create(secret_name=secret_name, value=key_pem)
 
-        manifest = CertificateManifest.model_validate({
-            "name": subject.common_name,
-            "metadata": {
-                "type": CertificateTypes.INTERMEDIATE,
-                "common_name": subject.common_name,
-                "issuer": root_manifest.metadata.common_name,
-                "org": subject.org,
-                "org_unit": subject.org_unit,
-                "country": subject.country,
-                "state_or_province": subject.state_or_province,
-                "locality": subject.locality,
-                "not_before": not_before,
-                "not_after": not_after,
-                "fingerprint": self.__generate_fingerprint__(cert_pem),
-                "serial_number": str(serial_number),
-                "certificate": cert_pem,
-                "key_usage": root_manifest.metadata.key_usage,
-                "domain_constraint": intermediate_ca.domain_constraint,
+        manifest = CertificateManifest.model_validate(
+            {
+                "name": subject.common_name,
+                "metadata": {
+                    "type": CertificateTypes.INTERMEDIATE,
+                    "common_name": subject.common_name,
+                    "issuer": root_manifest.metadata.common_name,
+                    "org": subject.org,
+                    "org_unit": subject.org_unit,
+                    "country": subject.country,
+                    "state_or_province": subject.state_or_province,
+                    "locality": subject.locality,
+                    "not_before": not_before,
+                    "not_after": not_after,
+                    "fingerprint": self.__generate_fingerprint__(cert_pem),
+                    "serial_number": str(serial_number),
+                    "certificate": cert_pem,
+                    "key_usage": root_manifest.metadata.key_usage,
+                    "domain_constraint": intermediate_ca.domain_constraint,
+                },
+                "spec": {
+                    "secret_name": str(secret_name),
+                    "version": version,
+                },
             },
-            "spec": {
-                "secret_name": str(secret_name),
-                "version": version,
-            },
-        })
+        )
         manifest.save()
         return manifest
 
@@ -285,32 +289,34 @@ class Certificates:
         )
         version = self.vault.create(secret_name=secret_name, value=self.__key_to_pem__(private_key))
 
-        manifest = CertificateManifest.model_validate({
-            "name": csr_manifest.name,
-            "metadata": {
-                "type": CertificateTypes.LEAF,
-                "common_name": csr_manifest.name,
-                "issuer": csr_manifest.metadata.issuer,
-                "org": csr_manifest.metadata.org,
-                "org_unit": csr_manifest.metadata.org_unit,
-                "country": csr_manifest.metadata.country,
-                "state_or_province": csr_manifest.metadata.state_or_province,
-                "locality": csr_manifest.metadata.locality,
-                "not_before": csr_manifest.metadata.not_before,
-                "not_after": csr_manifest.metadata.not_after,
-                "fingerprint": csr_manifest.metadata.fingerprint,
-                "serial_number": csr_manifest.metadata.serial_number,
-                "certificate": csr_manifest.metadata.certificate,
-                "key_usage": csr_manifest.metadata.key_usage,
-                "san_dns": csr_manifest.metadata.san_dns,
-                "san_ips": csr_manifest.metadata.san_ips,
-                "chain": csr_manifest.metadata.chain,
+        manifest = CertificateManifest.model_validate(
+            {
+                "name": csr_manifest.name,
+                "metadata": {
+                    "type": CertificateTypes.LEAF,
+                    "common_name": csr_manifest.name,
+                    "issuer": csr_manifest.metadata.issuer,
+                    "org": csr_manifest.metadata.org,
+                    "org_unit": csr_manifest.metadata.org_unit,
+                    "country": csr_manifest.metadata.country,
+                    "state_or_province": csr_manifest.metadata.state_or_province,
+                    "locality": csr_manifest.metadata.locality,
+                    "not_before": csr_manifest.metadata.not_before,
+                    "not_after": csr_manifest.metadata.not_after,
+                    "fingerprint": csr_manifest.metadata.fingerprint,
+                    "serial_number": csr_manifest.metadata.serial_number,
+                    "certificate": csr_manifest.metadata.certificate,
+                    "key_usage": csr_manifest.metadata.key_usage,
+                    "san_dns": csr_manifest.metadata.san_dns,
+                    "san_ips": csr_manifest.metadata.san_ips,
+                    "chain": csr_manifest.metadata.chain,
+                },
+                "spec": {
+                    "secret_name": str(secret_name),
+                    "version": version,
+                },
             },
-            "spec": {
-                "secret_name": str(secret_name),
-                "version": version,
-            },
-        })
+        )
         manifest.save()
         csr_manifest.delete()
         return manifest
@@ -340,29 +346,31 @@ class Certificates:
         san = lc.get_x509_san()
         if san:
             builder = builder.add_extension(san, critical=False)
-        csr = builder.sign(private_key, hashes.SHA256()) # pyright: ignore[reportArgumentType]
+        csr = builder.sign(private_key, hashes.SHA256())  # pyright: ignore[reportArgumentType]
 
-        manifest = CSRManifest.model_validate({
-            "name": lc.common_name,
-            "metadata": {
-                "common_name": subject.common_name,
-                "issuer": intermediate_manifest.metadata.common_name,
-                "org": subject.org,
-                "org_unit": subject.org_unit,
-                "country": subject.country,
-                "state_or_province": subject.state_or_province,
-                "locality": subject.locality,
-                "san_dns": lc.san_dns,
-                "san_ips": lc.san_ips,
-                "key_usage": key_usage,
+        manifest = CSRManifest.model_validate(
+            {
+                "name": lc.common_name,
+                "metadata": {
+                    "common_name": subject.common_name,
+                    "issuer": intermediate_manifest.metadata.common_name,
+                    "org": subject.org,
+                    "org_unit": subject.org_unit,
+                    "country": subject.country,
+                    "state_or_province": subject.state_or_province,
+                    "locality": subject.locality,
+                    "san_dns": lc.san_dns,
+                    "san_ips": lc.san_ips,
+                    "key_usage": key_usage,
+                },
+                "spec": {
+                    "key_fingerprint": self.__generate_fingerprint__(self.__key_to_pem__(private_key)),  # pyright: ignore[reportArgumentType]
+                    "csr_fingerprint": self.__generate_fingerprint__(self.__csr_to_pem__(csr)),
+                    "submitted_at": datetime.now(UTC),
+                    "status": CSRStatus.PENDING,
+                },
             },
-            "spec": {
-                "key_fingerprint": self.__generate_fingerprint__(self.__key_to_pem__(private_key)), # pyright: ignore[reportArgumentType]
-                "csr_fingerprint": self.__generate_fingerprint__(self.__csr_to_pem__(csr)),
-                "submitted_at": datetime.now(UTC),
-                "status": CSRStatus.PENDING,
-            },
-        })
+        )
         manifest.save()
         return self.__csr_to_pem__(csr)
 
@@ -407,7 +415,7 @@ class Certificates:
             .add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=True)
         )
 
-        cert = builder.sign(private_key=signing_key, algorithm=hashes.SHA256()) # pyright: ignore[reportArgumentType]
+        cert = builder.sign(private_key=signing_key, algorithm=hashes.SHA256())  # pyright: ignore[reportArgumentType]
         cert_pem = self.__cert_to_pem__(cert)
 
         csr_manifest.metadata.serial_number = str(serial_number)
@@ -489,19 +497,21 @@ class SSHKey:
             .decode()
         )
 
-        manifest = SSHKeyManifest.model_validate({
-            "name": name,
-            "metadata": {
-                "public_key": public_key,
-                "fingerprint": self.__generate_fingerprint__(public_key),
-                "key_type": key_type,
-                "passphrase": bool(passphrase),
+        manifest = SSHKeyManifest.model_validate(
+            {
+                "name": name,
+                "metadata": {
+                    "public_key": public_key,
+                    "fingerprint": self.__generate_fingerprint__(public_key),
+                    "key_type": key_type,
+                    "passphrase": bool(passphrase),
+                },
+                "spec": {
+                    "secret_name": str(secret_name),
+                    "version": version,
+                },
             },
-            "spec": {
-                "secret_name": str(secret_name),
-                "version": version,
-            },
-        })
+        )
         manifest.save()
         return manifest
 

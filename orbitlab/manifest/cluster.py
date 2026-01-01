@@ -57,19 +57,23 @@ class Backplane(BaseModel):
 
     def create_ipam_manifest(self) -> None:
         """Create an IPAM manifest for the backplane network configuration."""
-        IpamManifest.model_validate({
-            "name": constants.Backplane.IPAM,
-            "metadata": {
-                "sector_name": constants.Backplane.ALIAS,
-                "sector_id": constants.Backplane.NAME,
+        IpamManifest.model_validate(
+            {
+                "name": constants.Backplane.IPAM,
+                "metadata": {
+                    "sector_name": constants.Backplane.ALIAS,
+                    "sector_id": constants.Backplane.NAME,
+                },
+                "spec": {
+                    "subnets": [
+                        {
+                            "name": constants.Backplane.NAME,
+                            "cidr_block": self.cidr_block,
+                        },
+                    ],
+                },
             },
-            "spec": {
-                "subnets": [{
-                    "name": constants.Backplane.NAME,
-                    "cidr_block": self.cidr_block,
-                }],
-            },
-        }).save()
+        ).save()
 
 
 class DefaultStorageSelections(BaseModel):
@@ -177,23 +181,29 @@ class ClusterManifest(BaseManifest[ClusterMetadata, ClusterSpec]):
         """Get the storage location for a specific content type."""
         match content_type:
             case StorageContentType.VZTMPL:
-                storage = self.spec.defaults.storage.vztmpl or \
-                    self.default_node().get_storage(content_type=StorageContentType.VZTMPL)
+                storage = self.spec.defaults.storage.vztmpl or self.default_node().get_storage(
+                    content_type=StorageContentType.VZTMPL,
+                )
             case StorageContentType.ROOTDIR:
-                storage = self.spec.defaults.storage.rootdir or \
-                    self.default_node().get_storage(content_type=StorageContentType.ROOTDIR)
+                storage = self.spec.defaults.storage.rootdir or self.default_node().get_storage(
+                    content_type=StorageContentType.ROOTDIR,
+                )
             case StorageContentType.IMAGES:
-                storage = self.spec.defaults.storage.images or \
-                    self.default_node().get_storage(content_type=StorageContentType.IMAGES)
+                storage = self.spec.defaults.storage.images or self.default_node().get_storage(
+                    content_type=StorageContentType.IMAGES,
+                )
             case StorageContentType.SNIPPETS:
-                storage = self.spec.defaults.storage.snippets or \
-                    self.default_node().get_storage(content_type=StorageContentType.SNIPPETS)
+                storage = self.spec.defaults.storage.snippets or self.default_node().get_storage(
+                    content_type=StorageContentType.SNIPPETS,
+                )
             case StorageContentType.ISO:
-                storage = self.spec.defaults.storage.iso or \
-                    self.default_node().get_storage(content_type=StorageContentType.ISO)
+                storage = self.spec.defaults.storage.iso or self.default_node().get_storage(
+                    content_type=StorageContentType.ISO,
+                )
             case StorageContentType.IMPORT:
-                storage = self.spec.defaults.storage.imports or \
-                    self.default_node().get_storage(content_type=StorageContentType.IMPORT)
+                storage = self.spec.defaults.storage.imports or self.default_node().get_storage(
+                    content_type=StorageContentType.IMPORT,
+                )
             case _:
                 storage = ""
         return storage
@@ -203,29 +213,31 @@ class ClusterManifest(BaseManifest[ClusterMetadata, ClusterSpec]):
         """Create a new ClusterManifest instance with the provided cluster status, MTU, and reserved tags."""
         zone_tag = next(i for i in range(constants.NetworkSettings.BACKPLANE.ZONE_TAG, 100) if i not in reserved_tags)
         vnet_tag = next(i for i in range(constants.NetworkSettings.BACKPLANE.VNET_TAG, 1000) if i not in reserved_tags)
-        manifest = cls.model_validate({
-            "name": cluster.name if cluster else "OrbitLab",
-            "metadata": {
-                "mode": ClusterMode.CLUSTER if cluster else ClusterMode.LOCAL,
-                "version": cluster.version if cluster else 0,
-                "quorate": cluster.quorate if cluster else False,
-                "mtu": mtu,
-            },
-            "spec": {
-                "backplane": {
-                    "zone_id": constants.NetworkSettings.BACKPLANE.NAME,
-                    "vnet_id": constants.NetworkSettings.BACKPLANE.NAME,
-                    "zone_tag": zone_tag,
-                    "vnet_tag": vnet_tag,
-                    "mtu": mtu - 50,
-                    "cidr_block": constants.NetworkSettings.BACKPLANE.DEFAULT_CIDR,
-                    "gateway": constants.NetworkSettings.BACKPLANE.DEFAULT_GATEWAY,
-                    "controller": {
-                        "id": constants.NetworkSettings.BACKPLANE.NAME,
-                        "asn": constants.NetworkSettings.BACKPLANE.ASN,
+        manifest = cls.model_validate(
+            {
+                "name": cluster.name if cluster else "OrbitLab",
+                "metadata": {
+                    "mode": ClusterMode.CLUSTER if cluster else ClusterMode.LOCAL,
+                    "version": cluster.version if cluster else 0,
+                    "quorate": cluster.quorate if cluster else False,
+                    "mtu": mtu,
+                },
+                "spec": {
+                    "backplane": {
+                        "zone_id": constants.NetworkSettings.BACKPLANE.NAME,
+                        "vnet_id": constants.NetworkSettings.BACKPLANE.NAME,
+                        "zone_tag": zone_tag,
+                        "vnet_tag": vnet_tag,
+                        "mtu": mtu - 50,
+                        "cidr_block": constants.NetworkSettings.BACKPLANE.DEFAULT_CIDR,
+                        "gateway": constants.NetworkSettings.BACKPLANE.DEFAULT_GATEWAY,
+                        "controller": {
+                            "id": constants.NetworkSettings.BACKPLANE.NAME,
+                            "asn": constants.NetworkSettings.BACKPLANE.ASN,
+                        },
                     },
                 },
             },
-        })
+        )
         manifest.save()
         return manifest

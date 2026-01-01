@@ -7,18 +7,11 @@ import reflex as rx
 from pydantic import BaseModel
 
 from orbitlab.web.components.logo import OrbitLabLogo
-
-from .menu import Menu
+from orbitlab.web.components.menu import Menu
 
 
 class SideBarStatus(BaseModel):
-    """Represents the state of a sidebar.
-
-    Attributes:
-        active_page (str): The currently active page in the sidebar.
-        collapsed (bool): Whether the sidebar is collapsed. Defaults to False.
-        show_settings_menu (bool): Whether the settings menu is shown. Defaults to False.
-    """
+    """Represents the state of a sidebar."""
 
     collapsed: bool = False
     show_settings_menu: bool = False
@@ -60,6 +53,7 @@ class SidebarNavItem(BaseModel):
 
 class SidebarSectionHeader(BaseModel):
     """A section header for organizing navigation items in the sidebar."""
+
     title: str
 
 
@@ -153,8 +147,8 @@ class SideBarRoot:
                     rx.el.nav(
                         *[
                             cls.__section_header__(header=item, collapsed=collapsed)
-                            if isinstance(item, SidebarSectionHeader) else
-                            cls.__nav_item__(nav_item=item, collapsed=collapsed)
+                            if isinstance(item, SidebarSectionHeader)
+                            else cls.__nav_item__(nav_item=item, collapsed=collapsed)
                             for item in nav_items
                         ],
                         class_name="flex flex-col gap-1 p-2",
@@ -180,28 +174,33 @@ class SideBarRoot:
                             ),
                         ),
                         Menu.Item(
-                            "Cluster Settings",
-                            on_click=rx.console_log("Cluster Settings"), #TODO: Add Cluster settings config page/dialog
+                            rx.text("Cluster Settings"),
+                            on_click=rx.console_log(
+                                "Cluster Settings",
+                            ),  # TODO: Add Cluster settings config page/dialog
                         ),
                         Menu.Item(
                             "Administration",
-                            on_click=rx.console_log("Administration"), #TODO: Add admin settings config page/dialog
+                            on_click=rx.console_log("Administration"),  # TODO: Add admin settings config page/dialog
                         ),
                         Menu.Separator(),
-                        Menu.Item(
-                            rx.color_mode_cond(
-                                light=rx.el.div(
-                                    rx.icon("moon", size=12, class_name="text-[#1E63E9]"),
-                                    rx.text("Dark Mode"),
-                                    class_name="w-full flex items-center justify-between",
-                                ),
-                                dark=rx.el.div(
+                        rx.color_mode_cond(
+                            dark=Menu.Item(
+                                rx.el.div(
                                     rx.icon("sun", size=12, class_name="text-amber-500"),
                                     rx.text("Light Mode"),
-                                    class_name="w-full flex items-center justify-between",
+                                    class_name="flex space-x-4 items-center justify-between",
                                 ),
+                                on_click=rx.toggle_color_mode,  # pyright: ignore[reportArgumentType]
                             ),
-                            on_click=rx.toggle_color_mode,
+                            light=Menu.Item(
+                                rx.el.div(
+                                    rx.icon("moon", size=12, class_name="text-[#1E63E9]"),
+                                    rx.text("Dark Mode"),
+                                    class_name="flex space-x-4 items-center justify-between",
+                                ),
+                                on_click=rx.toggle_color_mode,  # pyright: ignore[reportArgumentType]
+                            ),
                         ),
                         data_collapsed=collapsed,
                     ),

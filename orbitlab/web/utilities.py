@@ -3,15 +3,63 @@
 import inspect
 import os
 from base64 import b64encode
-from collections.abc import Callable
-from typing import Any, TypeVar
+from types import FunctionType
+from typing import Any, TypeVar, get_type_hints
 
 import reflex as rx
-
-from orbitlab.data_types import InitializationState
-from orbitlab.web.splash_page import SplashPageState
+from reflex.utils.exceptions import StateValueError
 
 T = TypeVar("T", bound=rx.state.BaseState)
+
+
+class CacheBuster(rx.State, mixin=True):
+    """Mixin class for managing cache invalidation of computed variables."""
+
+    def __init_subclass__(cls, **kwargs: bool) -> None:
+        """Initialize subclass and add cached tracking variables for computed vars."""
+        super().__init_subclass__(**kwargs)
+        for var in cls.computed_vars:
+            cls.add_var(f"_cached_{var}", bool, default_value=False)
+
+    @rx.event
+    async def cache_clear(self, var: str) -> None:
+        """Clear the cache for a specific computed variable."""
+        if var not in self.computed_vars:
+            msg = f"State '{self.get_name()}' has no computed var named '{var}'."
+            raise StateValueError(msg)
+
+        tracked_var = f"_cached_{var}"
+        if hasattr(self, tracked_var):
+            current = getattr(self, tracked_var)
+            setattr(self, tracked_var, not current)
+
+
+class EventGroup:
+    """Base class for grouping event handlers."""
+
+    def __init_subclass__(cls) -> None:
+        """Initialize subclass and register event handlers for static methods."""
+        events = {
+            name: func.__get__(None, object)
+            for name, func in vars(cls).items()
+            if not name.startswith("_") and isinstance(func, staticmethod)
+        }
+        for event, func in events.items():
+            if not isinstance(func, FunctionType):
+                continue
+            types = get_type_hints(func)
+            state_arg_name = next(iter(inspect.signature(func).parameters), "")
+            state_cls = types.get(state_arg_name, type[None])
+            if not issubclass(state_cls, rx.state.BaseState):
+                msg = f"Event {cls.__name__}.{event}'s first argument must be a state class."
+                raise TypeError(msg)
+            name = (
+                (func.__module__ + "." + func.__qualname__).replace(".", "_").replace("<locals>", "_").removeprefix("_")
+            )
+            object.__setattr__(func, "__name__", name)
+            object.__setattr__(func, "__qualname__", name)
+            state_cls._add_event_handler(name, func)  # noqa: SLF001
+            setattr(cls, event, getattr(state_cls, name))
 
 
 async def _get_user_state(client_token: str, state: type[T]) -> T:
@@ -121,7 +169,7 @@ def custom_download(  # noqa: C901, PLR0912
                 is_data_url,
                 data.to(str),
                 (
-                    CREATE_OBJECT_URL.call(create_new_blob(data, mime_type)) # pyright: ignore[reportArgumentType]
+                    CREATE_OBJECT_URL.call(create_new_blob(data, mime_type))  # pyright: ignore[reportArgumentType]
                     if isinstance(data, rx.vars.ArrayVar)
                     else f"data:{mime_type};base64,"
                     + BASE64_ENCODE.call(
@@ -162,17 +210,6 @@ def create_new_blob(data: rx.vars.ArrayVar, mime_type: str):  # noqa: ANN201, D1
     return rx.vars.var_operation_return(
         js_expression=f"new Blob([new Uint8Array({data})], {{ type: '{mime_type}' }})",
     )
-
-
-def require_configuration(page: Callable[[], rx.Component]) -> Callable[[], rx.Component]:
-    """Decorator to require that the configuration is complete before rendering the page."""
-    def wrapped() -> rx.Component:
-        return rx.cond(
-            SplashPageState.initialization_state == InitializationState.COMPLETE,
-            page(),
-            rx.el.div(on_mount=rx.redirect("/")),
-        )
-    return wrapped
 
 
 def is_production() -> bool:

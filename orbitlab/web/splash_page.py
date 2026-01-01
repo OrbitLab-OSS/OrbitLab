@@ -1,6 +1,7 @@
 """Splash page component for OrbitLab, displaying animated SVG graphics and initialization text."""
 
 import random
+from collections.abc import Callable
 from ipaddress import IPv4Network
 from typing import Final
 
@@ -21,7 +22,7 @@ from orbitlab.manifest.cluster import ClusterManifest
 from orbitlab.manifest.nodes import NodeManifest
 from orbitlab.services.discovery import DiscoveryService
 from orbitlab.web.components import Buttons, Callout, Dialog, FieldSet, Input, OrbitLabLogo, Select
-from orbitlab.web.states.utilities import EventGroup
+from orbitlab.web.utilities import EventGroup
 
 
 def _initialized() -> InitializationState:
@@ -125,8 +126,9 @@ class ConfigureDefaultsDialog(EventGroup):
     def run_download(cls) -> None:
         """Download the latest OrbitLab gateway appliance and update the cluster manifest."""
         cluster_manifest = ClusterManifest.load(name=next(iter(ClusterManifest.get_existing())))
-        storage = cluster_manifest.spec.defaults.storage.vztmpl or \
-            cluster_manifest.default_node().get_storage(content_type=StorageContentType.VZTMPL)
+        storage = cluster_manifest.spec.defaults.storage.vztmpl or cluster_manifest.default_node().get_storage(
+            content_type=StorageContentType.VZTMPL,
+        )
         latest_gateway = ProxmoxAppliances().download_latest_orbitlab_appliance(
             storage=storage,
             appliance_type=OrbitLabApplianceType.SECTOR_GATEWAY,
@@ -563,3 +565,16 @@ class SplashPage(EventGroup):
                 "bg-[#0E1015] overflow-hidden select-none"
             ),
         )
+
+
+def require_configuration(page: Callable[[], rx.Component]) -> Callable[[], rx.Component]:
+    """Decorator to require that the configuration is complete before rendering the page."""
+
+    def wrapped() -> rx.Component:
+        return rx.cond(
+            SplashPageState.initialization_state == InitializationState.COMPLETE,
+            page(),
+            rx.el.div(on_mount=rx.redirect("/")),
+        )
+
+    return wrapped

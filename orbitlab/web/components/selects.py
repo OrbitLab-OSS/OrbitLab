@@ -87,7 +87,7 @@ class MultiSelect:
             ),
         )
 
-    def __new__(cls,options: list[str] | rx.Var[list[str]], **props: Unpack[MultiSelectProps]) -> rx.Component:
+    def __new__(cls, options: list[str] | rx.Var[list[str]], **props: Unpack[MultiSelectProps]) -> rx.Component:
         """Create and return a MultiSelect component."""
         input_id = str(uuid.uuid4())
         name = props.pop("name", None)

@@ -8,8 +8,9 @@ from orbitlab.data_types import FrontendEvents
 from orbitlab.manifest.secrets import SecretManifest
 from orbitlab.services.vault.client import SecretVault
 from orbitlab.web import components
-from orbitlab.web.states.manifests import ManifestsState
-from orbitlab.web.states.utilities import EventGroup
+from orbitlab.web.utilities import EventGroup
+
+from .states import SecretsState
 
 
 class SecretsTableState(rx.State):
@@ -115,7 +116,7 @@ class SecretsTable(EventGroup):
                         class_name="bg-white/60 dark:bg-white/[0.03] backdrop-blur-sm",
                     ),
                     rx.el.tbody(
-                        rx.foreach(ManifestsState.secrets, lambda secret: cls.__table_row__(secret)),
+                        rx.foreach(SecretsState.secrets, lambda secret: cls.__table_row__(secret)),
                         class_name=(
                             "divide-y divide-gray-200 dark:divide-white/[0.08] bg-white/70 dark:bg-[#0E1015]/60 "
                             "backdrop-blur-sm"
@@ -139,7 +140,7 @@ class SecretsTable(EventGroup):
                 rx.el.div(
                     rx.el.h3("Secrets"),
                     rx.el.div(
-                        components.Buttons.Icon("refresh-ccw", on_click=ManifestsState.cache_clear("secrets")),
+                        components.Buttons.Icon("refresh-ccw", on_click=SecretsState.cache_clear("secrets")),
                         class_name="flex space-x-4",
                     ),
                     class_name="w-full flex justify-between",

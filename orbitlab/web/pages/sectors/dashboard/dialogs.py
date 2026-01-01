@@ -12,11 +12,10 @@ from orbitlab.manifest.cluster import ClusterManifest
 from orbitlab.manifest.ipam import IpamManifest
 from orbitlab.manifest.sector import SectorManifest
 from orbitlab.web import components
-from orbitlab.web.states.manifests import ManifestsState
-from orbitlab.web.states.utilities import EventGroup
+from orbitlab.web.utilities import EventGroup
 
 from .models import CreateSectorForm, SectorSpec
-from .states import CreateSectorDialogState, DeleteSectorDialogState
+from .states import CreateSectorDialogState, DeleteSectorDialogState, SectorsState
 
 
 class CreateSectorDialog(EventGroup):
@@ -68,7 +67,7 @@ class CreateSectorDialog(EventGroup):
         state.reset()
         return [
             components.Dialog.close(CreateSectorDialog.dialog_id),
-            ManifestsState.cache_clear("sectors"),
+            SectorsState.cache_clear("sectors"),
             rx.toast.info(f"Creating '{sector.metadata.alias}' network sector..."),
             CreateSectorDialog.start_create_sector(sector),
         ]
@@ -86,7 +85,7 @@ class CreateSectorDialog(EventGroup):
         cluster_manifest = ClusterManifest.load(name=next(iter(ClusterManifest.get_existing())))
         cluster_manifest.add_sector(tag=sector.metadata.tag, ref=sector.to_ref())
         return [
-            ManifestsState.cache_clear("sectors"),
+            SectorsState.cache_clear("sectors"),
             rx.toast.success(f"Sector '{sector.metadata.alias}' Successfully created!"),
         ]
 
@@ -239,7 +238,7 @@ class DeleteSectorDialog(EventGroup):
         state.reset()
         return [
             components.Dialog.close(DeleteSectorDialog.dialog_id),
-            ManifestsState.cache_clear("sectors"),
+            SectorsState.cache_clear("sectors"),
             rx.toast.info(f"Deleting '{sector.metadata.alias}' network sector..."),
             DeleteSectorDialog.start_sector_delete(sector),
         ]
@@ -254,7 +253,7 @@ class DeleteSectorDialog(EventGroup):
         sector.delete()
         return [
             rx.toast.success(f"Sector '{sector.metadata.alias}' Successfully deleted!"),
-            ManifestsState.cache_clear("sectors"),
+            SectorsState.cache_clear("sectors"),
         ]
 
     dialog_id: Final = "delete-sector-dialog"

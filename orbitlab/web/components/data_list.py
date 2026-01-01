@@ -10,11 +10,7 @@ class DataListLabel:
         """Create and return the label."""
         return rx.el.dt(
             *children,
-            class_name=(
-                "text-sm font-medium "
-                "text-gray-600 dark:text-[#AEB9CC] "
-                "whitespace-nowrap"
-            ),
+            class_name=("text-sm font-medium text-gray-600 dark:text-[#AEB9CC] whitespace-nowrap"),
         )
 
 
@@ -25,10 +21,7 @@ class DataListValue:
         """Create and return the value."""
         return rx.el.dd(
             *children,
-            class_name=(
-                "text-sm text-gray-900 dark:text-[#E8F1FF] "
-                "ml-4 flex-1 text-right"
-            ),
+            class_name=("text-sm text-gray-900 dark:text-[#E8F1FF] ml-4 flex-1 text-right"),
         )
 
 
@@ -56,6 +49,7 @@ class DataList:
     A styled data list component with nested classes for items, labels, and values.
     Provides a clean interface for displaying key-value pairs in a structured format.
     """
+
     Item = staticmethod(DataListItem)
     Label = staticmethod(DataListLabel)
     Value = staticmethod(DataListValue)

@@ -2,7 +2,7 @@
 
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Annotated, Any, Generic, TypeVar
+from typing import Annotated, Any, Generic, Self, TypeVar
 
 import yaml
 from pydantic import BaseModel, Field
@@ -37,6 +37,7 @@ SpecType = TypeVar("SpecType", bound=Spec)
 type ResolvedRefs = BaseManifest | Mapping[str, BaseManifest] | list[BaseManifest]
 T = TypeVar("T", bound="BaseManifest")
 
+
 class BaseManifest(BaseModel, Generic[MetaType, SpecType]):
     """Base class for OrbitLab manifest files."""
 
@@ -55,7 +56,7 @@ class BaseManifest(BaseModel, Generic[MetaType, SpecType]):
         return Ref.create(kind=self.kind, name=self.name)
 
     @classmethod
-    def load(cls: type[T], name: str) -> T:
+    def load(cls, name: str) -> Self:
         """Load a manifest from a YAML file by name."""
         path = Directories.MANIFEST_ROOT / cls.model_fields["kind"].default / f"{name}.yaml"
         if not path.exists():

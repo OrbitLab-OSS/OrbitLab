@@ -30,13 +30,14 @@ class NodeManagement:
         really should be used when the network is >=10GbE, which isn't common for most end-user home labs.
         """
         raise NotImplementedError
-        # # apt install proxmox-headers-$(uname -r)
-        # wget -O /tmp/linbit-keyring.deb https://packages.linbit.com/public/linbit-keyring.deb
-        # dpkg -i /tmp/linbit-keyring.deb
-        # PVERS=8 && echo "deb [signed-by=/etc/apt/trusted.gpg.d/linbit-keyring.gpg] http://packages.linbit.com/public/ proxmox-$PVERS drbd-9" > /etc/apt/sources.list.d/linbit.list
-        # apt update
-        # apt -y install drbd-dkms drbd-utils linstor-client linstor-controller linstor-satellite linstor-proxmox
-        # linstor node create $NODE $NODE_IP --node-type combined
+        """apt install proxmox-headers-$(uname -r)
+        wget -O /tmp/linbit-keyring.deb https://packages.linbit.com/public/linbit-keyring.deb
+        dpkg -i /tmp/linbit-keyring.deb
+        PVERS=8 && echo "deb [signed-by=/etc/apt/trusted.gpg.d/linbit-keyring.gpg] http://packages.linbit.com/public/ \
+            proxmox-$PVERS drbd-9" > /etc/apt/sources.list.d/linbit.list
+        apt update
+        apt -y install drbd-dkms drbd-utils linstor-client linstor-controller linstor-satellite linstor-proxmox
+        linstor node create $NODE $NODE_IP --node-type combined"""
         # TODO: Add other commands necessary for configuring LINSTOR on the node
 
 
@@ -83,7 +84,8 @@ class DiscoveryService:
             for storage in node.spec.storage:
                 for appliance in self.appliances.list_stored_appliances(node=node.name, storage=storage.name):
                     manifest = BaseApplianceManifest.create_from_stored_appliance(
-                        node_ref=node.to_ref(), appliance=appliance,
+                        node_ref=node.to_ref(),
+                        appliance=appliance,
                     )
                     if manifest.name not in existing_appliances:
                         manifest.save()

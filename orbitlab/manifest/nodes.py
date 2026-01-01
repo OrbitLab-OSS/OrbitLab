@@ -55,16 +55,18 @@ class NodeManifest(BaseManifest[NodeMetadata, NodeSpec]):
     @classmethod
     def from_node_status(cls, node: NodeStatus, storage: list[dict]) -> "NodeManifest":
         """Create a NodeManifest instance from a NodeStatus object and storage list."""
-        manifest = cls.model_validate({
-            "name": node.name,
-            "metadata": {
-                "ip": node.ip,
-                "online": node.online,
-                "maintenance_mode": node.maintenance_mode,
+        manifest = cls.model_validate(
+            {
+                "name": node.name,
+                "metadata": {
+                    "ip": node.ip,
+                    "online": node.online,
+                    "maintenance_mode": node.maintenance_mode,
+                },
+                "spec": {
+                    "storage": storage,
+                },
             },
-            "spec": {
-                "storage": storage,
-            },
-        })
+        )
         manifest.save()
         return manifest

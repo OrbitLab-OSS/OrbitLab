@@ -9,8 +9,9 @@ from typing import Final, LiteralString
 class Directories(SimpleNamespace):
     """Directory paths for OrbitLab file system structure."""
 
-    ORBITLAB_ROOT: Final = Path().cwd() / "TEST_ROOT" if \
-        bool(os.environ.get("ORBITLAB_DEV")) else Path("/etc/pve/orbitlab")
+    ORBITLAB_ROOT: Final = (
+        Path().cwd() / "TEST_ROOT" if bool(os.environ.get("ORBITLAB_DEV")) else Path("/etc/pve/orbitlab")
+    )
     MANIFEST_ROOT: Final = ORBITLAB_ROOT / "manifests"
     WORKFLOW_FILES_ROOT: Final = ORBITLAB_ROOT / "workflow-files"
 
@@ -29,6 +30,7 @@ class Directories(SimpleNamespace):
             directory: Path = getattr(self, attr)
             directory.mkdir(parents=True, exist_ok=True)
 
+
 Directories().make_dirs()
 
 
@@ -41,6 +43,7 @@ class PKI(SimpleNamespace):
     ROOT_CA_DAYS_VALID: Final = 20 * 365  # 356 days a year for 20 years
     INTERMEDIATE_CA_DAYS_VALID: Final = 5 * 365  # 356 days a year for 5 years
     LEAF_CA_DAYS_VALID: Final = 365  # 1 year
+
 
 class Backplane(SimpleNamespace):
     """Constants for the OrbitLab backplane network configuration."""

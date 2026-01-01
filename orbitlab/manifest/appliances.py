@@ -16,7 +16,7 @@ from .base import BaseManifest, Metadata, Spec
 from .serialization import SerializeEnum, SerializePath
 
 if TYPE_CHECKING:
-    from orbitlab.web.pages.compute.lxc.models import CreateCustomApplianceForm
+    from orbitlab.web.pages.compute.lxc.appliances.models import CreateCustomApplianceForm
 
 
 class BaseApplianceMetadata(Metadata):
@@ -46,37 +46,44 @@ class BaseApplianceManifest(BaseManifest[BaseApplianceMetadata, BaseApplianceSpe
 
     @classmethod
     def create_from_appliance_info(
-        cls, node_ref: Ref, storage: str, appliance: ApplianceInfo,
+        cls,
+        node_ref: Ref,
+        storage: str,
+        appliance: ApplianceInfo,
     ) -> "BaseApplianceManifest":
         """Create a BaseApplianceManifest from appliance info and save it."""
-        manifest = cls.model_validate({
-            "name": appliance.template,
-            "metadata": {
-                "description": appliance.description,
+        manifest = cls.model_validate(
+            {
+                "name": appliance.template,
+                "metadata": {
+                    "description": appliance.description,
+                },
+                "spec": {
+                    "node": node_ref,
+                    "template": appliance.template,
+                    "storage": storage,
+                },
             },
-            "spec": {
-                "node": node_ref,
-                "template": appliance.template,
-                "storage": storage,
-            },
-        })
+        )
         manifest.save()
         return manifest
 
     @classmethod
     def create_from_stored_appliance(cls, node_ref: Ref, appliance: StoredAppliance) -> Self:
         """Create a BaseApplianceManifest from a stored appliance and save it."""
-        return cls.model_validate({
-            "name": appliance.template,
-            "metadata": {
-                "description": "",
+        return cls.model_validate(
+            {
+                "name": appliance.template,
+                "metadata": {
+                    "description": "",
+                },
+                "spec": {
+                    "node": node_ref,
+                    "template": appliance.template,
+                    "storage": appliance.storage,
+                },
             },
-            "spec": {
-                "node": node_ref,
-                "template": appliance.template,
-                "storage": appliance.storage,
-            },
-        })
+        )
 
 
 class CustomApplianceMetadata(Metadata):
@@ -195,25 +202,27 @@ class CustomApplianceManifest(BaseManifest[CustomApplianceMetadata, CustomApplia
     @classmethod
     def create(cls, form: "CreateCustomApplianceForm") -> Self:
         """Create a manifest from the CreateCustomAppliance form data."""
-        manifest = cls.model_validate({
-            "name": form.name,
-            "metadata": {},
-            "spec": {
-                "base_appliance": form.base_appliance,
-                "node": form.node,
-                "storage": form.storage,
-                "memory": form.memory,
-                "swap": form.swap,
-                "certificate_authorities": form.certificate_authorities,
-                "steps": form.workflow_steps,
-                "networks": [
-                    {
-                        "sector": SectorManifest.load(name=config.sector).to_ref(),
-                        "subnet": config.subnet,
-                    }
-                    for config in form.networks
-                ],
+        manifest = cls.model_validate(
+            {
+                "name": form.name,
+                "metadata": {},
+                "spec": {
+                    "base_appliance": form.base_appliance,
+                    "node": form.node,
+                    "storage": form.storage,
+                    "memory": form.memory,
+                    "swap": form.swap,
+                    "certificate_authorities": form.certificate_authorities,
+                    "steps": form.workflow_steps,
+                    "networks": [
+                        {
+                            "sector": SectorManifest.load(name=config.sector).to_ref(),
+                            "subnet": config.subnet,
+                        }
+                        for config in form.networks
+                    ],
+                },
             },
-        })
+        )
         manifest.save()
         return manifest

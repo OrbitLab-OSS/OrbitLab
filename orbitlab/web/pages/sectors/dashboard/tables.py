@@ -5,10 +5,10 @@ import reflex as rx
 from orbitlab.data_types import SectorState
 from orbitlab.manifest.sector import SectorManifest
 from orbitlab.web import components
-from orbitlab.web.states.manifests import ManifestsState
-from orbitlab.web.states.utilities import EventGroup
+from orbitlab.web.utilities import EventGroup
 
 from .dialogs import DeleteSectorDialog
+from .states import SectorsState
 
 
 class SectorsTable(EventGroup):
@@ -98,7 +98,7 @@ class SectorsTable(EventGroup):
                         class_name="bg-white/60 dark:bg-white/[0.03] backdrop-blur-sm",
                     ),
                     rx.el.tbody(
-                        rx.foreach(ManifestsState.sectors, lambda network: cls.__table_row__(network)),
+                        rx.foreach(SectorsState.sectors, lambda network: cls.__table_row__(network)),
                         class_name=(
                             "divide-y divide-gray-200 dark:divide-white/[0.08] bg-white/70 dark:bg-[#0E1015]/60 "
                             "backdrop-blur-sm"
@@ -123,7 +123,7 @@ class SectorsTable(EventGroup):
                 rx.el.div(
                     rx.el.h3("Sectors"),
                     rx.el.div(
-                        components.Buttons.Icon("refresh-ccw", on_click=ManifestsState.cache_clear("sectors")),
+                        components.Buttons.Icon("refresh-ccw", on_click=SectorsState.cache_clear("sectors")),
                         class_name="flex space-x-4",
                     ),
                     class_name="w-full flex justify-between",

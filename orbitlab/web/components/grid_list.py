@@ -5,11 +5,13 @@ from typing import NotRequired, TypedDict, Unpack
 
 import reflex as rx
 
+from orbitlab.data_types import FrontendEvents
+
 
 class GridListItemProps(TypedDict, total=False):
     """GridListItem Props."""
 
-    on_click: rx.event.EventCallback
+    on_click: FrontendEvents
     class_name: NotRequired[str]
 
 
@@ -43,7 +45,7 @@ class GridListItem:
                 "transition-all duration-300 ease-in-out "
                 "outline outline-1 outline-transparent -outline-offset-1"
             ),
-            **props, # pyright: ignore[reportCallIssue]
+            **props,  # pyright: ignore[reportCallIssue]
         )
 
 
@@ -63,10 +65,9 @@ class GridListRoot:
             *items,
             role=props.pop("role", "list"),
             class_name=(
-                "grid grid-cols-1 gap-6 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 "
-                f"{class_name}"
+                f"grid grid-cols-1 gap-6 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 {class_name}"
             ),
-            **props, # pyright: ignore[reportCallIssue]
+            **props,  # pyright: ignore[reportCallIssue]
         )
 
 

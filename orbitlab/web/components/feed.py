@@ -1,13 +1,15 @@
 """Workflow feed component for custom LXC appliance creation."""
+
 import reflex as rx
 
-from orbitlab.web.states.utilities import EventGroup
+from orbitlab.web.utilities import EventGroup
 
 
 class WorkflowFeedStep:
     """Single step in the LXC workflow feed."""
 
     def __new__(cls, title: str, description: str, status: str) -> rx.Component:
+        """Create and return the workflow feed step component."""
         icon_map = {
             "pending": "clock",
             "running": "loader-2",
@@ -36,7 +38,10 @@ class WorkflowFeedStep:
 
 
 class WorkflowFeed(EventGroup):
+    """Component for displaying a workflow feed of steps in the LXC appliance creation process."""
+
     def __new__(cls, steps: list[dict]) -> rx.Component:
+        """Create and return the workflow feed component."""
         return rx.el.div(
             rx.el.ul(
                 rx.foreach(steps, lambda step: WorkflowFeedStep(step["title"], step["description"], step["status"])),

@@ -24,6 +24,7 @@
 - [ ] Logging
   - [ ] Clients
   - [ ] Application
+  - [ ] Viewable in UI
 - [ ] Custom LXC Appliances
   - [x] General Configuration
   - [x] Network Configuration
@@ -32,12 +33,17 @@
     - [x] Custom Bash Scripts
   - [ ] Edit Existing Custom Appliances  
   - [ ] Launch Custom Appliance in Sector
-- [ ] Autoscaling Pools
-  - [ ] Backend Watcher
-  - [ ] Health Checks
+- [ ] Deployable
+  - [ ] DEB release for installation
+  - [ ] Serves static HTML
+  - [ ] Runs backend (minimize deps as much as possible)
+  - [ ] Self updating mechanism (user-triggered)
 
 # Phase 3
 
+- [ ] Autoscaling Pools
+  - [ ] Backend Watcher
+  - [ ] Health Checks
 - [ ] DataCores (RDS-like DB service)
   - [ ] ETCD (Opt-In): 3-node LXC cluster
     - [ ] Create Cluster and validate Health
@@ -55,13 +61,14 @@
   - [ ] HTTPS
   - [ ] TCP
   - [ ] UDP 
+
+
+# Phase 4
+
 - [ ] Sector Public Access
   - [ ] Cloudflared
   - [ ] Tailscale
   - [ ] Pangolin
-
-# Phase 4
-
 - [ ] Full Cluster Support
   - [ ] Replicate application across nodes
     - [ ] Create processes in all nodes for HA
