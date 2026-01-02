@@ -35,7 +35,6 @@ class MenuItem:
         return rx.dropdown_menu.item(
             rx.el.button(text, on_click=on_click, disabled=props.get("disabled")),  # pyright: ignore[reportArgumentType]
             data_danger=danger,
-            as_child=True,
             **props,  # pyright: ignore[reportArgumentType]
         )
 

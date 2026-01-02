@@ -18,8 +18,8 @@ def compute_page(page: Callable[[], rx.Component]) -> Callable[[], rx.Component]
             SideBar(
                 SideBar.NavItem(icon="layout-dashboard", text="Dashboard", href="/compute"),
                 SideBar.SectionHeader(title="LXC"),
-                SideBar.NavItem(icon="container", text="Running", href="/compute/lxc/running"),
-                SideBar.NavItem(icon="file-box", text="Appliances", href="/compute/lxc/appliances"),
+                SideBar.NavItem(icon="server", text="Instances", href="/compute/lxc/instances"),
+                SideBar.NavItem(icon="server-cog", text="Appliances", href="/compute/lxc/appliances"),
                 title="Compute",
             ),
             page(),

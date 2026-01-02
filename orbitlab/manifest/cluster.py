@@ -181,29 +181,17 @@ class ClusterManifest(BaseManifest[ClusterMetadata, ClusterSpec]):
         """Get the storage location for a specific content type."""
         match content_type:
             case StorageContentType.VZTMPL:
-                storage = self.spec.defaults.storage.vztmpl or self.default_node().get_storage(
-                    content_type=StorageContentType.VZTMPL,
-                )
+                storage = self.spec.defaults.storage.vztmpl
             case StorageContentType.ROOTDIR:
-                storage = self.spec.defaults.storage.rootdir or self.default_node().get_storage(
-                    content_type=StorageContentType.ROOTDIR,
-                )
+                storage = self.spec.defaults.storage.rootdir
             case StorageContentType.IMAGES:
-                storage = self.spec.defaults.storage.images or self.default_node().get_storage(
-                    content_type=StorageContentType.IMAGES,
-                )
+                storage = self.spec.defaults.storage.images
             case StorageContentType.SNIPPETS:
-                storage = self.spec.defaults.storage.snippets or self.default_node().get_storage(
-                    content_type=StorageContentType.SNIPPETS,
-                )
+                storage = self.spec.defaults.storage.snippets
             case StorageContentType.ISO:
-                storage = self.spec.defaults.storage.iso or self.default_node().get_storage(
-                    content_type=StorageContentType.ISO,
-                )
+                storage = self.spec.defaults.storage.iso
             case StorageContentType.IMPORT:
-                storage = self.spec.defaults.storage.imports or self.default_node().get_storage(
-                    content_type=StorageContentType.IMPORT,
-                )
+                storage = self.spec.defaults.storage.imports
             case _:
                 storage = ""
         return storage

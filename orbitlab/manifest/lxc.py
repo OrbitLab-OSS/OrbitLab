@@ -11,7 +11,7 @@ from orbitlab.manifest.ref import Ref
 from orbitlab.manifest.secrets import SecretManifest
 from orbitlab.manifest.serialization import SerializeEnum, SerializeIP
 from orbitlab.services.discovery import BaseApplianceManifest
-from orbitlab.web.pages.compute.lxc.running.models import CreateLXCForm
+from orbitlab.web.pages.compute.lxc.instances.models import CreateLXCForm
 
 from .base import BaseManifest, Metadata, Spec
 

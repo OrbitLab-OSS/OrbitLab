@@ -82,7 +82,13 @@ class StoredAppliance(BaseModel):
     @property
     def is_orbitlab_appliance(self) -> bool:
         """Check if this is an OrbitLab appliance based on the volume ID."""
-        return "sector-gateway-" in self.volid
+        if "sector-gateway-" in self.volid:
+            return True
+        if "backplane-dns-" in self.volid:
+            return True
+        if "sector-dns-" in self.volid:
+            return True
+        return False
 
     @property
     def template(self) -> str:

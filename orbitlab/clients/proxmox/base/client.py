@@ -2,6 +2,7 @@
 
 import base64
 import json
+import re
 import ssl
 import subprocess
 import tempfile
@@ -18,7 +19,7 @@ from pydantic import BaseModel, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from orbitlab.clients.proxmox.cluster.models import ProxmoxClusterStatus
-from orbitlab.clients.proxmox.exceptions import HTTPConfigError, PVECommandError
+from orbitlab.clients.proxmox.exceptions import HTTPConfigError, PVECommandError, PctExecError
 from orbitlab.constants import ProxmoxRE
 from orbitlab.data_types import TaskStatus
 
@@ -152,19 +153,61 @@ class RemoteExecution:
                 output.extend(self.__parse_frame__(frame=frame, username=username))
             if b"\x1b[?" in frame and username in frame:
                 break
-        print(output)
+        # print(output)
         return b"\n".join(output).strip()
 
-    def __pct_exec__(self, vmid: int, filename: str) -> None:
+    def __pct_exec__(self, vmid: int, filename: str) -> list[str]:
         """Execute a bash script file inside a Proxmox LXC container."""
-        command = f"pct exec {vmid} -- bash {filename}"
-        self.run_command(command=command)
+        command = f"pct exec {vmid} -- bash -c 'bash {filename}; echo \"__EXIT_CODE__:$?\"'"
+        output = self.run_command(command=command, check_output=True)
+        match = re.search(rb'__EXIT_CODE__:(\d+)', output)
+        if not match:
+            raise PctExecError(exit_code=-1, msg="No exit code returned", logs=[])
+        exit_code = int(match.group(1))
+        logs = output.replace(f"__EXIT_CODE__:{exit_code}".encode(), b"")
+        if exit_code > 0:
+            raise PctExecError(
+                exit_code=exit_code,
+                msg="PCT EXEC returned a non-zero exit code.",
+                logs=self.__normalize_terminal_output__(logs),
+            )
+        return self.__normalize_terminal_output__(logs)
 
     def __pct_push__(self, vmid: int, source: str, destination: Path) -> None:
         """Push a file from host to Proxmox LXC container."""
         self.run_command(command=f"pct exec {vmid} -- mkdir -p {destination.parent}")
         command = f"pct push {vmid} {source} {destination}"
         self.run_command(command=command)
+
+    def __normalize_terminal_output__(self, raw: bytes) -> list[str]:
+        text = raw.decode(errors="replace")
+        lines: list[str] = []
+        buf = ""
+        i = 0
+        while i < len(text):
+            ch = text[i]
+            if ch == "\r":
+                if i + 1 < len(text) and text[i + 1] == "\n":
+                    if buf.strip():
+                        lines.append(buf.rstrip())
+                    buf = ""
+                    i += 2
+                    continue
+                else:
+                    buf = ""
+                    i += 1
+                    continue
+            if ch == "\n":
+                if buf.strip():
+                    lines.append(buf.rstrip())
+                buf = ""
+                i += 1
+                continue
+            buf += ch
+            i += 1
+        if buf.strip():
+            lines.append(buf.rstrip())
+        return lines
 
     @overload
     def run_command(self, command: str, *, check_output: Literal[False] = False) -> None: ...
@@ -174,7 +217,7 @@ class RemoteExecution:
 
     def run_command(self, command: str, *, check_output: bool = False) -> bytes | None:
         """Execute a command on the remote Proxmox node or locally via subprocess."""
-        print("COMMAND", command)
+        # print("COMMAND", command)
         if self.ws:
             self.ws.send(payload=f"0:{len(command)}:{command}\n")
             self.ws.send(payload="0:1:\n")
@@ -205,14 +248,14 @@ class RemoteExecution:
         self.__pct_push__(vmid=vmid, source=file.name, destination=destination)
         self.run_command(command=f"rm -f {file.name}")
 
-    def lxc_execute_script(self, vmid: int, content: str) -> None:
+    def lxc_execute_script(self, vmid: int, content: str) -> list[str]:
         """Execute a script inside an LXC container."""
         with tempfile.NamedTemporaryFile() as file:
             command = ProxmoxRE.SCRIPT.format(filename=file.name, content=content)
             self.run_command(command=command)
             self.__pct_push__(vmid=vmid, source=file.name, destination=Path(file.name))
             self.run_command(command=f"rm -f {file.name}")
-            self.__pct_exec__(vmid=vmid, filename=file.name)
+            return self.__pct_exec__(vmid=vmid, filename=file.name)
 
 
 class Proxmox:
@@ -333,7 +376,6 @@ class Proxmox:
 
     def get_task_status(self, node: str, upid: str) -> ProxmoxTaskStatus:
         """Retrieve the status of a specific task on a Proxmox node."""
-        print("GET TASK", upid)
         return self.get(f"/nodes/{node}/tasks/{upid}/status", model=ProxmoxTaskStatus)
 
     def wait_for_task(self, node: str, upid: str, interval: int = 3, timeout: int = 900) -> None:

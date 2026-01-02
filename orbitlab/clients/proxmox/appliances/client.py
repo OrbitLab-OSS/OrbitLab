@@ -6,6 +6,7 @@ import time
 import httpx
 
 from orbitlab.clients.proxmox.base import Proxmox, Task
+from orbitlab.clients.proxmox.exceptions import PctExecError
 from orbitlab.data_types import ApplianceType, CustomApplianceWorkflowStatus, OrbitLabApplianceType
 from orbitlab.manifest.appliances import BaseApplianceManifest, CustomApplianceManifest, FileStep, ScriptStep
 
@@ -62,8 +63,9 @@ class ProxmoxAppliances(Proxmox):
         params = {"content": "vztmpl"}
         return self.get(f"/nodes/{node}/storage/{storage}/content", model=StoredAppliances, **params)
 
-    def run_workflow(self, appliance: CustomApplianceManifest) -> None:
+    def run_workflow(self, appliance: CustomApplianceManifest) -> CustomApplianceWorkflowStatus:
         """Run the workflow to create a custom appliance on Proxmox."""
+        vm_running = False
         try:
             # Create and Start LXC
             vmid = self.get_next_vmid()
@@ -71,6 +73,7 @@ class ProxmoxAppliances(Proxmox):
             appliance.set_workflow_status(status=CustomApplianceWorkflowStatus.STARTING)
             appliance.workflow_log(message=f"Creating and starting LXC {vmid}", truncate=True)
             self.create_lxc(node=appliance.spec.node, params=params, start=True)
+            vm_running = True
             time.sleep(10)
             # Run Workflow Steps
             conn = self.create_connection(node=appliance.spec.node)
@@ -83,7 +86,9 @@ class ProxmoxAppliances(Proxmox):
                         conn.lxc_push_file(vmid=vmid, source=file.source, destination=file.destination)
                 elif isinstance(step, ScriptStep):
                     appliance.workflow_log(message=f"Executing Script Step: {step.name}")
-                    conn.lxc_execute_script(vmid=vmid, content=step.script)
+                    logs = conn.lxc_execute_script(vmid=vmid, content=step.script)
+                    appliance.metadata.logs.extend(logs)
+
             if not appliance.spec.steps:
                 appliance.workflow_log(message="No steps to execute")
             # Shutdown LXC
@@ -91,6 +96,7 @@ class ProxmoxAppliances(Proxmox):
             task = self.create(path=f"/nodes/{appliance.spec.node}/lxc/{vmid}/status/shutdown", model=Task)
             appliance.set_workflow_status(status=CustomApplianceWorkflowStatus.FINALIZING)
             self.wait_for_task(node=task.node, upid=task.upid)
+            vm_running = False
             # Create Appliance via vzdump
             appliance.workflow_log(message=f"Converting LXC {vmid} to appliance")
             params = {"vmid": vmid, "quiet": 1, "compress": "gzip", "dumpdir": "/var/tmp"}
@@ -110,21 +116,31 @@ class ProxmoxAppliances(Proxmox):
                 **params,
             )
             self.wait_for_task(node=task.node, upid=task.upid)
+        except PctExecError as err:
+            appliance.workflow_log(message=f"{err}")
+            appliance.metadata.logs.extend(err.logs)
+            appliance.set_workflow_status(status=CustomApplianceWorkflowStatus.FAILED)
+        else:
+            appliance.set_workflow_status(status=CustomApplianceWorkflowStatus.SUCCEEDED)
+        finally:
+            if vm_running:
+                task = self.create(path=f"/nodes/{appliance.spec.node}/lxc/{vmid}/status/stop", model=Task)
+                self.wait_for_task(node=task.node, upid=task.upid)
             # Delete LXC
             appliance.workflow_log(message=f"Destroying LXC {vmid}")
             params = {"destroy-unreferenced-disks": 1, "force": 1, "purge": 1}
             task = self.delete(path=f"/nodes/{self.__node__}/lxc/{vmid}", model=Task, **params)
             self.wait_for_task(node=task.node, upid=task.upid)
-        except Exception as err:  # noqa: BLE001
-            appliance.workflow_log(message=f"{err}")
-            appliance.set_workflow_status(status=CustomApplianceWorkflowStatus.FAILED)
-        else:
-            appliance.set_workflow_status(status=CustomApplianceWorkflowStatus.SUCCEEDED)
+        return appliance.metadata.status
 
-    def delete_custom_appliance(self, appliance: CustomApplianceManifest) -> None:
+    def delete_appliance(self, appliance: CustomApplianceManifest | BaseApplianceManifest) -> None:
         """Delete a custom appliance from the specified Proxmox storage."""
+        if isinstance(appliance, BaseApplianceManifest):
+            node = appliance.spec.node.name
+        else:
+            node = appliance.spec.node
         task = self.delete(
-            path=f"/nodes/{appliance.spec.node}/storage/{appliance.spec.storage}/content/{appliance.ostemplate}",
+            path=f"/nodes/{node}/storage/{appliance.spec.storage}/content/{appliance.ostemplate}",
             model=Task,
         )
         self.wait_for_task(node=task.node, upid=task.upid)

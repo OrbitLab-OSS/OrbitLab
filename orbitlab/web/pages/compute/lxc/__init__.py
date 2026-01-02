@@ -1,9 +1,9 @@
 """OrbitLab LXC Management."""
 
 from .appliances import appliances_page
-from .running import running_lxcs
+from .instances import lxc_instances
 
 __pages__ = (
     appliances_page,
-    running_lxcs,
+    lxc_instances,
 )

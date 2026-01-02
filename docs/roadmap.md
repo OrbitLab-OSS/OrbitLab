@@ -25,14 +25,13 @@
   - [ ] Clients
   - [ ] Application
   - [ ] Viewable in UI
-- [ ] Custom LXC Appliances
+- [x] Custom LXC Appliances
   - [x] General Configuration
   - [x] Network Configuration
   - [x] Workflow Steps
     - [x] Uploaded Files
     - [x] Custom Bash Scripts
-  - [ ] Edit Existing Custom Appliances  
-  - [ ] Launch Custom Appliance in Sector
+  - [x] Edit Existing Custom Appliances  
 - [ ] Deployable
   - [ ] DEB release for installation
   - [ ] Serves static HTML

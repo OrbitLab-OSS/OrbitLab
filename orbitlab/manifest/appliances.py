@@ -2,7 +2,7 @@
 
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Literal, Self
+from typing import TYPE_CHECKING, Annotated, Self
 
 from pydantic import BaseModel, Field
 
@@ -16,7 +16,7 @@ from .base import BaseManifest, Metadata, Spec
 from .serialization import SerializeEnum, SerializePath
 
 if TYPE_CHECKING:
-    from orbitlab.web.pages.compute.lxc.appliances.models import CreateCustomApplianceForm
+    from orbitlab.web.pages.compute.lxc.appliances.models import CreateCustomApplianceForm, WorkflowStep
 
 
 class BaseApplianceMetadata(Metadata):
@@ -92,7 +92,9 @@ class CustomApplianceMetadata(Metadata):
     created_on: datetime = datetime.now(UTC)
     last_update: datetime | None = None
     last_execution: datetime | None = None
-    status: Annotated[CustomApplianceWorkflowStatus, SerializeEnum]
+    status: Annotated[CustomApplianceWorkflowStatus, SerializeEnum] = Field(
+        default=CustomApplianceWorkflowStatus.PENDING,
+    )
     logs: list[str] = Field(default_factory=list)
 
 
@@ -113,14 +115,14 @@ class Step(BaseModel):
 class ScriptStep(Step):
     """A configuration step that executes a script during custom appliance creation."""
 
-    type: Literal[CustomApplianceStepType.SCRIPT] = CustomApplianceStepType.SCRIPT
+    type: Annotated[CustomApplianceStepType, SerializeEnum] = CustomApplianceStepType.SCRIPT
     script: str
 
 
 class FileStep(Step):
     """A configuration step that handles pushing files during custom appliance creation."""
 
-    type: Literal[CustomApplianceStepType.FILES] = CustomApplianceStepType.FILES
+    type: Annotated[CustomApplianceStepType, SerializeEnum] = CustomApplianceStepType.FILES
     files: list[File]
 
 
@@ -141,8 +143,34 @@ class CustomApplianceSpec(Spec):
     memory: int
     swap: int
     certificate_authorities: list[str] = Field(default_factory=list)
-    steps: list[FileStep | ScriptStep]
+    steps: list[FileStep | ScriptStep] = Field(default_factory=list)
     networks: list[Network]
+
+    def add_steps(self, workflow_steps: list["WorkflowStep"]) -> None:
+        """Add workflow steps during creationg."""
+        for step in workflow_steps:
+            if step.type == CustomApplianceStepType.FILES:
+                self.steps.append(
+                    FileStep(
+                        name=step.name,
+                        files=[
+                            File(
+                                source=file.source,
+                                destination=file.destination
+                                if isinstance(file.destination, Path)
+                                else Path(file.destination),
+                            )
+                            for file in step.files or []
+                        ],
+                    ),
+                )
+            if step.type == CustomApplianceStepType.SCRIPT:
+                self.steps.append(
+                    ScriptStep(
+                        name=step.name,
+                        script=step.script or "",
+                    ),
+                )
 
 
 class CustomApplianceManifest(BaseManifest[CustomApplianceMetadata, CustomApplianceSpec]):
@@ -202,27 +230,23 @@ class CustomApplianceManifest(BaseManifest[CustomApplianceMetadata, CustomApplia
     @classmethod
     def create(cls, form: "CreateCustomApplianceForm") -> Self:
         """Create a manifest from the CreateCustomAppliance form data."""
-        manifest = cls.model_validate(
-            {
-                "name": form.name,
-                "metadata": {},
-                "spec": {
-                    "base_appliance": form.base_appliance,
-                    "node": form.node,
-                    "storage": form.storage,
-                    "memory": form.memory,
-                    "swap": form.swap,
-                    "certificate_authorities": form.certificate_authorities,
-                    "steps": form.workflow_steps,
-                    "networks": [
-                        {
-                            "sector": SectorManifest.load(name=config.sector).to_ref(),
-                            "subnet": config.subnet,
-                        }
-                        for config in form.networks
-                    ],
-                },
-            },
+        manifest = cls(
+            name=form.name,
+            metadata=CustomApplianceMetadata(),
+            spec=CustomApplianceSpec(
+                base_appliance=form.base_appliance,
+                node=form.node,
+                storage=form.storage,
+                rootfs=form.rootfs,
+                memory=form.memory,
+                swap=form.swap,
+                certificate_authorities=form.certificate_authorities or [],
+                networks=[
+                    Network(sector=SectorManifest.load(name=config.sector).to_ref(), subnet=config.subnet)
+                    for config in form.networks
+                ],
+            ),
         )
+        manifest.spec.add_steps(form.workflow_steps)
         manifest.save()
         return manifest

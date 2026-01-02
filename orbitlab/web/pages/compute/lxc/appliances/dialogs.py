@@ -11,6 +11,7 @@ from orbitlab.data_types import ApplianceType, CustomApplianceWorkflowStatus, Fr
 from orbitlab.manifest.appliances import BaseApplianceManifest, CustomApplianceManifest
 from orbitlab.manifest.nodes import NodeManifest
 from orbitlab.web import components
+from orbitlab.web.defaults import ClusterDefaults
 from orbitlab.web.utilities import EventGroup
 
 from .models import ApplianceItemDownload, CreateCustomApplianceForm
@@ -203,7 +204,7 @@ class DeleteConfirmationDialog(EventGroup):
     async def delete_appliance(state: DeleteCustomApplianceState) -> FrontendEvents:
         """Delete a custom appliance from Proxmox and remove its manifest."""
         appliance = CustomApplianceManifest.load(name=state.name)
-        await rx.run_in_thread(lambda: ProxmoxAppliances().delete_custom_appliance(appliance=appliance))
+        await rx.run_in_thread(lambda: ProxmoxAppliances().delete_appliance(appliance=appliance))
         appliance.delete()
         return [
             AppliancesState.cache_clear("custom_appliances"),
@@ -274,20 +275,22 @@ class CustomApplianceDialog(EventGroup):
 
     @staticmethod
     @rx.event
-    async def create_appliance_from_base(state: CustomApplianceState, base_appliance: str) -> FrontendEvents:
+    async def start_appliance_creation(state: CustomApplianceState, base_appliance: str) -> FrontendEvents:
         """Initialize appliance creation from a base appliance and open the dialog."""
         state.form_data["base_appliance"] = base_appliance
+        state.form_data["node"] = await state.get_var_value(ClusterDefaults.proxmox_node)
         return components.Dialog.open(CustomApplianceDialog.dialog_id)
 
     @staticmethod
     @rx.event
     async def validate_general(state: CustomApplianceState, form: dict) -> FrontendEvents:
         """Update the form data with new values and proceed to the next step in the progress panel."""
-        name = form["name"]
+        if not state.edit_mode:
+            name = form["name"]
+            if name in CustomApplianceManifest.get_existing():
+                return rx.toast.error(f"Appliance with name '{name}' already exists.")
         form["memory"] = int(form["memory"])
         form["swap"] = int(form["swap"])
-        if name in CustomApplianceManifest.get_existing():
-            return rx.toast.error(f"Appliance with name '{name}' already exists.")
         state.form_data.update(form)
         return components.ProgressPanels.next(CustomApplianceDialog.progress_id)
 
@@ -334,8 +337,13 @@ class CustomApplianceDialog(EventGroup):
         appliance = CustomApplianceManifest.load(name=name)
         appliance.set_workflow_status(status=CustomApplianceWorkflowStatus.PENDING)
         yield AppliancesState.cache_clear("custom_appliances")
-        await rx.run_in_thread(lambda: ProxmoxAppliances().run_workflow(appliance=appliance))
-        yield rx.toast.success(f"Appliance {appliance.name} workflow complete!")
+        status: CustomApplianceWorkflowStatus = await rx.run_in_thread(
+            lambda: ProxmoxAppliances().run_workflow(appliance=appliance),
+        )
+        if status == CustomApplianceWorkflowStatus.SUCCEEDED:
+            yield rx.toast.success(f"Appliance {appliance.name} workflow complete!")
+        else:
+            yield rx.toast.error(f"Appliance {appliance.name} workflow failed.")
         yield AppliancesState.cache_clear("custom_appliances")
 
     @staticmethod

@@ -2,9 +2,12 @@
 
 from orbitlab.clients.proxmox import ProxmoxCluster, ProxmoxNetworks
 from orbitlab.clients.proxmox.appliances import ProxmoxAppliances
+from orbitlab.data_types import SectorState
 from orbitlab.manifest.appliances import BaseApplianceManifest
 from orbitlab.manifest.cluster import ClusterManifest
+from orbitlab.manifest.ipam import IpamManifest
 from orbitlab.manifest.nodes import NodeManifest
+from orbitlab.manifest.sector import SectorManifest
 
 
 class NodeManagement:
@@ -54,6 +57,9 @@ class DiscoveryService:
 
     def discover_cluster(self) -> ClusterManifest | None:
         """Discover and return cluster configuration."""
+        if existing := ClusterManifest.get_existing():
+            return ClusterManifest.load(name=next(iter(existing)))
+
         invalid_node_count = 2
         status = self.cluster.get_status()
         if len(status.get_nodes()) == invalid_node_count:
@@ -75,6 +81,69 @@ class DiscoveryService:
             )
             cluster_manifest.add_node(node=node_manifest)
         return cluster_manifest
+
+    def discover_backplane(self, cluster: ClusterManifest) -> None:
+        """Run Backplane discovery."""
+        backplane_info = self.networks.describe_backplane()
+        cluster.spec.backplane.controller.asn = backplane_info.controller.asn
+        cluster.spec.backplane.controller.peers = backplane_info.controller.peers
+        cluster.spec.backplane.cidr_block = backplane_info.subnet.cidr
+        cluster.spec.backplane.gateway = backplane_info.subnet.gateway
+        cluster.save()
+
+    def discover_sectors(self, cluster: ClusterManifest) -> None:
+        """Run Sector discovery."""
+        existing = SectorManifest.get_existing()
+        for sector in self.networks.list_sectors():
+            if sector.vnet.name in existing:
+                continue
+            ipam = IpamManifest.model_validate(
+                {
+                    "name": f"ipam-{sector.vnet.name}",
+                    "metadata": {
+                        "sector_name": sector.vnet.alias,
+                        "sector_id": sector.vnet.name,
+                    },
+                    "spec": {
+                        "subnets": [
+                            {
+                                "cidr_block": subnet.cidr,
+                                "name": f"subnet-{index}",
+                            }
+                            for index, subnet in enumerate(sector.subnets.root)
+                        ],
+                    },
+                },
+            )
+            ipam.save()
+            sector_manifest = SectorManifest.model_validate(
+                {
+                    "name": sector.vnet.name,
+                    "metadata": {
+                        "alias": sector.vnet.alias,
+                        "tag": sector.vnet.tag,
+                        "state": SectorState.AVAILABLE,
+                    },
+                    "spec": {
+                        "cidr_block": sector.subnets.get_cidr(),
+                        "subnets": [
+                            {
+                                "cidr_block": subnet.cidr,
+                                "name": f"subnet-{index}",
+                            }
+                            for index, subnet in enumerate(sector.subnets.root)
+                        ],
+                        "ipam": ipam.to_ref(),
+                        "gateway_vmid": sector.gateway_vmid,
+                    },
+                },
+            )
+            sector_manifest.save()
+            cluster.add_sector(tag=sector.vnet.tag, ref=sector_manifest.to_ref())
+            for vmid, address in sector.assignments.items():
+                if subnet := ipam.get_subnet_by_ip(address=address):
+                    subnet.add_assignment(vmid=vmid, address=address)
+            ipam.save()
 
     def discover_appliances(self) -> None:
         """Discover and create manifests for stored appliances in the cluster."""

@@ -29,6 +29,11 @@ class AppliancesState(CacheBuster, rx.State):
         """Get all existing custom appliance manifests."""
         return [CustomApplianceManifest.load(name=name) for name in CustomApplianceManifest.get_existing()]
 
+    @rx.var
+    def base_appliance_names(self) -> list[str]:
+        """Return a list of appliance names."""
+        return [appliance.name for appliance in self.base_appliances]
+
 
 class DownloadApplianceState(rx.State):
     """State management for downloading appliances from Proxmox."""
@@ -79,8 +84,9 @@ class DownloadApplianceState(rx.State):
 class CustomApplianceState(rx.State):
     """State management for custom appliance creation dialog."""
 
+    edit_mode: rx.Field[bool] = rx.field(default=False)
+
     nodes: rx.Field[list[str]] = rx.field(default_factory=NodeManifest.get_existing)
-    base_appliances: rx.Field[list[str]] = rx.field(default_factory=BaseApplianceManifest.get_existing)
 
     memory_gb: int = 2
     swap_gb: int = 1
@@ -120,16 +126,20 @@ class CustomApplianceState(rx.State):
         """Get the selected storage name from form data."""
         if "storage" in self.form_data:
             return self.form_data["storage"]
-        cluster = ClusterManifest.load(name=next(iter(ClusterManifest.get_existing())))
-        return cluster.get_storage(content_type=StorageContentType.VZTMPL)
+        if existing := ClusterManifest.get_existing():
+            cluster = ClusterManifest.load(name=next(iter(existing)))
+            return cluster.get_storage(content_type=StorageContentType.VZTMPL)
+        return ""
 
     @rx.var
     def rootfs(self) -> str:
         """Get the selected rootfs name from form data."""
         if "rootfs" in self.form_data:
             return self.form_data["rootfs"]
-        cluster = ClusterManifest.load(name=next(iter(ClusterManifest.get_existing())))
-        return cluster.get_storage(content_type=StorageContentType.ROOTDIR)
+        if existing := ClusterManifest.get_existing():
+            cluster = ClusterManifest.load(name=next(iter(existing)))
+            return cluster.get_storage(content_type=StorageContentType.ROOTDIR)
+        return ""
 
     @rx.var
     def sectors(self) -> dict[str, str]:
@@ -168,7 +178,6 @@ class CustomApplianceState(rx.State):
     @rx.event
     async def load_appliance(self, appliance: CustomApplianceManifest) -> None:
         """Populate the state with data from an existing custom appliance manifest for editing."""
-        self.reset()
         self.memory_gb = appliance.spec.memory
         self.swap_gb = appliance.spec.swap
         self.form_data = {

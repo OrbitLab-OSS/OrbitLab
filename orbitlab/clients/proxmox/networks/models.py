@@ -2,7 +2,7 @@
 
 import ipaddress
 import re
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field, RootModel
 
@@ -24,13 +24,23 @@ class ComputeConfig(BaseModel):
     """Represents a compute instance configuration."""
 
     hostname: str
+    net0: str
 
     @property
     def is_orbitlab_infra(self) -> bool:
         """Check if this compute node is OrbitLab infrastructure."""
-        if re.match(pattern=r"olvn\d{4}gw", string=self.hostname):
+        if re.match(pattern=r"olvn\d{4}-gw", string=self.hostname):
             return True
         return bool(re.match(pattern=r"olvn\d{4}-dns", string=self.hostname))
+
+    def get_sector_address(self, network: ipaddress.IPv4Network) -> ipaddress.IPv4Interface | None:
+        ip = next(iter(i for i in self.net0.split(",") if i.startswith("ip")), None)
+        if ip:
+            _, str_addr = ip.split("=")
+            address = ipaddress.IPv4Interface(str_addr)
+            if address in network:
+                return address
+        return None
 
 
 class SectorAttachedInstances(BaseModel):
@@ -112,13 +122,24 @@ class Subnet(BaseModel):
     vnet: str
     zone: str
 
+    @property
+    def gateway_interface(self) -> ipaddress.IPv4Interface:
+        return ipaddress.IPv4Interface(f"{self.gateway}/{self.mask}")
+
 
 class Subnets(RootModel[list[Subnet]]):
-    """A collection of Proxmox SDN subnets."""
+    def get_first(self) -> Subnet:
+        return next(iter(self.root))
 
-    def get_backplane_subnet(self) -> Subnet:
-        """Get the backplane subnet from the list of subnets."""
-        return next(iter([subnet for subnet in self.root if subnet.id.startswith(NetworkSettings.BACKPLANE.NAME)]))
+    def get_cidr(self) -> ipaddress.IPv4Network:
+        return next(ipaddress.collapse_addresses([subnet.cidr for subnet in self.root]))
+
+
+class VNetSectorConfig(BaseModel):
+    vnet: VNet
+    subnets: Subnets
+    backplane_ip: ipaddress.IPv4Interface
+    gw_vmid: int
 
 
 class ZoneBridgePorts(BaseModel):
@@ -143,4 +164,65 @@ class ZoneBridges(RootModel[list[ZoneBridge]]):
         """Get the list of VM ports from the first zone bridge."""
         if not self.root:
             return []
-        return self.root[0].ports
+        return [i for i in self.root[0].ports if i.vmid]
+
+
+class EVPNZone(BaseModel):
+    type: Literal["evpn"] = "evpn"
+    controller: str
+    exitnodes: str
+    mtu: int
+    tag: int = Field(alias="vrf-vxlan")
+    zone: str
+
+
+class VXLANZone(BaseModel):
+    type: Literal["vxlan"] = "vxlan"
+    zone: str
+
+
+class ClusterVMResource(BaseModel):
+    id: str
+    name: str
+    node: str
+    type: str
+    vmid: int
+
+    @property
+    def is_gateway(self) -> bool:
+        return all([self.name.startswith("olvn"), self.name.endswith("gw")])
+
+
+class ClusterVMResources(RootModel[list[ClusterVMResource]]):
+    def list_gateways(self) -> list[ClusterVMResource]:
+        return [vm for vm in self.root if vm.is_gateway]
+    
+    def list_non_gw_vms(self) -> list[ClusterVMResource]:
+        return [vm for vm in self.root if not vm.is_gateway]
+    
+
+class LXCConfig(BaseModel):
+    net0: str
+    net1: str
+
+    @property
+    def vnet_id(self) -> str:
+        return self.net1.split(",")[1].split("=")[-1]
+
+    @property
+    def backplane_ip(self) -> ipaddress.IPv4Interface:
+        return ipaddress.IPv4Interface(self.net1.split(",")[4].split("=")[-1])
+
+
+class DescribeBackplane(BaseModel):
+    zone: BackplaneZone
+    vnet: VNet
+    controller: EVPNController
+    subnet: Subnet
+
+
+class DescribeSector(BaseModel):
+    vnet: VNet
+    subnets: Subnets
+    gateway_vmid: int
+    assignments: dict[int, ipaddress.IPv4Interface]

@@ -19,6 +19,7 @@ from orbitlab.data_types import (
     StorageProfile,
 )
 from orbitlab.manifest.cluster import ClusterManifest
+from orbitlab.manifest.ipam import IpamManifest
 from orbitlab.manifest.nodes import NodeManifest
 from orbitlab.services.discovery import DiscoveryService
 from orbitlab.web.components import Buttons, Callout, Dialog, FieldSet, Input, OrbitLabLogo, Select
@@ -126,9 +127,10 @@ class ConfigureDefaultsDialog(EventGroup):
     def run_download(cls) -> None:
         """Download the latest OrbitLab gateway appliance and update the cluster manifest."""
         cluster_manifest = ClusterManifest.load(name=next(iter(ClusterManifest.get_existing())))
-        storage = cluster_manifest.spec.defaults.storage.vztmpl or cluster_manifest.default_node().get_storage(
-            content_type=StorageContentType.VZTMPL,
-        )
+        if cluster_manifest.spec.defaults.storage.vztmpl:
+            storage = cluster_manifest.spec.defaults.storage.vztmpl
+        elif cluster_manifest.spec.defaults.node:
+            storage = cluster_manifest.default_node().get_storage(content_type=StorageContentType.VZTMPL)
         latest_gateway = ProxmoxAppliances().download_latest_orbitlab_appliance(
             storage=storage,
             appliance_type=OrbitLabApplianceType.SECTOR_GATEWAY,
@@ -418,12 +420,25 @@ class SplashPage(EventGroup):
                 )
                 state.subtitle = "Aborted."
                 return Dialog.open(InvalidProxmoxConfigurationDialog.dialog_id)
+
+        async with state:
+            state.cluster_mode = cluster_manifest.metadata.mode
+
         for node in cluster_manifest.spec.nodes:
+            node_manifest = NodeManifest.load(name=node.name)
+            if node_manifest.metadata.networking_configured:
+                continue
             async with state:
                 state.subtitle = f"Configuring {node.name} (this may take a few minutes)..."
             await rx.run_in_thread(discovery_service.NodeManagement(node.name).configure_networking)
+            node_manifest.metadata.networking_configured = True
+            node_manifest.save()
+
+        controller = ProxmoxNetworks().describe_evpn_controller()
+        if controller is not None:
+            return SplashPage.initialize_backplane
+
         async with state:
-            state.cluster_mode = cluster_manifest.metadata.mode
             state.initialization_state = InitializationState.BACKPLANE
         return Dialog.open(ConfigureBackplaneDialog.dialog_id)
 
@@ -431,26 +446,32 @@ class SplashPage(EventGroup):
     @rx.event(background=True)
     async def initialize_backplane(state: SplashPageState) -> FrontendEvents:
         """Initialize the backplane network configuration for the cluster."""
+        controller = ProxmoxNetworks().describe_evpn_controller()
+        if controller and not controller.is_orbitlab_controller:
+            async with state:
+                state.initialization_state = InitializationState.ABORTED
+                state.initialization_error = (
+                    f"An EVPN Controller '{controller.controller}' already exists. "
+                    "Only one EVPN controller may exist in Proxmox. Delete the current controller and retry."
+                )
+            return Dialog.open(InvalidProxmoxConfigurationDialog.dialog_id)
+
         cluster_manifest = ClusterManifest.load(name=next(iter(ClusterManifest.get_existing())))
+        if NetworkSettings.BACKPLANE.IPAM not in IpamManifest.get_existing():
+            cluster_manifest.spec.backplane.create_ipam_manifest()
 
-        async with state:
-            state.subtitle = "Configuring Backplane..."
+        if controller:
+            async with state:
+                state.subtitle = "Discovering Backplane..."
+            await rx.run_in_thread(lambda: DiscoveryService().discover_backplane(cluster=cluster_manifest))
+            async with state:
+                state.subtitle = "Discovering Sectors..."
+            await rx.run_in_thread(lambda: DiscoveryService().discover_sectors(cluster=cluster_manifest))
+        else:
+            async with state:
+                state.subtitle = "Creating Backplane..."
+            await rx.run_in_thread(lambda: ProxmoxNetworks().create_backplane(cluster=cluster_manifest))
 
-        skip_controller = False
-        if controller := ProxmoxNetworks().describe_evpn_controller():
-            if not controller.is_orbitlab_controller:
-                async with state:
-                    state.initialization_state = InitializationState.ABORTED
-                    state.initialization_error = (
-                        f"An EVPN Controller '{controller.controller}' already exists. "
-                        "Only one EVPN controller may exist in Proxmox. Delete the current controller and retry."
-                    )
-                return Dialog.open(InvalidProxmoxConfigurationDialog.dialog_id)
-            skip_controller = True
-        await rx.run_in_thread(
-            lambda: ProxmoxNetworks().create_backplane(cluster=cluster_manifest, skip_controller=skip_controller),
-        )
-        cluster_manifest.spec.backplane.create_ipam_manifest()
         async with state:
             state.initialization_state = InitializationState.FINALIZE
         return Dialog.open(ConfigureDefaultsDialog.dialog_id)

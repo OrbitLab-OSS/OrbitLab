@@ -19,7 +19,7 @@ def appliances_page() -> rx.Component:
             Buttons.Secondary(
                 "Create Custom Appliance",
                 icon="pen",
-                on_click=Dialog.open(CustomApplianceDialog.dialog_id),
+                on_click=CustomApplianceDialog.start_appliance_creation(""),
             ),
             Buttons.Primary(
                 "Download Base Appliance",

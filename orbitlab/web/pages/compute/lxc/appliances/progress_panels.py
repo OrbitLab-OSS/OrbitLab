@@ -9,12 +9,13 @@ from orbitlab.constants import Directories
 from orbitlab.data_types import CustomApplianceStepType, FrontendEvents
 from orbitlab.manifest.sector import SectorManifest
 from orbitlab.web import components
+from orbitlab.web.defaults import ClusterDefaults
 from orbitlab.web.pages.nodes.states import ProxmoxState
 from orbitlab.web.pages.secrets_pki.pki.states import CertificateAuthoritiesState, CertificatesState
 from orbitlab.web.utilities import EventGroup
 
 from .models import FileConfig, NetworkConfig, WorkflowStep
-from .states import CustomApplianceState
+from .states import AppliancesState, CustomApplianceState
 
 
 class GeneralConfigurationPanel(EventGroup):
@@ -45,23 +46,27 @@ class GeneralConfigurationPanel(EventGroup):
         return rx.fragment(
             components.FieldSet(
                 "Proxmox",
-                components.FieldSet.Field(
-                    "Appliance Name: ",
-                    components.Input(
-                        placeholder="my_custom_appliance",
-                        default_value=CustomApplianceState.name,
-                        pattern=r"(\w+)",
-                        error="Names can be up to 64 alphanumeric characters and underscores.",
-                        min="1",
-                        max="64",
-                        name="name",
-                        required=True,
+                rx.cond(
+                    CustomApplianceState.edit_mode,
+                    components.FieldSet.Field("Appliance Name: ", rx.text(CustomApplianceState.name)),
+                    components.FieldSet.Field(
+                        "Appliance Name: ",
+                        components.Input(
+                            placeholder="my_custom_appliance",
+                            default_value=CustomApplianceState.name,
+                            pattern=r"(\w+)",
+                            error="Names can be up to 64 alphanumeric characters and underscores.",
+                            min="1",
+                            max="64",
+                            name="name",
+                            required=True,
+                        ),
                     ),
                 ),
                 components.FieldSet.Field(
                     "Base Appliance: ",
                     components.Select(
-                        CustomApplianceState.base_appliances,
+                        AppliancesState.base_appliance_names,
                         default_value=CustomApplianceState.base_appliance,
                         placeholder="Select Base Appliance",
                         name="base_appliance",
@@ -73,7 +78,7 @@ class GeneralConfigurationPanel(EventGroup):
                     components.Select(
                         ProxmoxState.node_names,
                         placeholder="Select Node",
-                        default_value=CustomApplianceState.node,
+                        default_value=ClusterDefaults.proxmox_node,
                         on_change=cls.set_node,
                         name="node",
                         required=True,
@@ -136,10 +141,6 @@ class GeneralConfigurationPanel(EventGroup):
                             on_click=CertificatesState.cache_clear("certificates"),
                         ),
                     ),
-                ),
-                components.FieldSet.Field(
-                    "SSH Key",
-                    rx.text("Auto-generated one-time key pair", class_name="font-light italic"),
                 ),
             ),
         )
@@ -682,10 +683,6 @@ class ReviewPanel:
                             rx.text("N/A", class_name="font-light italic"),
                         ),
                     ),
-                ),
-                components.DataList.Item(
-                    components.DataList.Label("SSH Key"),
-                    components.DataList.Value(rx.text("Auto-generated", class_name="font-light italic")),
                 ),
                 components.DataList.Item(
                     components.DataList.Label("Workflow Steps"),

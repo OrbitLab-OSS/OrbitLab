@@ -27,3 +27,14 @@ class HTTPConfigError(Exception):
         """
         super().__init__(msg)
         self.msg = msg
+
+
+class PctExecError(Exception):
+    """Raised when `pct exec` returns a non-zero exit code."""
+
+    def __init__(self, exit_code: int, msg: str, logs: list[str]) -> None:
+        """Initialize PctExecError."""
+        super().__init__(msg)
+        self.msg = msg
+        self.exit_code = exit_code
+        self.logs = logs

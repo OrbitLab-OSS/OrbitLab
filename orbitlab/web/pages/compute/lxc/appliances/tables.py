@@ -27,6 +27,18 @@ class BaseApplianceTable(EventGroup):
 
     @staticmethod
     @rx.event(background=True)
+    async def delete(_: rx.State, name: str) -> FrontendEvents:
+        """Run appliance discovery and refresh the base appliances list."""
+        appliance = BaseApplianceManifest.load(name=name)
+        await rx.run_in_thread(lambda: ProxmoxAppliances().delete_appliance(appliance=appliance))
+        appliance.delete()
+        return [
+            AppliancesState.cache_clear("base_appliances"),
+            rx.toast.success(f"Appliance {name} successfully deleted."),
+        ]
+
+    @staticmethod
+    @rx.event(background=True)
     async def re_download_appliance(_: rx.State, name: str) -> FrontendEvents:
         """Re-download the specified appliance by name."""
         appliance = BaseApplianceManifest.load(name=name)
@@ -72,10 +84,15 @@ class BaseApplianceTable(EventGroup):
                             BaseApplianceTable.re_download_appliance(appliance.name),
                         ],
                     ),
-                    components.Menu.Separator(),
                     components.Menu.Item(
                         "Create Custom Appliance",
-                        on_click=CustomApplianceDialog.create_appliance_from_base(appliance.name),
+                        on_click=CustomApplianceDialog.start_appliance_creation(appliance.name),
+                    ),
+                    components.Menu.Separator(),
+                    components.Menu.Item(
+                        "Delete",
+                        on_click=cls.delete(appliance.name),
+                        danger=True,
                     ),
                 ),
                 class_name="px-6 py-4 whitespace-nowrap text-sm text-gray-700 dark:text-gray-300",
@@ -150,8 +167,9 @@ class CustomApplianceTable(EventGroup):
 
     @staticmethod
     @rx.event
-    async def edit_appliance(_: rx.State, name: str) -> FrontendEvents:
+    async def edit_appliance(state: CustomApplianceState, name: str) -> FrontendEvents:
         """Edit a custom appliance by name and open the dialog."""
+        state.edit_mode = True
         appliance = CustomApplianceManifest.load(name=name)
         return [
             CustomApplianceState.load_appliance(appliance),
@@ -190,13 +208,13 @@ class CustomApplianceTable(EventGroup):
                     appliance.metadata.status,
                     (
                         CustomApplianceWorkflowStatus.SUCCEEDED,
-                        components.Badge(appliance.metadata.status, color_scheme="green"),
+                        components.Badge(appliance.metadata.status.capitalize(), color_scheme="green"),
                     ),
                     (
                         CustomApplianceWorkflowStatus.FAILED,
-                        components.Badge(appliance.metadata.status, color_scheme="red"),
+                        components.Badge(appliance.metadata.status.capitalize(), color_scheme="red"),
                     ),
-                    components.Badge(appliance.metadata.status, color_scheme="blue"),
+                    components.Badge(appliance.metadata.status.capitalize(), color_scheme="blue"),
                 ),
                 class_name="px-6 py-4 whitespace-nowrap text-sm text-gray-700 dark:text-gray-300",
             ),

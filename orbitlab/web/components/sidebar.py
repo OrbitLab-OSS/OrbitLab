@@ -177,11 +177,11 @@ class SideBarRoot:
                             rx.text("Cluster Settings"),
                             on_click=rx.console_log(
                                 "Cluster Settings",
-                            ),  # TODO: Add Cluster settings config page/dialog
+                            ),  # TODO: Add Cluster settings config dialog
                         ),
                         Menu.Item(
                             "Administration",
-                            on_click=rx.console_log("Administration"),  # TODO: Add admin settings config page/dialog
+                            on_click=rx.console_log("Administration"),  # TODO: Add admin settings config dialog
                         ),
                         Menu.Separator(),
                         rx.color_mode_cond(

@@ -35,6 +35,10 @@ class Subnet(BaseModel):
     name: str
     assignments: dict[int, IPAssignment] = Field(default_factory=dict)
 
+    def add_assignment(self, vmid: int, address: IPv4Interface) -> None:
+        """Add an assignment during discovery."""
+        self.assignments[vmid] = IPAssignment(address=address)
+
     def get_next_available_ip(self) -> IPv4Interface:
         """Get the next available IP address in the subnet."""
         assigned = [assigned.address.ip for assigned in self.assignments.values()]
@@ -64,6 +68,13 @@ class IpamManifest(BaseManifest[IpamMetadata, IpamSpec]):
     def get_subnet(self, name: str) -> Subnet:
         """Get a subnet by name from the IPAM specification."""
         return next(subnet for subnet in self.spec.subnets if subnet.name == name)
+
+    def get_subnet_by_ip(self, address: IPv4Interface) -> Subnet | None:
+        """Get the subnet that contains the provided address."""
+        for subnet in self.spec.subnets:
+            if address in subnet.cidr_block:
+                return subnet
+        return None
 
     def find_ip(self, vmid: int) -> str:
         """Find the IP address assigned to a VM across all subnets."""

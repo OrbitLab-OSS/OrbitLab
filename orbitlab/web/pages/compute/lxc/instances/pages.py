@@ -9,9 +9,9 @@ from .dialogs import LaunchApplianceDialog
 from .tables import RunningLXCsTable
 
 
-@rx.page("/compute/lxc/running")
+@rx.page("/compute/lxc/instances")
 @compute_page
-def running_lxcs() -> rx.Component:
+def lxc_instances() -> rx.Component:
     """Render the Running LXCs Management page."""
     return rx.el.div(
         components.PageHeader(

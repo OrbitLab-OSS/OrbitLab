@@ -11,11 +11,20 @@ from orbitlab.manifest.sector import SectorManifest
 from orbitlab.services.pki.client import SecretVault
 
 from .models import (
+    BackplaneZone,
+    ClusterVMResources,
     ComputeConfig,
+    DescribeBackplane,
+    DescribeSector,
     EVPNController,
+    EVPNZone,
+    LXCConfig,
     SectorAttachedInstances,
+    Subnets,
     VNet,
     VNetList,
+    VNetSectorConfig,
+    VXLANZone,
     ZoneBridges,
 )
 
@@ -52,6 +61,18 @@ class ProxmoxNetworks(Proxmox):
         output = remote_connection.run_command(command="cat /sys/class/net/vmbr0/mtu", check_output=True)
         return int(output.decode())
 
+    def list_vms(self, sector: SectorManifest):
+        params = {"type": "vm"}
+        for vm in self.get(path="/cluster/resources", model=ClusterVMResources, **params).list_non_gw_vms():
+            instance = self.get(path=f"/nodes/{vm.node}/lxc/{vm.vmid}/config", model=None)
+            if not isinstance(instance, dict):
+                raise TypeError
+            compute = {
+                "vmid": vm.vmid,
+                "ip": ""
+            }
+            # TODO: FINISH
+
     def describe_evpn_controller(self) -> EVPNController | None:
         """Get details of an EVPN controller."""
         params = {"pending": 1, "running": 1, "type": "evpn"}
@@ -66,16 +87,51 @@ class ProxmoxNetworks(Proxmox):
         self.set(path=f"/cluster/sdn/controllers/{cluster.spec.backplane.controller.id}", **params)
         self.__apply_changes__()
 
-    def create_backplane(self, cluster: ClusterManifest, *, skip_controller: bool = False) -> None:
+    def describe_backplane(self) -> DescribeBackplane:
+        subnets = self.get(path=f"/cluster/sdn/vnets/{NetworkSettings.BACKPLANE.NAME}/subnets", model=Subnets)
+        subnet = subnets.get_first()
+        vnet = self.get(path=f"/cluster/sdn/vnets/{subnet.vnet}", model=VNet)
+        zone = self.get(path=f"/cluster/sdn/zones/{vnet.zone}", model=BackplaneZone)
+        controller = self.get(path=f"/cluster/sdn/controllers/{zone.controller}", model=EVPNController)
+        return DescribeBackplane(zone=zone, vnet=vnet, controller=controller, subnet=subnet)
+
+    def list_sectors(self) -> list[DescribeSector]:
+        sectors = []
+        for vnet in self.list_vnets():
+            if not vnet.name.startswith("olvn"):
+                continue
+            subnets = self.get(path=f"/cluster/sdn/vnets/{vnet.name}/subnets", model=Subnets)
+            sector_network = subnets.get_cidr()
+            bridges = self.get(path=f"/nodes/{self.__node__}/sdn/zones/{vnet.name}/bridges", model=ZoneBridges)
+            gateway_vmid = 0
+            assignments = {}
+            for vm in bridges.get_vms():
+                if not vm.vmid:
+                    continue
+                instance = self.get(path=f"/nodes/{self.__node__}/lxc/{vm.vmid}/config", model=ComputeConfig)
+                if instance.is_orbitlab_infra:
+                    gateway_vmid = gateway_vmid
+                if address := instance.get_sector_address(sector_network):
+                    assignments[vm.vmid] = address
+            sectors.append(
+                DescribeSector(
+                    vnet=vnet,
+                    subnets=subnets,
+                    gateway_vmid=gateway_vmid,
+                    assignments=assignments,
+                )
+            )
+        return sectors
+
+    def create_backplane(self, cluster: ClusterManifest) -> None:
         """Create the backplane network configuration."""
-        if not skip_controller:
-            controller_params = {
-                "controller": cluster.spec.backplane.controller.id,
-                "type": "evpn",
-                "asn": cluster.spec.backplane.controller.asn,
-                "peers": cluster.spec.backplane.controller.peer_list,
-            }
-            self.create(path="/cluster/sdn/controllers", model=None, **controller_params)
+        controller_params = {
+            "controller": cluster.spec.backplane.controller.id,
+            "type": "evpn",
+            "asn": cluster.spec.backplane.controller.asn,
+            "peers": cluster.spec.backplane.controller.peer_list,
+        }
+        self.create(path="/cluster/sdn/controllers", model=None, **controller_params)
         zone_params = {
             "type": "evpn",
             "zone": cluster.spec.backplane.zone_id,

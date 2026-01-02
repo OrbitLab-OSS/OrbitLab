@@ -35,13 +35,12 @@ class WorkflowStep(BaseModel):
     name: str = Field(default="")
     script: str | None = Field(default=None)
     files: list[FileConfig] | None = Field(default=None)
-    secrets: list[str] | None = Field(default=None)
 
     @property
     def valid(self) -> bool:
         """Check if the step has valid configuration."""
         files = [file.configured() for file in self.files] if self.files else [False]
-        return any([self.script, *files, self.secrets])
+        return any([self.script, *files])
 
     def validate(self) -> str:
         """Validate the step configuration and return any error messages."""
@@ -65,6 +64,7 @@ class CreateCustomApplianceForm(BaseModel):
     base_appliance: str
     node: str
     storage: str
+    rootfs: str
     memory: int
     swap: int
     certificate_authorities: list[str] | None

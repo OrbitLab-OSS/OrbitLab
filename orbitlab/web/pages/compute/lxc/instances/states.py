@@ -69,8 +69,10 @@ class LaunchLXCState(rx.State):
         """LXC Root FS store."""
         if "rootfs" in self.form_data:
             return self.form_data["rootfs"]
-        cluster = ClusterManifest.load(name=next(iter(ClusterManifest.get_existing())))
-        return cluster.get_storage(content_type=StorageContentType.ROOTDIR)
+        if existing := ClusterManifest.get_existing():
+            cluster = ClusterManifest.load(name=next(iter(existing)))
+            return cluster.get_storage(content_type=StorageContentType.ROOTDIR)
+        return ""
 
     @rx.var
     def sectors(self) -> dict[str, str]:

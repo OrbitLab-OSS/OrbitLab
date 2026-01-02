@@ -23,6 +23,7 @@ class NodeMetadata(Metadata):
     ip: Annotated[IPv4Address, SerializeIP]
     online: bool
     maintenance_mode: bool
+    networking_configured: bool = False
 
 
 class Storage(BaseModel):
