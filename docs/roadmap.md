@@ -39,6 +39,18 @@
   - [ ] Runs backend (minimize deps as much as possible)
   - [ ] Self updating mechanism (user-triggered)
 
+- [ ] VM Images
+  - [ ] Create pre-made cloud images containing qemu-agent
+  
+
+PROCESS:
+- launch VM from base image (using specified config)
+- Run workflow steps
+- Stop VM and run `qemu-img convert $DISK_PATH /var/tmp/pveupload-...`
+  - get `$DISK_PATH` from `pvesh get /nodes/pve-1-2/storage/local-zfs/content/local-zfs:vm-104-disk-0`
+- Upload to `import` storage
+- Clean up resources.
+
 # Phase 3
 
 - [ ] Autoscaling Pools
