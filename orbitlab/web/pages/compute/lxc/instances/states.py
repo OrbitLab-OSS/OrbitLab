@@ -3,9 +3,9 @@
 import reflex as rx
 
 from orbitlab.data_types import StorageContentType
-from orbitlab.manifest.appliances import BaseApplianceManifest, CustomApplianceManifest
 from orbitlab.manifest.cluster import ClusterManifest
-from orbitlab.manifest.lxc import LXCManifest
+from orbitlab.manifest.compute_instances.lxc import LXCManifest
+from orbitlab.manifest.compute_templates.appliances import BaseApplianceManifest, CustomApplianceManifest
 from orbitlab.manifest.nodes import NodeManifest
 from orbitlab.manifest.sector import SectorManifest
 from orbitlab.web.utilities import CacheBuster
@@ -52,17 +52,15 @@ class LaunchLXCState(rx.State):
     @rx.var
     def node(self) -> str:
         """LXC Proxmox node."""
-        return self.form_data.get("node", "")
+        default_node = ""
+        if cluster := next(iter(ClusterManifest.get_existing()), None):
+            default_node = ClusterManifest.load(name=cluster).spec.defaults.node
+        return self.form_data.get("node", default_node)
 
     @rx.var
     def appliance(self) -> str:
         """LXC appliance."""
         return self.form_data.get("appliance", "")
-
-    @rx.var
-    def subnet(self) -> str:
-        """LXC Subnet."""
-        return self.form_data.get("subnet", "")
 
     @rx.var
     def rootfs(self) -> str:
@@ -82,17 +80,3 @@ class LaunchLXCState(rx.State):
             f"{sector.name} ({sector.spec.cidr_block})": sector.name
             for sector in [SectorManifest.load(name=name) for name in SectorManifest.get_existing()]
         }
-
-    @rx.var
-    def subnets(self) -> dict[str, str]:
-        """Available Subnets in selected Sector."""
-        if self.sector:
-            sector_manifest = SectorManifest.load(name=self.sector)
-            return {
-                (
-                    f"{subnet.name} ({subnet.cidr_block}, "
-                    f"Available: {sector_manifest.get_available_ips(subnet_name=subnet.name)})"
-                ): subnet.name
-                for subnet in sector_manifest.spec.subnets
-            }
-        return {}

@@ -1,6 +1,7 @@
 """Proxmox Client Base Models."""
 
-from typing import Annotated
+import ipaddress
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field, RootModel
 
@@ -27,35 +28,26 @@ class VMID(RootModel[int]):
 
 
 class Storage(BaseModel):
-    """
-    Represents a storage resource in Proxmox.
-
-    Attributes:
-        type (PveStorageType): The type of storage.
-        active (PveBool): Whether the storage is active.
-        content (PveContentList): List of content types supported.
-        enabled (PveBool): Whether the storage is enabled.
-        shared (PveBool): Whether the storage is shared.
-        name (str): The name of the storage (aliased as 'storage').
-        available_bytes (int): Available bytes (aliased as 'avail').
-        total_bytes (int): Total bytes (aliased as 'total').
-        used_bytes (int): Used bytes (aliased as 'used').
-        utilization (float): Utilization ratio.
-    """
+    """Represents a storage resource in Proxmox."""
 
     type: PveStorageType
     active: PveBool
     content: PveContentList
     enabled: PveBool
     shared: PveBool
-    name: Annotated[str, Field(alias="storage")]
-    available_bytes: Annotated[int, Field(alias="avail")]
-    total_bytes: Annotated[int, Field(alias="total")]
-    used_bytes: Annotated[int, Field(alias="used")]
-    utilization: Annotated[float, Field(alias="used_fraction")]
+    name: str = Field(alias="storage")
+    available_bytes: int = Field(alias="avail")
+    total_bytes: int = Field(alias="total")
+    used_bytes: int = Field(alias="used")
+    utilization: float = Field(alias="used_fraction")
 
 
-ProxmoxStorages = RootModel[list[Storage]]
+class ProxmoxStorages(RootModel[list[Storage]]):
+    """Represents a collection of Proxmox storage resources with utility methods."""
+
+    def list_all(self) -> list[str]:
+        """Return a list of all storage names."""
+        return [store.name for store in self.root]
 
 
 class ProxmoxTaskStatus(BaseModel):
@@ -110,3 +102,57 @@ class ProxmoxAuth(BaseModel):
     """Represents Proxmox authentication response."""
 
     data: AuthData
+
+
+class VMClusterResource(BaseModel):
+    """Represents a VM cluster resource with its VM ID and node name."""
+
+    vmid: int
+    node: str
+
+
+class VMClusterResources(RootModel[list[VMClusterResource]]):
+    """Represents a collection of VM cluster resources with utility methods."""
+
+    def get_node(self, vmid: int) -> str:
+        """Get the node name for a given VM ID."""
+        return next(iter(vm.node for vm in self.root if vm.vmid == vmid))
+
+
+class NodeStatus(BaseModel):
+    """Represents the status of a Proxmox cluster node."""
+
+    node_id: Annotated[int, Field(alias="nodeid")]
+    local: PveBool
+    online: PveBool
+    type: Literal["node"]
+    ip: ipaddress.IPv4Address | None = None
+    name: str
+    maintenance_mode: bool = False
+
+
+class ClusterStatus(BaseModel):
+    """Represents the status of a Proxmox cluster."""
+
+    name: str
+    quorate: PveBool
+    type: Literal["cluster"]
+    quorate: bool
+    version: int
+    nodes: int
+
+
+class ProxmoxClusterStatus(RootModel[list[Annotated[ClusterStatus | NodeStatus, Field(discriminator="type")]]]):
+    """Represents the status of a Proxmox cluster including nodes and cluster information."""
+
+    def get_nodes(self) -> list[NodeStatus]:
+        """Get all nodes from the cluster status."""
+        return [item for item in self.root if isinstance(item, NodeStatus)]
+
+    def get_local_node(self) -> str:
+        """Get the name of the local node from the cluster status."""
+        return next(iter(node.name for node in self.get_nodes() if node.local))
+
+    def get_cluster(self) -> ClusterStatus | None:
+        """Get the cluster status from the cluster status list."""
+        return next(iter(item for item in self.root if isinstance(item, ClusterStatus)), None)

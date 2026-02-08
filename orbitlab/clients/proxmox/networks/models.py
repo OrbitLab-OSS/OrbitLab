@@ -54,7 +54,6 @@ class SectorAttachedInstances(BaseModel):
     @classmethod
     def create(cls, sector: SectorManifest, instances: dict[int, ComputeConfig]) -> "SectorAttachedInstances":
         """Create a SectorAttachedInstances object from sector and instance data."""
-        ipam = IpamManifest.load(name=sector.spec.ipam.name)
         return cls.model_validate({
             "sector_id": sector.name,
             "sector_name": sector.metadata.alias,
@@ -63,7 +62,6 @@ class SectorAttachedInstances(BaseModel):
                 {
                     "name": instance.hostname,
                     "vmid": vmid,
-                    "ip": ipam.find_ip(vmid=vmid),
                 }
                 for vmid, instance in instances.items()
             ],

@@ -1,7 +1,5 @@
 """OrbitLab Sector Appliances Tables."""
 
-from collections.abc import AsyncGenerator
-
 import reflex as rx
 
 from orbitlab.data_types import FrontendEvents, OrbitLabApplianceType
@@ -20,24 +18,18 @@ class StatusTable(EventGroup):
         """Refresh the cached data for all sector appliances."""
         return [
             SectorAppliancesTableState.cache_clear("sector_gateway"),
-            SectorAppliancesTableState.cache_clear("sector_dns"),
             SectorAppliancesTableState.cache_clear("backplane_dns"),
             SectorAppliancesTableState.cache_clear("latest_versions"),
         ]
 
     @staticmethod
     @rx.event
-    async def download(_: rx.State, appliance_type: OrbitLabApplianceType) -> AsyncGenerator[FrontendEvents, None]:
+    async def download(_: rx.State, appliance_type: OrbitLabApplianceType) -> FrontendEvents:
         """Download and update the specified appliance type."""
-        yield SectorAppliancesTableState.download_appliance(appliance_type)
-        match appliance_type:
-            case OrbitLabApplianceType.SECTOR_GATEWAY:
-                yield SectorAppliancesTableState.cache_clear("sector_gateway")
-            case OrbitLabApplianceType.SECTOR_DNS:
-                yield SectorAppliancesTableState.cache_clear("sector_dns")
-            case OrbitLabApplianceType.BACKPLANE_DNS:
-                yield SectorAppliancesTableState.cache_clear("backplane_dns")
-        yield rx.toast.success(f"Updated {appliance_type} appliance.")
+        return [
+            SectorAppliancesTableState.download_appliance(appliance_type),
+            rx.toast.info(f"Updating {appliance_type}..."),
+        ]
 
     @classmethod
     def __table_row__(
@@ -112,11 +104,6 @@ class StatusTable(EventGroup):
                             appliance_type=OrbitLabApplianceType.SECTOR_GATEWAY,
                             latest_version=SectorAppliancesTableState.latest_sector_gateway_version,
                             downloaded_version=SectorAppliancesTableState.sector_gateway,
-                        ),
-                        cls.__table_row__(
-                            appliance_type=OrbitLabApplianceType.SECTOR_DNS,
-                            latest_version=SectorAppliancesTableState.latest_sector_dns_version,
-                            downloaded_version=SectorAppliancesTableState.sector_dns,
                         ),
                         cls.__table_row__(
                             appliance_type=OrbitLabApplianceType.BACKPLANE_DNS,

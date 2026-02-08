@@ -2,11 +2,12 @@
 
 import json
 import uuid
-from typing import Literal, TypedDict, Unpack
+from typing import Literal, TypedDict, Unpack, cast
 
 import reflex as rx
 from reflex.event import EventSpec
 
+from orbitlab.data_types import FrontendEvents
 from orbitlab.web.utilities import EventGroup
 
 
@@ -84,5 +85,49 @@ class CheckboxGroup:
             rx.checkbox_group.root(
                 *[option.render(input_id=input_id) for option in options],
                 **props,
+            ),
+        )
+
+
+class CheckboxProps(TypedDict, total=False):
+    """TypedDict for properties of the Checkbox component."""
+
+    on_click: FrontendEvents
+    form: str
+    name: str
+    required: bool
+    class_name: str
+
+
+class Checkbox:
+    """OrbitLab-styled single checkbox component."""
+
+    def __new__(cls, **props: Unpack[CheckboxProps]) -> rx.Component:
+        """Create and return the component."""
+        class_name = props.pop("class_name", "")
+        form = props.pop("form", None)
+        name = props.pop("name", None)
+        required = props.pop("required", None)
+        on_click = props.pop("on_click", None)
+        return rx.checkbox(
+            form=form,
+            name=name,
+            required=required,
+            on_click=cast("rx.event.EventHandler", on_click),
+            class_name=(
+                "peer h-4 w-4 shrink-0 rounded-md "
+                "transition-all duration-200 ease-in-out "
+                "bg-gradient-to-b from-gray-50/95 to-gray-200/80 "
+                "border border-gray-300 "
+                "dark:from-[#0E1015]/95 dark:to-[#181B22]/90 "
+                "dark:border-white/[0.12] "
+                "hover:ring-1 hover:ring-[#36E2F4]/30 "
+                "focus-visible:outline-none focus-visible:ring-2 "
+                "focus-visible:ring-[#36E2F4]/40 "
+                "data-[state=checked]:bg-[#1E63E9] "
+                "data-[state=checked]:border-[#1E63E9] "
+                "dark:data-[state=checked]:bg-[#36E2F4] "
+                "dark:data-[state=checked]:border-[#36E2F4] "
+                f"shadow-[inset_0_0_0.5px_rgba(255,255,255,0.25)] {class_name}"
             ),
         )

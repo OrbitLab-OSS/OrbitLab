@@ -13,7 +13,7 @@ class DefaultLayout:
             rx.el.div(
                 *children,
                 class_name=(
-                    "min-h-screen w-full flex flex-col p-4 "
+                    "h-full w-full flex-col p-4 "
                     "bg-gradient-to-b from-gray-200 to-gray-400 "
                     "dark:from-[#111317] dark:to-[#151820] "
                     "text-gray-800 dark:text-[#E8F1FF] "
@@ -21,5 +21,5 @@ class DefaultLayout:
                     "backdrop-blur-sm transition-colors duration-300 ease-in-out"
                 ),
             ),
-            class_name="min-h-screen w-full flex",
+            class_name="h-screen w-full flex",
         )

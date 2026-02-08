@@ -44,23 +44,6 @@ class SectorsTable(EventGroup):
                 class_name="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-800 dark:text-gray-200",
             ),
             rx.el.td(
-                components.Popover(
-                    rx.text(f"{rx.Var.create(sector.spec.subnets).length()} Subnets", class_name="cursor-pointer"),
-                    rx.el.div(
-                        rx.foreach(
-                            sector.spec.subnets,
-                            lambda subnet: rx.el.div(
-                                rx.text(subnet.name),
-                                components.Badge(subnet.cidr_block, color_scheme="blue"),
-                                class_name="flex space-x-4",
-                            ),
-                        ),
-                        class_name="flex-col space-y-2",
-                    ),
-                ),
-                class_name="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-800 dark:text-gray-200",
-            ),
-            rx.el.td(
                 components.Menu(
                     components.Buttons.Icon("ellipsis-vertical"),
                     components.Menu.Item(
@@ -92,7 +75,6 @@ class SectorsTable(EventGroup):
                             rx.el.th("Status", class_name=header_class),
                             rx.el.th("CIDR Block", class_name=header_class),
                             rx.el.th("VLAN Tag", class_name=header_class),
-                            rx.el.th("Subnets", class_name=header_class),
                             rx.el.th("", class_name=header_class),  # Menu Column
                         ),
                         class_name="bg-white/60 dark:bg-white/[0.03] backdrop-blur-sm",

@@ -9,12 +9,11 @@ import reflex as rx
 from orbitlab.clients.proxmox import ProxmoxNetworks
 from orbitlab.data_types import FrontendEvents, SectorState
 from orbitlab.manifest.cluster import ClusterManifest
-from orbitlab.manifest.ipam import IpamManifest
 from orbitlab.manifest.sector import SectorManifest
 from orbitlab.web import components
 from orbitlab.web.utilities import EventGroup
 
-from .models import CreateSectorForm, SectorSpec
+from .models import CreateSectorForm
 from .states import CreateSectorDialogState, DeleteSectorDialogState, SectorsState
 
 
@@ -41,29 +40,10 @@ class CreateSectorDialog(EventGroup):
 
     @staticmethod
     @rx.event
-    async def set_subnet_count(state: CreateSectorDialogState, subnet_count: str) -> None:
-        """Set the number of subnets to create for the network."""
-        state.subnet_count = int(subnet_count)
-
-    @staticmethod
-    @rx.event
-    async def validate_sector(state: CreateSectorDialogState, form: dict) -> FrontendEvents:
-        """Validate network configuration and proceed to next step."""
-        state.form_data.update(form)
-        return components.ProgressPanels.next(CreateSectorDialog.progress_id)
-
-    @staticmethod
-    @rx.event
     async def submit(state: CreateSectorDialogState, form: dict) -> FrontendEvents:
         """Create a new sector (virtual network) with configured subnets and save to cluster manifest."""
-        state.form_data.update({
-            "subnets": [
-                {"name": form[f"subnet-{index}"] or f"subnet-{index}", "cidr_block": spec.cidr_block}
-                for index, spec in enumerate(state.sector_specs)
-            ],
-        })
-        form_data = CreateSectorForm.model_validate(state.form_data)
-        sector = form_data.create_sector_manifest()
+        state.form_data.update(form)
+        sector = SectorManifest.create(form_data=CreateSectorForm.model_validate(state.form_data))
         state.reset()
         return [
             components.Dialog.close(CreateSectorDialog.dialog_id),
@@ -79,7 +59,6 @@ class CreateSectorDialog(EventGroup):
         networks = ProxmoxNetworks()
         await rx.run_in_thread(func=lambda: networks.create_sector(sector=sector))
         await rx.run_in_thread(func=lambda: networks.create_sector_gateway(sector=sector))
-        await rx.run_in_thread(func=lambda: networks.create_sector_dns(sector=sector))
         sector.metadata.state = SectorState.AVAILABLE
         sector.save()
         cluster_manifest = ClusterManifest.load(name=next(iter(ClusterManifest.get_existing())))
@@ -97,109 +76,48 @@ class CreateSectorDialog(EventGroup):
         return components.Dialog.close(CreateSectorDialog.dialog_id)
 
     dialog_id: Final = "create-virtual-network-dialog"
-    progress_id: Final = "create-virtual-network-progress"
-
-    @classmethod
-    def network_spec(cls, net: SectorSpec) -> rx.Component:
-        """Create a data list item component displaying network specification details."""
-        return components.DataList.Item(
-            components.DataList.Label(net.cidr_block),
-            components.DataList.Value(
-                rx.el.div(
-                    rx.text("Available IPs: ", rx.el.span(net.available_ips)),
-                    rx.text("Available Range: ", rx.el.span(net.available_range)),
-                    class_name="w-full flex-col space-y-2",
-                ),
-            ),
-        )
-
-    @classmethod
-    def subnet_name_field(cls, sector: SectorSpec, index: int) -> rx.Component:
-        """Create a field for entering subnet name."""
-        return components.FieldSet.Field(
-            f"Name ({sector.cidr_block}): ",
-            components.Input(
-                placeholder=f"subnet-{index}",
-                name=f"subnet-{index}",
-            ),
-        )
+    form_id: Final = "create-virtual-network-form"
 
     def __new__(cls) -> rx.Component:
         """Create and return the dialog component."""
         return components.Dialog(
             "Create Sector (Virtual Network)",
-            components.ProgressPanels(
-                components.ProgressPanels.Step(
-                    "Sector Configuration",
-                    components.Callout(
-                        (
-                            "OrbitLab will automatically create an IPAM for this sector and use it to assign available "
-                            "IP(s) when creating compute instances in each network subnet."
-                        ),
-                        dismiss=True,
-                    ),
-                    components.FieldSet(
-                        "Network",
-                        components.FieldSet.Field(
-                            "Sector Name: ",
-                            components.Input(
-                                placeholder="My Network",
-                                pattern=r"^(?^i:[\(\)-_.\w\d\s]{0,256})$",
-                                name="name",
-                                required=True,
-                                error="Network names must 1-32 alphanumeric characters",
-                            ),
-                        ),
-                        components.FieldSet.Field(
-                            "CIDR Block: ",
-                            components.Input(
-                                placeholder="192.168.0.0/16",
-                                pattern=r"^((25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\.){2}(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\.0\/(8|9|1[0-9]|2[0-4])$",
-                                on_change=cls.set_sector_cidr.debounce(500),
-                                name="cidr_block",
-                                required=True,
-                            ),
-                        ),
-                        components.FieldSet.Field(
-                            "Number of Subnets: ",
-                            components.Select(
-                                rx.Var.create(["2", "4", "6", "8", "10", "12"]).to(list[str]),
-                                default_value="2",
-                                on_change=cls.set_subnet_count,
-                                name="subnet_count",
-                                required=True,
-                            ),
+            rx.el.div(
+                rx.el.form(id=cls.form_id, on_submit=cls.submit),
+                components.FieldSet(
+                    "Network",
+                    components.FieldSet.Field(
+                        "Sector Name: ",
+                        components.Input(
+                            placeholder="My Network",
+                            pattern=r"^(?^i:[\(\)-_.\w\d\s]{0,256})$",
+                            form=cls.form_id,
+                            name="name",
+                            required=True,
+                            error="Network names must 1-32 alphanumeric characters",
                         ),
                     ),
-                    components.DataList(
-                        rx.foreach(CreateSectorDialogState.sector_specs, lambda net: cls.network_spec(net)),
+                    components.FieldSet.Field(
+                        "CIDR Block: ",
+                        components.Input(
+                            placeholder="192.168.0.0/16",
+                            pattern=r"^((25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\.){2}(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\.0\/(8|9|1[0-9]|2[0-4])$",
+                            form=cls.form_id,
+                            name="cidr_block",
+                            required=True,
+                        ),
                     ),
-                    validate=cls.validate_sector,
                 ),
-                components.ProgressPanels.Step(
-                    "Subnet Configuration",
-                    components.Callout(
-                        "Subnet names are optional and will be given default names if not provided.",
-                        dismiss=True,
-                    ),
-                    components.FieldSet(
-                        "Subnets",
-                        rx.foreach(
-                            CreateSectorDialogState.sector_specs,
-                            lambda net, index: cls.subnet_name_field(net, index),
-                        ),
-                    ),
-                    validate=cls.submit,
+                rx.el.div(
+                    components.Buttons.Secondary("Cancel", on_click=cls.close),
+                    components.Buttons.Primary("Submit", form=cls.form_id),
+                    class_name="w-full flex space-x-4 justify-end",
                 ),
-                cancel_button=components.Buttons.Secondary(
-                    "Cancel",
-                    on_click=cls.close,
-                ),
-                progress_id=cls.progress_id,
+                class_name="w-full flex-col space-y-10",
             ),
             dialog_id=cls.dialog_id,
             on_open=cls.preload,
-            class_name="max-w-[50vw] w-[50vw] max-h-[75vh] h-[75vh]",
+            class_name="max-w-[50vw] w-[50vw] max-h-[75vh] h-fit",
         )
 
 
@@ -248,7 +166,6 @@ class DeleteSectorDialog(EventGroup):
     async def start_sector_delete(_: rx.State, sector: SectorManifest) -> FrontendEvents:
         """Delete a sector and clean up associated resources including IPAM, secrets, and cluster references."""
         await rx.run_in_thread(lambda: ProxmoxNetworks().delete_sector(sector=sector))
-        IpamManifest.load(name=sector.spec.ipam.name).delete()
         ClusterManifest.load(name=next(iter(ClusterManifest.get_existing()))).remove_sector(tag=sector.metadata.tag)
         sector.delete()
         return [

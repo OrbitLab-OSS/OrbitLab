@@ -1,14 +1,10 @@
 """OrbitLab Networks Dashboard States."""
 
-from ipaddress import IPv4Network
-
 import reflex as rx
 
 from orbitlab.clients.proxmox.networks import AttachedInstances
 from orbitlab.manifest.sector import SectorManifest
 from orbitlab.web.utilities import CacheBuster
-
-from .models import SectorSpec
 
 
 class SectorsState(CacheBuster, rx.State):
@@ -25,20 +21,6 @@ class CreateSectorDialogState(rx.State):
 
     form_data: rx.Field[dict] = rx.field(default_factory=dict)
     cidr_block: rx.Field[str] = rx.field(default="")
-    subnet_count: rx.Field[int] = rx.field(default=2)
-
-    @rx.var
-    def sector_specs(self) -> list[SectorSpec]:
-        """Generate network specifications by subnet-ing the CIDR block."""
-        if self.cidr_block:
-            network = IPv4Network(self.cidr_block)
-            subnet_bits = (self.subnet_count - 1).bit_length()
-            new_prefix = network.prefixlen + subnet_bits
-            return [
-                SectorSpec(cidr_block=str(cidr_block))
-                for cidr_block in list(network.subnets(new_prefix=new_prefix))[:self.subnet_count]
-            ]
-        return []
 
 
 class DeleteSectorDialogState(rx.State):

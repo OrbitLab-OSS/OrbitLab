@@ -9,16 +9,20 @@ from orbitlab.web.pages.secrets_pki.layout import secrets_pki_page
 from orbitlab.web.utilities import EventGroup
 
 from .dialogs import (
+    ConfirmDeleteLeafCertDialog,
     ConfirmRevokeCADialog,
     ConfirmRevokeIntermediateCADialog,
     CreateCertificateAuthorityDialog,
     CreateIntermediateCADialog,
+    CreateLeafCertificateDialog,
     ManageCertificateAuthorityDialog,
     ManageIntermediateCertDialog,
+    ManageLeafCertDialog,
 )
 from .states import (
     CertificateAuthoritiesState,
     IntermediateCertificatesState,
+    LeafCertificatesState,
     ManageCertificateState,
 )
 
@@ -172,6 +176,95 @@ class IntermediateCertificate:
         )
 
 
+class LeafCertificate:
+    """A component for displaying leaf certificate information."""
+
+    def __new__(cls, leaf_certificate: CertificateManifest) -> rx.Component:
+        """Create and return the GridList item component."""
+        dns_sans = rx.Var.create(leaf_certificate.metadata.san_dns).to(list[str])
+        ip_sans = rx.Var.create(leaf_certificate.metadata.san_ips).to(list[str])
+        return GridList.Item(
+            rx.el.div(
+                rx.el.div(
+                    rx.icon("shield-check", size=24, class_name="text-sky-500"),
+                    rx.match(
+                        leaf_certificate.metadata.status,
+                        ("warning", Badge("Expiring", color_scheme="orange")),
+                        ("expired", Badge("Expired", color_scheme="red")),
+                        Badge("Valid", color_scheme="green"),
+                    ),
+                    class_name="flex justify-between items-start",
+                ),
+                rx.el.div(
+                    rx.el.h3(
+                        leaf_certificate.name,
+                        class_name="text-lg font-semibold text-gray-800 dark:text-gray-100",
+                    ),
+                    rx.el.p(
+                        f"Issued by {leaf_certificate.metadata.issuer}",
+                        class_name="text-sm text-gray-500 dark:text-gray-400",
+                    ),
+                    class_name="mt-4",
+                ),
+                class_name="flex-grow",
+            ),
+            rx.el.div(
+                rx.el.p(
+                    rx.cond(
+                        dns_sans.is_not_none(),
+                        rx.foreach(dns_sans, lambda san: rx.text(san)),
+                        rx.fragment(),
+                    ),
+                    rx.cond(
+                        ip_sans.is_not_none(),
+                        rx.foreach(ip_sans, lambda san: rx.text(san)),
+                        rx.fragment(),
+                    ),
+                    class_name=(
+                        "text-sm text-gray-500 dark:text-gray-400 mt-4 pt-2 border-t border-gray-200 "
+                        "dark:border-gray-700"
+                    ),
+                ),
+            ),
+            rx.el.div(
+                rx.el.div(
+                    rx.el.div(
+                        rx.el.p(
+                            "Issued On",
+                            class_name="text-xs text-gray-500 dark:text-gray-400",
+                        ),
+                        rx.el.p(
+                            rx.moment(leaf_certificate.metadata.not_before, format="YYYY-MM-DD"),
+                            class_name="text-sm font-medium text-gray-800 dark:text-gray-200",
+                        ),
+                        class_name="flex-1 text-left",
+                    ),
+                    rx.el.div(
+                        rx.el.p(
+                            "Expires",
+                            class_name="text-xs text-gray-500 dark:text-gray-400",
+                        ),
+                        rx.el.p(
+                            rx.cond(
+                                leaf_certificate.metadata.status == "expired",
+                                rx.moment(leaf_certificate.metadata.not_after, to_now=True),
+                                rx.moment(leaf_certificate.metadata.not_after, from_now=True),
+                            ),
+                            class_name="text-sm font-medium text-gray-800 dark:text-gray-200",
+                        ),
+                        class_name="flex-1 text-right",
+                    ),
+                    class_name="flex justify-between mt-2 pt-4 border-t border-gray-200 dark:border-gray-700",
+                ),
+            ),
+            on_click=[
+                ManageCertificateState.load(leaf_certificate.name),
+                Dialog.open(ManageLeafCertDialog.dialog_id),
+            ],
+            class_name="cursor-pointer",
+        )
+
+
 class FilterButton(EventGroup):
     """A button component for filtering certificates by status."""
 
@@ -196,6 +289,12 @@ class FilterButton(EventGroup):
         """Set the certificate filter for intermediate certificate authorities."""
         state.cert_filter = cert_filter
 
+    @staticmethod
+    @rx.event
+    async def set_leaf_filter(state: LeafCertificatesState, cert_filter: CertFilter) -> None:
+        """Set the certificate filter for leaf certificates."""
+        state.cert_filter = cert_filter
+
     def __new__(cls, state: type[rx.State], label: CertFilter) -> rx.Component:
         """Create and return the button component."""
         if state == CertificateAuthoritiesState:
@@ -210,6 +309,13 @@ class FilterButton(EventGroup):
                 label,
                 on_click=cls.set_ica_filter(label),
                 data_active=IntermediateCertificatesState.cert_filter == label,
+                class_name=cls.class_name,
+            )
+        if state == LeafCertificatesState:
+            return rx.el.button(
+                label,
+                on_click=cls.set_leaf_filter(label),
+                data_active=LeafCertificatesState.cert_filter == label,
                 class_name=cls.class_name,
             )
         msg = f"Unexpected state class: {state}"
@@ -271,6 +377,41 @@ def intermediate_certificates_page() -> rx.Component:
         ),
         GridList(
             rx.foreach(IntermediateCertificatesState.filtered_certificates, lambda ca: IntermediateCertificate(ca)),
+        ),
+        class_name="w-full h-full",
+    )
+
+
+@rx.page("/secrets-pki/pki/leaf-certificates")
+@secrets_pki_page
+def leaf_certificates_page() -> rx.Component:
+    """Render the leaf certificates management page."""
+    return rx.el.div(
+        PageHeader(
+            "Leaf Certificates",
+            Buttons.Secondary(
+                "Refresh",
+                icon="refresh-ccw",
+                on_click=LeafCertificatesState.cache_clear("certificates"),
+            ),
+            Buttons.Primary(
+                "Create Leaf Certificate",
+                icon="plus",
+                on_click=Dialog.open(CreateLeafCertificateDialog.dialog_id),
+            ),
+        ),
+        CreateLeafCertificateDialog(),
+        ManageLeafCertDialog(),
+        ConfirmDeleteLeafCertDialog(),
+        rx.el.div(
+            FilterButton(LeafCertificatesState, "All"),
+            FilterButton(LeafCertificatesState, "Valid"),
+            FilterButton(LeafCertificatesState, "Warning"),
+            FilterButton(LeafCertificatesState, "Expired"),
+            class_name="flex items-center gap-2 mb-8",
+        ),
+        GridList(
+            rx.foreach(LeafCertificatesState.filtered_certificates, lambda ca: LeafCertificate(ca)),
         ),
         class_name="w-full h-full",
     )

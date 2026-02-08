@@ -30,6 +30,11 @@ def secrets_pki_page(page: Callable[[], rx.Component]) -> Callable[[], rx.Compon
                     text="Intermediate CAs",
                     href="/secrets-pki/pki/intermediate-certificates",
                 ),
+                SideBar.NavItem(
+                    icon="shield-check",
+                    text="Leaf Certificates",
+                    href="/secrets-pki/pki/leaf-certificates",
+                ),
                 title="Secrets & PKI",
             ),
             page(),

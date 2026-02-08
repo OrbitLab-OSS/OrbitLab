@@ -5,6 +5,8 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field, RootModel
 
+from orbitlab.manifest.serialization import PveBool
+
 
 class ApplianceInfo(BaseModel):
     """Represents information about a Proxmox appliance."""
@@ -86,9 +88,7 @@ class StoredAppliance(BaseModel):
             return True
         if "backplane-dns-" in self.volid:
             return True
-        if "sector-dns-" in self.volid:
-            return True
-        return False
+        return "sector-dns-" in self.volid
 
     @property
     def template(self) -> str:
@@ -107,3 +107,34 @@ class StoredAppliances(RootModel[list[StoredAppliance]]):
     def __iter__(self) -> Iterator[StoredAppliance]:
         """Return an iterator over the stored appliances."""
         return iter([i for i in self.root if not i.is_orbitlab_appliance])
+
+
+class AgentExecStatus(BaseModel):
+    """Represents the execution status of an agent command in Proxmox."""
+
+    exited: PveBool
+    stderr: str = Field(alias="err-data", default="")
+    stdout: str = Field(alias="out-data", default="")
+    exitcode: int | None = None
+    signal: int | None = None
+
+    @property
+    def logs(self) -> list[str]:
+        """Return combined non-empty lines from stdout and stderr as a list of log entries."""
+        formatted_logs = [line for line in self.stdout.split("\n") if line]
+        formatted_logs.extend([line for line in self.stderr.split("\n") if line])
+        return formatted_logs
+
+class VolumeContentInfo(BaseModel):
+    """Represents information about the content of a volume in Proxmox storage."""
+
+    format: str
+    path: str
+    size: int
+    used: int
+
+
+class AgentExecPid(BaseModel):
+    """Represents the process ID of an agent execution in Proxmox."""
+
+    pid: int

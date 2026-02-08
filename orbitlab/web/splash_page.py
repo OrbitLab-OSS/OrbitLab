@@ -8,7 +8,7 @@ from typing import Final
 import reflex as rx
 
 from orbitlab.clients.proxmox import ProxmoxNetworks
-from orbitlab.clients.proxmox.appliances import ProxmoxAppliances
+from orbitlab.clients.proxmox.compute_templates import ProxmoxComputeTemplates
 from orbitlab.constants import NetworkSettings
 from orbitlab.data_types import (
     ClusterMode,
@@ -131,11 +131,11 @@ class ConfigureDefaultsDialog(EventGroup):
             storage = cluster_manifest.spec.defaults.storage.vztmpl
         elif cluster_manifest.spec.defaults.node:
             storage = cluster_manifest.default_node().get_storage(content_type=StorageContentType.VZTMPL)
-        latest_gateway = ProxmoxAppliances().download_latest_orbitlab_appliance(
+        latest_gateway = ProxmoxComputeTemplates().download_latest_orbitlab_appliance(
             storage=storage,
             appliance_type=OrbitLabApplianceType.SECTOR_GATEWAY,
         )
-        latest_backplane_dns = ProxmoxAppliances().download_latest_orbitlab_appliance(
+        latest_backplane_dns = ProxmoxComputeTemplates().download_latest_orbitlab_appliance(
             storage=storage,
             appliance_type=OrbitLabApplianceType.BACKPLANE_DNS,
         )
@@ -146,12 +146,24 @@ class ConfigureDefaultsDialog(EventGroup):
 
     @staticmethod
     @rx.event(background=True)
-    async def setup_appliances(state: SplashPageState) -> None:
+    async def setup_appliances(state: SplashPageState) -> FrontendEvents:
         """Download and configure appliances for the cluster."""
         async with state:
             state.subtitle = "Downloading latest appliances..."
         await rx.run_in_thread(ConfigureDefaultsDialog.run_download)
         async with state:
+            state.initialization_state = InitializationState.COMPLETE
+        return ConfigureDefaultsDialog.generate_default_certs
+
+    @staticmethod
+    @rx.event(background=True)
+    async def generate_default_certs(state: SplashPageState) -> None:
+        """Generate default certificates for the OrbitLab cluster."""
+        async with state:
+            state.subtitle = "Generating default certificates..."
+        # await rx.run_in_thread(ConfigureDefaultsDialog.run_download)
+        async with state:
+            state.subtitle = "Done."
             state.initialization_state = InitializationState.COMPLETE
 
     @staticmethod

@@ -1,4 +1,4 @@
-"""Schemas for secret, certificate, and SSH key manifests."""
+"""Schemas for secret, certificate, and SSH key manifests."""  # noqa: A005
 
 import hashlib
 from datetime import UTC, datetime, timedelta
@@ -42,6 +42,19 @@ class SecretManifest(BaseManifest[SecretMetadata, SecretSpec]):
         manifest = cls(
             name=secret_name.replace("/", "."),
             metadata=SecretMetadata(description=f"Password for LXC {lxc_id}"),
+            spec=SecretSpec(secret_name=secret_name, version=version),
+        )
+        manifest.save()
+        return manifest
+
+    @classmethod
+    def create_vm_password(cls, vm_id: str, password: str) -> Self:
+        """Create and store a password for a VM in the secret vault."""
+        secret_name = f"/orbitlab/vm/{vm_id}"
+        version = SecretVault().create(secret_name=Path(secret_name), value=password)
+        manifest = cls(
+            name=secret_name.replace("/", "."),
+            metadata=SecretMetadata(description=f"Password for VM {vm_id}"),
             spec=SecretSpec(secret_name=secret_name, version=version),
         )
         manifest.save()
@@ -137,6 +150,22 @@ class CertificateManifest(BaseManifest[CertificateMetadata, SecretSpec]):
     """Manifest class for storing certificate metadata and specification."""
 
     kind: Annotated[ManifestKind, SerializeEnum] = ManifestKind.CERTIFICATE
+
+    def get_key(self) -> str:
+        """Get the value of the PEM key from the vault."""
+        return (
+            SecretVault()
+            .get(
+                secret_name=self.spec.secret_name,
+                version=self.spec.version,
+            )
+            .secret_string.get_secret_value()
+        )
+
+    def delete(self) -> None:
+        """Delete the certificate key from the vault and remove the manifest."""
+        SecretVault().delete(secret_name=Path(self.spec.secret_name))
+        super().delete()
 
 
 class CSRMetadata(Metadata):

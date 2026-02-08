@@ -2,12 +2,202 @@
 
 import uuid
 from types import SimpleNamespace
+from typing import Final
 
 import reflex as rx
 from pydantic import BaseModel
 
+from orbitlab.clients.proxmox import Proxmox
+from orbitlab.data_types import FrontendEvents, StorageContentType, StorageProfile
+from orbitlab.manifest.cluster import ClusterManifest, DefaultStorageSelections
+from orbitlab.web.components import Buttons, FieldSet, Select
+from orbitlab.web.components.dialog import Dialog
 from orbitlab.web.components.logo import OrbitLabLogo
 from orbitlab.web.components.menu import Menu
+from orbitlab.web.defaults import ClusterDefaults
+from orbitlab.web.utilities import EventGroup
+
+
+class ClusterSettingsDialogState(rx.State):
+    """State for the Cluster Settings Dialog."""
+
+    storage_profile: rx.Field[str] = rx.field(default="")
+
+    default_node: rx.Field[str] = rx.field(default="")
+    default_vztmpl: rx.Field[str] = rx.field(default="")
+    default_snippets: rx.Field[str] = rx.field(default="")
+    default_imports: rx.Field[str] = rx.field(default="")
+    default_iso: rx.Field[str] = rx.field(default="")
+    default_backup: rx.Field[str] = rx.field(default="")
+    default_rootdir: rx.Field[str] = rx.field(default="")
+    default_images: rx.Field[str] = rx.field(default="")
+
+    all_nodes: rx.Field[list[str]] = rx.field(default_factory=list)
+    all_storage_profiles: rx.Field[list[str]] = rx.field(default_factory=lambda: list(StorageProfile))
+
+    @rx.var
+    def all_vztmpl(self) -> list[str]:
+        """Return a list of VZ template storage names for the selected node."""
+        if self.default_node:
+            return Proxmox().list_storages_for_node(node=self.default_node, content_type=StorageContentType.VZTMPL)
+        return []
+
+    @rx.var
+    def all_imports(self) -> list[str]:
+        """Return a list of import storage names for the selected node."""
+        if self.default_node:
+            return Proxmox().list_storages_for_node(node=self.default_node, content_type=StorageContentType.IMPORT)
+        return []
+
+    @rx.var
+    def all_rootdir(self) -> list[str]:
+        """Return a list of rootdir storage names for the selected node."""
+        if self.default_node:
+            return Proxmox().list_storages_for_node(node=self.default_node, content_type=StorageContentType.ROOTDIR)
+        return []
+
+    @rx.var
+    def all_images(self) -> list[str]:
+        """Return a list of image storage names for the selected node."""
+        if self.default_node:
+            return Proxmox().list_storages_for_node(node=self.default_node, content_type=StorageContentType.IMAGES)
+        return []
+
+
+class ClusterSettingsDialog(EventGroup):
+    """Dialog component for managing cluster settings in the OrbitLab web application."""
+
+    @staticmethod
+    @rx.event
+    async def load(state: ClusterSettingsDialogState) -> FrontendEvents:
+        """Load the current cluster settings into the dialog state."""
+        cluster = ClusterManifest.load(name=next(iter(ClusterManifest.get_existing())))
+        state.storage_profile = cluster.spec.defaults.storage_profile
+        state.default_node = cluster.spec.defaults.node
+        state.default_vztmpl = cluster.spec.defaults.storage.vztmpl
+        state.default_snippets = cluster.spec.defaults.storage.snippets
+        state.default_imports = cluster.spec.defaults.storage.imports
+        state.default_iso = cluster.spec.defaults.storage.iso
+        state.default_backup = cluster.spec.defaults.storage.backup
+        state.default_rootdir = cluster.spec.defaults.storage.rootdir
+        state.default_images = cluster.spec.defaults.storage.images
+
+        state.all_nodes = [node.name for node in cluster.spec.nodes]
+        return Dialog.open(ClusterSettingsDialog.dialog_id)
+
+    @staticmethod
+    @rx.event
+    async def set_storage_default(
+        state: ClusterSettingsDialogState,
+        content_type: StorageContentType,
+        storage: str,
+    ) -> None:
+        """Set the default storage for a given content type in the cluster settings dialog state."""
+        match content_type:
+            case StorageContentType.VZTMPL:
+                state.default_vztmpl = storage
+            case StorageContentType.IMPORT:
+                state.default_imports = storage
+            case StorageContentType.ROOTDIR:
+                state.default_rootdir = storage
+            case StorageContentType.IMAGES:
+                state.default_images = storage
+
+    @staticmethod
+    @rx.event
+    async def save(state: ClusterSettingsDialogState) -> FrontendEvents:
+        """Save the updated cluster storage defaults and close the settings dialog."""
+        cluster = ClusterManifest.load(name=next(iter(ClusterManifest.get_existing())))
+        storage_defaults = DefaultStorageSelections(
+            vztmpl=state.default_vztmpl,
+            imports=state.default_imports,
+            rootdir=state.default_rootdir,
+            images=state.default_images,
+        )
+        cluster.spec.defaults.storage = storage_defaults
+        cluster.save()
+        return [
+            ClusterSettingsDialog.close,
+            ClusterDefaults.cache_clear("_cluster"),
+        ]
+
+    @staticmethod
+    @rx.event
+    async def close(state: ClusterSettingsDialogState) -> rx.event.EventCallback:
+        """Close the delete sector dialog and reset its state."""
+        state.reset()
+        return Dialog.close(ClusterSettingsDialog.dialog_id)
+
+    dialog_id: Final = "cluster-settings-dialog"
+
+    def __new__(cls) -> rx.Component:
+        """Create and return the dialog component."""
+        return Dialog(
+            "Cluster Settings",
+            FieldSet(
+                "Primary Defaults",
+                FieldSet.Field(
+                    "Proxmox Node: ",
+                    Select(
+                        ClusterSettingsDialogState.all_nodes,
+                        value=ClusterSettingsDialogState.default_node,
+                    ),
+                ),
+                FieldSet.Field(
+                    "Storage Profile: ",
+                    Select(
+                        ClusterSettingsDialogState.all_storage_profiles,
+                        value=ClusterSettingsDialogState.storage_profile,
+                    ),
+                ),
+            ),
+            FieldSet(
+                "Storage Defaults",
+                FieldSet.Field(
+                    "Vztmpl:",
+                    Select(
+                        ClusterSettingsDialogState.all_vztmpl,
+                        value=ClusterSettingsDialogState.default_vztmpl,
+                        on_change=lambda value: cls.set_storage_default(StorageContentType.VZTMPL, value),
+                    ),
+                    description="LXC Appliances",
+                ),
+                FieldSet.Field(
+                    "Imports:",
+                    Select(
+                        ClusterSettingsDialogState.all_imports,
+                        value=ClusterSettingsDialogState.default_imports,
+                        on_change=lambda value: cls.set_storage_default(StorageContentType.IMPORT, value),
+                    ),
+                    description="Importable Images",
+                ),
+                FieldSet.Field(
+                    "Rootdir:",
+                    Select(
+                        ClusterSettingsDialogState.all_rootdir,
+                        value=ClusterSettingsDialogState.default_rootdir,
+                        on_change=lambda value: cls.set_storage_default(StorageContentType.ROOTDIR, value),
+                    ),
+                    description="LXC Root Disks",
+                ),
+                FieldSet.Field(
+                    "Images:",
+                    Select(
+                        ClusterSettingsDialogState.all_images,
+                        value=ClusterSettingsDialogState.default_images,
+                        on_change=lambda value: cls.set_storage_default(StorageContentType.IMAGES, value),
+                    ),
+                    description="VM Disks",
+                ),
+            ),
+            rx.el.div(
+                Buttons.Secondary("Close", on_click=cls.close),
+                Buttons.Primary("Save", on_click=cls.save),
+                class_name="w-full flex justify-end space-x-3",
+            ),
+            dialog_id=cls.dialog_id,
+            class_name="min-w-[50vw] w-fit min-h-[75vh] h-fit",
+        )
 
 
 class SideBarStatus(BaseModel):
@@ -73,9 +263,9 @@ class SideBarRoot:
             ),
             data_collapsed=collapsed,
             class_name=(
-                "px-3 pt-4 pb-1 text-xs font-semibold tracking-wider uppercase "
-                "text-gray-500 dark:text-gray-400 "
-                "select-none opacity-80 data-[collapsed=true]:text-center"
+                "px-3 pt-8 pb-1 text-base font-semibold tracking-wider uppercase "
+                "text-[rgb(0,150,255)] dark:text-[rgb(0,200,255)] "
+                "select-none opacity-80 text-center"
             ),
         )
 
@@ -175,13 +365,7 @@ class SideBarRoot:
                         ),
                         Menu.Item(
                             rx.text("Cluster Settings"),
-                            on_click=rx.console_log(
-                                "Cluster Settings",
-                            ),  # TODO: Add Cluster settings config dialog
-                        ),
-                        Menu.Item(
-                            "Administration",
-                            on_click=rx.console_log("Administration"),  # TODO: Add admin settings config dialog
+                            on_click=ClusterSettingsDialog.load,
                         ),
                         Menu.Separator(),
                         rx.color_mode_cond(
@@ -208,6 +392,7 @@ class SideBarRoot:
                 ),
                 class_name="flex flex-col justify-between h-full",
             ),
+            ClusterSettingsDialog(),
             data_collapsed=collapsed,
             on_mount=SideBarStateManager.register(cls.sidebar_id),
             class_name=(

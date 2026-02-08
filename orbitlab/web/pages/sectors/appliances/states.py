@@ -7,9 +7,9 @@ import httpx
 import reflex as rx
 from pydantic import BaseModel, computed_field
 
-from orbitlab.clients.proxmox.appliances import ProxmoxAppliances
+from orbitlab.clients.proxmox.compute_templates import ProxmoxComputeTemplates
 from orbitlab.constants import NetworkSettings
-from orbitlab.data_types import OrbitLabApplianceType, StorageContentType
+from orbitlab.data_types import FrontendEvents, OrbitLabApplianceType, StorageContentType
 from orbitlab.manifest.cluster import ClusterManifest
 from orbitlab.web.utilities import CacheBuster
 
@@ -85,7 +85,7 @@ class SectorAppliancesTableState(CacheBuster, rx.State):
         latest = {}
         for appliance_type in OrbitLabApplianceType:
             try:
-                latest_release = ProxmoxAppliances().get_latest_release(appliance_type=appliance_type)
+                latest_release = ProxmoxComputeTemplates().get_latest_release(appliance_type=appliance_type)
             except httpx.HTTPStatusError:
                 continue
             else:
@@ -107,20 +107,26 @@ class SectorAppliancesTableState(CacheBuster, rx.State):
         """Get the latest gateway appliance version from Proxmox."""
         return self.latest_versions.get(OrbitLabApplianceType.BACKPLANE_DNS, "Err")
 
-    @rx.event
-    async def download_appliance(self, appliance_type: OrbitLabApplianceType) -> None:
+    @rx.event(background=True)
+    async def download_appliance(self, appliance_type: OrbitLabApplianceType) -> FrontendEvents:
         """Download the latest OrbitLab appliance of the given type and update the cluster manifest."""
         cluster_manifest = ClusterManifest.load(name=next(iter(ClusterManifest.get_existing())))
         storage = cluster_manifest.spec.defaults.storage.vztmpl or \
             cluster_manifest.default_node().get_storage(content_type=StorageContentType.VZTMPL)
-        latest_appliance = ProxmoxAppliances().download_latest_orbitlab_appliance(
-            storage=storage, appliance_type=appliance_type,
+        latest_appliance = await rx.run_in_thread(
+            lambda: ProxmoxComputeTemplates().download_latest_orbitlab_appliance(
+                storage=storage,
+                appliance_type=appliance_type,
+            ),
         )
         match appliance_type:
             case OrbitLabApplianceType.SECTOR_GATEWAY:
                 cluster_manifest.metadata.sector_gateway_appliance = latest_appliance
-            case OrbitLabApplianceType.BACKPLANE_DNS:
-                cluster_manifest.metadata.backplane_dns_appliance = latest_appliance
             case OrbitLabApplianceType.SECTOR_DNS:
                 cluster_manifest.metadata.sector_dns_appliance = latest_appliance
         cluster_manifest.save()
+        return [
+            SectorAppliancesTableState.cache_clear("sector_gateway"),
+            SectorAppliancesTableState.cache_clear("backplane_dns"),
+            rx.toast.success(f"Updated {appliance_type} appliance."),
+        ]

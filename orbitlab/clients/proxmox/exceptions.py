@@ -38,3 +38,14 @@ class PctExecError(Exception):
         self.msg = msg
         self.exit_code = exit_code
         self.logs = logs
+
+
+class AgentExecError(Exception):
+    """Raised when an agent execution returns a non-zero exit code."""
+
+    def __init__(self, exit_code: int, msg: str, logs: list[str]) -> None:
+        """Initialize AgentExecError."""
+        super().__init__(msg)
+        self.msg = msg
+        self.exit_code = exit_code
+        self.logs = logs

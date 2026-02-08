@@ -1,12 +1,11 @@
 """OrbitLab Cluster Manifest Schema."""
 
 from ipaddress import IPv4Address, IPv4Interface, IPv4Network
-from typing import Annotated, Self
+from typing import TYPE_CHECKING, Annotated, Self
 
 from pydantic import BaseModel, Field
 
 from orbitlab import constants
-from orbitlab.clients.proxmox.cluster.models import ClusterStatus
 from orbitlab.data_types import ClusterMode, ManifestKind, StorageContentType, StorageProfile
 
 from .base import BaseManifest, Metadata, Spec
@@ -14,6 +13,9 @@ from .ipam import IpamManifest
 from .nodes import NodeManifest
 from .ref import Ref
 from .serialization import SerializeEnum, SerializeIP, SerializeIPList
+
+if TYPE_CHECKING:
+    from orbitlab.clients.proxmox.base.models import ClusterStatus
 
 
 class ClusterMetadata(Metadata):
@@ -197,7 +199,7 @@ class ClusterManifest(BaseManifest[ClusterMetadata, ClusterSpec]):
         return storage
 
     @classmethod
-    def create(cls, cluster: ClusterStatus | None, mtu: int, reserved_tags: list[int]) -> Self:
+    def create(cls, cluster: "ClusterStatus | None", mtu: int, reserved_tags: list[int]) -> Self:
         """Create a new ClusterManifest instance with the provided cluster status, MTU, and reserved tags."""
         zone_tag = next(i for i in range(constants.NetworkSettings.BACKPLANE.ZONE_TAG, 100) if i not in reserved_tags)
         vnet_tag = next(i for i in range(constants.NetworkSettings.BACKPLANE.VNET_TAG, 1000) if i not in reserved_tags)

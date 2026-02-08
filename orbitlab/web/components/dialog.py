@@ -41,7 +41,7 @@ class Dialog(EventGroup):
         """Close a dialog by setting its state to False."""
         state.registered[dialog_id] = False
 
-    def __new__(cls, title: str, *children: rx.Component, dialog_id: str, **props: Unpack[DialogProps]) -> rx.Component:
+    def __new__(cls, title: str | rx.Var[str], *children: rx.Component, dialog_id: str, **props: Unpack[DialogProps]) -> rx.Component:
         """Create a new dialog component instance."""
         on_open = props.pop("on_open", None)
         on_close = props.pop("on_close", None)

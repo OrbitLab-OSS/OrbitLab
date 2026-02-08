@@ -1,6 +1,5 @@
 """OrbitLab Networks Dashboard Pages."""
 
-
 import reflex as rx
 
 from orbitlab.web import components

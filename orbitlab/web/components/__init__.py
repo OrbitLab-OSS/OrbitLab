@@ -4,7 +4,7 @@ from .badge import Badge, WithStatus
 from .buttons import Buttons
 from .callout import Callout
 from .card import Card
-from .checkbox import CheckboxGroup
+from .checkbox import Checkbox, CheckboxGroup
 from .data_list import DataList
 from .dialog import Dialog
 from .editor import Editor
@@ -24,12 +24,14 @@ from .sidebar import SideBar
 from .slider import Slider
 from .sortable import Sortable, SortableItem
 from .upload import UploadBox
+from .xterm import Terminal
 
 __all__ = (
     "Badge",
     "Buttons",
     "Callout",
     "Card",
+    "Checkbox",
     "CheckboxGroup",
     "DataList",
     "Dialog",
@@ -51,6 +53,7 @@ __all__ = (
     "Slider",
     "Sortable",
     "SortableItem",
+    "Terminal",
     "UploadBox",
     "WithStatus",
 )

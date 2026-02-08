@@ -16,4 +16,3 @@ class CreateLXCForm(BaseModel):
     swap: int
     password: str
     sector: str
-    subnet: str

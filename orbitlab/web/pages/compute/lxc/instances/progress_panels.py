@@ -32,6 +32,12 @@ class GeneralConfigurationPanel(EventGroup):
         """Set the storage selection in the form data."""
         state.form_data["rootdir"] = storage
 
+    @staticmethod
+    @rx.event
+    async def set_sector(state: LaunchLXCState, sector: str) -> None:
+        """Set the network name for a specific network configuration."""
+        state.sector = sector
+
     def __new__(cls) -> rx.Component:
         """Create and return the Progress Panel components."""
         return rx.fragment(
@@ -121,6 +127,16 @@ class GeneralConfigurationPanel(EventGroup):
                         required=True,
                     ),
                 ),
+                components.FieldSet.Field(
+                    "Sector",
+                    components.Select(
+                        LaunchLXCState.sectors,
+                        value=LaunchLXCState.sector,
+                        on_change=cls.set_sector,
+                        name="sector",
+                        required=True,
+                    ),
+                ),
             ),
             components.FieldSet(
                 "Secrets",
@@ -139,44 +155,6 @@ class GeneralConfigurationPanel(EventGroup):
                 components.FieldSet.Field(
                     "SSH Key",
                     rx.text("Not currently supported", class_name="font-light italic"),
-                ),
-            ),
-        )
-
-
-class NetworkConfigurationPanel(EventGroup):
-    """Panel for configuring LXC network settings."""
-
-    @staticmethod
-    @rx.event
-    async def set_sector(state: LaunchLXCState, sector: str) -> None:
-        """Set the network name for a specific network configuration."""
-        state.sector = sector
-        state.form_data["subnet"] = ""
-
-    def __new__(cls) -> rx.Component:
-        """Create and return the Progress Panel components."""
-        return rx.fragment(
-            components.FieldSet(
-                "Sector Config",
-                components.FieldSet.Field(
-                    "Sector",
-                    components.Select(
-                        LaunchLXCState.sectors,
-                        value=LaunchLXCState.sector,
-                        on_change=cls.set_sector,
-                        name="sector",
-                        required=True,
-                    ),
-                ),
-                components.FieldSet.Field(
-                    "Subnet",
-                    components.Select(
-                        LaunchLXCState.subnets,
-                        default_value=LaunchLXCState.subnet,
-                        name="subnet",
-                        required=True,
-                    ),
                 ),
             ),
         )
@@ -216,10 +194,6 @@ class ReviewPanel:
                 components.DataList.Item(
                     components.DataList.Label("Network"),
                     components.DataList.Value(LaunchLXCState.sector),
-                ),
-                components.DataList.Item(
-                    components.DataList.Label("Subnet"),
-                    components.DataList.Value(LaunchLXCState.subnet),
                 ),
             ),
         )

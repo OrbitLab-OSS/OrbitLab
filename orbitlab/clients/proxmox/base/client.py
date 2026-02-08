@@ -18,12 +18,20 @@ import websocket
 from pydantic import BaseModel, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from orbitlab.clients.proxmox.cluster.models import ProxmoxClusterStatus
-from orbitlab.clients.proxmox.exceptions import HTTPConfigError, PVECommandError, PctExecError
+from orbitlab.clients.proxmox.exceptions import HTTPConfigError, PctExecError, PVECommandError
 from orbitlab.constants import ProxmoxRE
-from orbitlab.data_types import TaskStatus
+from orbitlab.data_types import StorageContentType, TaskStatus
 
-from .models import VMID, ProxmoxAuth, ProxmoxTaskStatus, ProxmoxTermProxy, Task
+from .models import (
+    VMID,
+    ProxmoxAuth,
+    ProxmoxClusterStatus,
+    ProxmoxStorages,
+    ProxmoxTaskStatus,
+    ProxmoxTermProxy,
+    Task,
+    VMClusterResources,
+)
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -153,14 +161,13 @@ class RemoteExecution:
                 output.extend(self.__parse_frame__(frame=frame, username=username))
             if b"\x1b[?" in frame and username in frame:
                 break
-        # print(output)
         return b"\n".join(output).strip()
 
     def __pct_exec__(self, vmid: int, filename: str) -> list[str]:
         """Execute a bash script file inside a Proxmox LXC container."""
         command = f"pct exec {vmid} -- bash -c 'bash {filename}; echo \"__EXIT_CODE__:$?\"'"
         output = self.run_command(command=command, check_output=True)
-        match = re.search(rb'__EXIT_CODE__:(\d+)', output)
+        match = re.search(rb"__EXIT_CODE__:(\d+)", output)
         if not match:
             raise PctExecError(exit_code=-1, msg="No exit code returned", logs=[])
         exit_code = int(match.group(1))
@@ -180,6 +187,7 @@ class RemoteExecution:
         self.run_command(command=command)
 
     def __normalize_terminal_output__(self, raw: bytes) -> list[str]:
+        """Normalize terminal output by decoding bytes and splitting into cleaned lines."""
         text = raw.decode(errors="replace")
         lines: list[str] = []
         buf = ""
@@ -193,10 +201,9 @@ class RemoteExecution:
                     buf = ""
                     i += 2
                     continue
-                else:
-                    buf = ""
-                    i += 1
-                    continue
+                buf = ""
+                i += 1
+                continue
             if ch == "\n":
                 if buf.strip():
                     lines.append(buf.rstrip())
@@ -217,7 +224,6 @@ class RemoteExecution:
 
     def run_command(self, command: str, *, check_output: bool = False) -> bytes | None:
         """Execute a command on the remote Proxmox node or locally via subprocess."""
-        # print("COMMAND", command)
         if self.ws:
             self.ws.send(payload=f"0:{len(command)}:{command}\n")
             self.ws.send(payload="0:1:\n")
@@ -250,12 +256,20 @@ class RemoteExecution:
 
     def lxc_execute_script(self, vmid: int, content: str) -> list[str]:
         """Execute a script inside an LXC container."""
-        with tempfile.NamedTemporaryFile() as file:
-            command = ProxmoxRE.SCRIPT.format(filename=file.name, content=content)
-            self.run_command(command=command)
-            self.__pct_push__(vmid=vmid, source=file.name, destination=Path(file.name))
-            self.run_command(command=f"rm -f {file.name}")
-            return self.__pct_exec__(vmid=vmid, filename=file.name)
+        retries = 0
+        while True:
+            try:
+                with tempfile.NamedTemporaryFile() as file:
+                    command = ProxmoxRE.SCRIPT.format(filename=file.name, content=content)
+                    self.run_command(command=command)
+                    self.__pct_push__(vmid=vmid, source=file.name, destination=Path(file.name))
+                    self.run_command(command=f"rm -f {file.name}")
+                    return self.__pct_exec__(vmid=vmid, filename=file.name)
+            except PctExecError as err:
+                retries += 1
+                time.sleep(retries)
+                if retries >= 3:  # noqa: PLR2004
+                    raise RuntimeError from err
 
 
 class Proxmox:
@@ -290,7 +304,7 @@ class Proxmox:
         if self.__session__:
             self.__session__.close()
 
-    def __local_request__(self, method: str, path: str, **kwargs: int | str) -> dict[str, Any]:
+    def __local_request__(self, method: str, path: str, **kwargs: int | str | list[str]) -> dict[str, Any]:
         """Perform a local request to the Proxmox API using the pvesh CLI."""
         cmd = ["pvesh", method.lower(), path]
         if kwargs:
@@ -303,7 +317,7 @@ class Proxmox:
             raise PVECommandError(cmd=cmd, stderr=result.stderr)
         return json.loads(result.stdout)
 
-    def __remote_request__(self, method: str, path: str, **kwargs: str | int) -> dict[str, Any]:
+    def __remote_request__(self, method: str, path: str, **kwargs: str | int | list[str]) -> dict[str, Any]:
         """Perform a remote HTTP request to the Proxmox API."""
         if not self.__session__:
             msg = "HTTP session not initialized"
@@ -313,7 +327,7 @@ class Proxmox:
         response.raise_for_status()
         return response.json()["data"]
 
-    def __request__(self, method: str, path: str, **kwargs: int | str) -> str | dict[str, Any]:
+    def __request__(self, method: str, path: str, **kwargs: int | str | list[str]) -> str | dict[str, Any]:
         """Internal method to perform a request to the Proxmox API using either HTTP or local CLI."""
         remote_method_map = {
             "get": "get",
@@ -340,21 +354,30 @@ class Proxmox:
         return data
 
     @overload
-    def create(self, path: str, model: None = None, **params: int | str) -> str | dict: ...
+    def create(self, path: str, model: None = None, **params: int | str| list[str]) -> str | dict: ...
 
     @overload
-    def create(self, path: str, model: type[T], **params: int | str) -> T: ...
+    def create(self, path: str, model: type[T], **params: int | str| list[str]) -> T: ...
 
-    def create(self, path: str, model: type[T] | None = None, **params: int | str) -> T | str | dict:
+    def create(self, path: str, model: type[T] | None = None, **params: int | str | list[str]) -> T | str | dict:
         """Create a resource at the specified Proxmox API path."""
         data = self.__request__("create", path, **params)
         if model:
             return model.model_validate(data)
         return data
 
-    def set(self, path: str, **params: int | str) -> str | dict[str, Any]:
+    @overload
+    def set(self, path: str, model: type[T], **params: int | str) -> T: ...
+
+    @overload
+    def set(self, path: str, model: None = None, **params: int | str) -> str | dict[str, Any]: ...
+
+    def set(self, path: str, model: type[T] | None = None, **params: int | str) -> T | str | dict[str, Any]:
         """Update or modify a resource at the specified Proxmox API path."""
-        return self.__request__(method="set", path=path, **params)
+        data = self.__request__(method="set", path=path, **params)
+        if model:
+            return model.model_validate(data)
+        return data
 
     @overload
     def delete(self, path: str, model: type[T], **params: int | str) -> T: ...
@@ -378,16 +401,29 @@ class Proxmox:
         """Retrieve the status of a specific task on a Proxmox node."""
         return self.get(f"/nodes/{node}/tasks/{upid}/status", model=ProxmoxTaskStatus)
 
-    def wait_for_task(self, node: str, upid: str, interval: int = 3, timeout: int = 900) -> None:
+    def wait_for_task(self, task: Task, interval: int = 3, timeout: int = 900) -> None:
         """Wait for a Proxmox task to complete, polling its status at regular intervals."""
-        task = self.get_task_status(node, upid)
+        _task = self.get_task_status(task.node, task.upid)
         start_time = time.time()
-        while task.status == TaskStatus.RUNNING:
+        while _task.status == TaskStatus.RUNNING:
             time.sleep(interval)
             if (time.time() - start_time) > timeout:
-                msg = f"Task {upid} timed out after {timeout}s"
+                msg = f"Task {task.upid} timed out after {timeout}s"
                 raise TimeoutError(msg)
-            task = self.get_task_status(node, upid)
+            _task = self.get_task_status(task.node, task.upid)
+
+    def get_node_for_vmid(self, vmid: int) -> str:
+        """Retrieve the node name that hosts the VM with the specified VMID."""
+        params = {"type": "vm"}
+        resources = self.get(path="/cluster/resources", model=VMClusterResources, **params)
+        return resources.get_node(vmid=vmid)
+
+    def list_storages_for_node(self, node: str, content_type: StorageContentType | None = None) -> list[str]:
+        """List all storage names for a given node and optional content type."""
+        params = {"enabled": "1"}
+        if content_type:
+            params["content"] = str(content_type)
+        return self.get(f"/nodes/{node}/storage", model=ProxmoxStorages, **params).list_all()
 
     def create_connection(self, node: str = "") -> RemoteExecution:
         """Create a remote execution connection to a Proxmox node."""
@@ -410,11 +446,41 @@ class Proxmox:
             )
         return RemoteExecution(node=node)
 
+    def get_terminal_websocket(self, compute_type: Literal["qemu", "lxc"], vmid: int) -> websocket.WebSocket:
+        """Create and return a WebSocket connection to the terminal of a specified VM or LXC container."""
+        node = self.get_node_for_vmid(vmid=vmid)
+        proxy = self.create(f"/nodes/{node}/{compute_type}/{vmid}/termproxy", model=ProxmoxTermProxy)
+        websocket_url = (
+            f"{self.http_config.websocket_base}/api2/json/nodes/{node}/{compute_type}/{vmid}/vncwebsocket"
+            f"?port={proxy.port}&vncticket={quote(proxy.ticket)}"
+        )
+        cookie = self.__session__.cookies["PVEAuthCookie"]
+        terminal_websocket = websocket.create_connection(
+            url=websocket_url,
+            cookie=f"PVEAuthCookie={cookie}",
+            sslopt={"cert_reqs": ssl.CERT_NONE},
+        )
+        terminal_websocket.send(f"{proxy.user}:{proxy.ticket}\n")
+        return terminal_websocket
+
     def create_lxc(self, *, node: str, params: dict[str, str | int], start: bool = False) -> None:
         """Create an LXC container on the specified Proxmox node with the given parameters."""
         task = self.create(path=f"/nodes/{node}/lxc", model=Task, **params)
-        self.wait_for_task(node=task.node, upid=task.upid)
+        self.wait_for_task(task=task)
         if start:
             vmid = params["vmid"]
             task = self.create(path=f"/nodes/{node}/lxc/{vmid}/status/start", model=Task)
-            self.wait_for_task(node=task.node, upid=task.upid)
+            self.wait_for_task(task=task)
+
+    def create_vm(self, *, node: str, params: dict[str, str | int], disk_size: int, start: bool = False) -> None:
+        """Create a virtual machine (VM) on the specified Proxmox node with the given parameters."""
+        vmid = params["vmid"]
+        task = self.create(path=f"/nodes/{node}/qemu", model=Task, **params)
+        self.wait_for_task(task=task)
+        resize_pararms = {"disk": "scsi0", "size": f"{disk_size}G"}
+        time.sleep(1)  # Take a beat so Proxmox doesn't panic when trying to resize the disk after creation
+        task = self.set(f"/nodes/{node}/qemu/{vmid}/resize", model=Task, **resize_pararms)
+        self.wait_for_task(task=task)
+        if start:
+            task = self.create(path=f"/nodes/{node}/qemu/{vmid}/status/start", model=Task)
+            self.wait_for_task(task=task)

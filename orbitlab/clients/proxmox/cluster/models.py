@@ -1,50 +1,8 @@
 """Proxmox Cluster Client Models."""
 
-import ipaddress
-from typing import Annotated, Literal
-
-from pydantic import BaseModel, Field, RootModel
+from pydantic import BaseModel, RootModel
 
 from orbitlab.manifest.serialization import PveBool, PveContentList
-
-
-class NodeStatus(BaseModel):
-    """Represents the status of a Proxmox cluster node."""
-
-    node_id: Annotated[int, Field(alias="nodeid")]
-    local: PveBool
-    online: PveBool
-    type: Literal["node"]
-    ip: ipaddress.IPv4Address | None = None
-    name: str
-    maintenance_mode: bool = False
-
-
-class ClusterStatus(BaseModel):
-    """Represents the status of a Proxmox cluster."""
-
-    name: str
-    quorate: PveBool
-    type: Literal["cluster"]
-    quorate: bool
-    version: int
-    nodes: int
-
-
-class ProxmoxClusterStatus(RootModel[list[Annotated[ClusterStatus | NodeStatus, Field(discriminator="type")]]]):
-    """Represents the status of a Proxmox cluster including nodes and cluster information."""
-
-    def get_nodes(self) -> list[NodeStatus]:
-        """Get all nodes from the cluster status."""
-        return [item for item in self.root if isinstance(item, NodeStatus)]
-
-    def get_local_node(self) -> str:
-        """Get the name of the local node from the cluster status."""
-        return next(iter(node.name for node in self.get_nodes() if node.local))
-
-    def get_cluster(self) -> ClusterStatus | None:
-        """Get the cluster status from the cluster status list."""
-        return next(iter(item for item in self.root if isinstance(item, ClusterStatus)), None)
 
 
 class HANode(BaseModel):

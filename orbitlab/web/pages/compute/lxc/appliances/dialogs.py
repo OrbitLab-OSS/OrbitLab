@@ -6,9 +6,9 @@ from typing import Final
 import reflex as rx
 from reflex.event import EventCallback, EventSpec
 
-from orbitlab.clients.proxmox.appliances import ApplianceInfo, ProxmoxAppliances
-from orbitlab.data_types import ApplianceType, CustomApplianceWorkflowStatus, FrontendEvents, StorageContentType
-from orbitlab.manifest.appliances import BaseApplianceManifest, CustomApplianceManifest
+from orbitlab.clients.proxmox.compute_templates import ApplianceInfo, ProxmoxComputeTemplates
+from orbitlab.data_types import ApplianceType, FrontendEvents, StorageContentType, WorkflowStatus
+from orbitlab.manifest.compute_templates.appliances import BaseApplianceManifest, CustomApplianceManifest
 from orbitlab.manifest.nodes import NodeManifest
 from orbitlab.web import components
 from orbitlab.web.defaults import ClusterDefaults
@@ -16,7 +16,6 @@ from orbitlab.web.utilities import EventGroup
 
 from .models import ApplianceItemDownload, CreateCustomApplianceForm
 from .progress_panels import GeneralConfigurationPanel as CustomGeneralPanel
-from .progress_panels import NetworkConfigurationPanel as CustomNetworkPanel
 from .progress_panels import ReviewPanel as CustomReviewPanel
 from .progress_panels import WorkflowConfigurationPanel
 from .states import AppliancesState, CustomApplianceState, DeleteCustomApplianceState, DownloadApplianceState
@@ -24,6 +23,9 @@ from .states import AppliancesState, CustomApplianceState, DeleteCustomAppliance
 
 class DownloadApplianceDialog(EventGroup):
     """Dialog component for downloading appliance templates to Proxmox nodes."""
+
+    dialog_id: Final = "download-appliance-dialog"
+    form_id: Final = "download-appliance-form"
 
     @staticmethod
     @rx.event
@@ -38,7 +40,7 @@ class DownloadApplianceDialog(EventGroup):
     @rx.event(background=True)
     async def start_appliance_download(_: rx.State, appliance: BaseApplianceManifest) -> FrontendEvents:
         """Wait for appliance download task to complete and update state."""
-        await rx.run_in_thread(lambda: ProxmoxAppliances().download_appliance(appliance=appliance))
+        await rx.run_in_thread(lambda: ProxmoxComputeTemplates().download_appliance(appliance=appliance))
         return [
             AppliancesState.cache_clear("base_appliances"),
             rx.toast.success(f"Appliance {appliance.name} download complete!"),
@@ -49,7 +51,6 @@ class DownloadApplianceDialog(EventGroup):
     async def submit(state: DownloadApplianceState, form: dict) -> FrontendEvents:
         """Handle the submission of the appliance download form."""
         template: str = form["template"]
-        node_ref = NodeManifest.load(name=form["node"]).to_ref()
         state.download_configs[template].downloading = True
         appliance = (
             next(iter(apl for apl in state.system_appliances if apl.template == template))
@@ -57,7 +58,7 @@ class DownloadApplianceDialog(EventGroup):
             else next(iter(apl for apl in state.turnkey_appliances if apl.template == template))
         )
         manifest = BaseApplianceManifest.create_from_appliance_info(
-            node_ref=node_ref,
+            node=form["node"],
             storage=form["storage"],
             appliance=appliance,
         )
@@ -77,9 +78,6 @@ class DownloadApplianceDialog(EventGroup):
     async def search_appliances(state: DownloadApplianceState, query: str) -> None:
         """Set the search query string for filtering appliances."""
         state.query_string = query.lower()
-
-    dialog_id: Final = "download-appliance-dialog"
-    form_id: Final = "download-appliance-form"
 
     @classmethod
     def __appliance__(cls, appliance: ApplianceInfo) -> rx.Component:
@@ -204,7 +202,7 @@ class DeleteConfirmationDialog(EventGroup):
     async def delete_appliance(state: DeleteCustomApplianceState) -> FrontendEvents:
         """Delete a custom appliance from Proxmox and remove its manifest."""
         appliance = CustomApplianceManifest.load(name=state.name)
-        await rx.run_in_thread(lambda: ProxmoxAppliances().delete_appliance(appliance=appliance))
+        await rx.run_in_thread(lambda: ProxmoxComputeTemplates().delete_appliance(appliance=appliance))
         appliance.delete()
         return [
             AppliancesState.cache_clear("custom_appliances"),
@@ -322,9 +320,13 @@ class CustomApplianceDialog(EventGroup):
     async def create_appliance(state: CustomApplianceState, form: dict) -> FrontendEvents:
         """Create the custom appliance with the configured settings and workflow steps."""
         state.form_data.update(form)
-        manifest = CustomApplianceManifest.create(
-            form=CreateCustomApplianceForm.model_validate(state.form_data),
-        )
+        if state.edit_mode:
+            manifest = CustomApplianceManifest.load(name=state.appliance_id)
+            manifest.update(form_data=CreateCustomApplianceForm.model_validate(state.form_data))
+        else:
+            manifest = CustomApplianceManifest.create(
+                form_data=CreateCustomApplianceForm.model_validate(state.form_data),
+            )
         return [
             CustomApplianceDialog.reset,
             CustomApplianceDialog.run_workflow(manifest.name),
@@ -334,16 +336,16 @@ class CustomApplianceDialog(EventGroup):
     @rx.event(background=True)
     async def run_workflow(_: rx.State, name: str) -> AsyncGenerator[EventSpec | EventCallback, None]:
         """Run the workflow for the specified custom appliance by name."""
-        appliance = CustomApplianceManifest.load(name=name)
-        appliance.set_workflow_status(status=CustomApplianceWorkflowStatus.PENDING)
+        manifest = CustomApplianceManifest.load(name=name)
+        manifest.set_workflow_status(status=WorkflowStatus.PENDING)
         yield AppliancesState.cache_clear("custom_appliances")
-        status: CustomApplianceWorkflowStatus = await rx.run_in_thread(
-            lambda: ProxmoxAppliances().run_workflow(appliance=appliance),
+        status: WorkflowStatus = await rx.run_in_thread(
+            lambda: ProxmoxComputeTemplates().run_workflow(manifest=manifest),
         )
-        if status == CustomApplianceWorkflowStatus.SUCCEEDED:
-            yield rx.toast.success(f"Appliance {appliance.name} workflow complete!")
+        if status == WorkflowStatus.SUCCEEDED:
+            yield rx.toast.success(f"Appliance {manifest.name} workflow complete!")
         else:
-            yield rx.toast.error(f"Appliance {appliance.name} workflow failed.")
+            yield rx.toast.error(f"Appliance {manifest.name} workflow failed.")
         yield AppliancesState.cache_clear("custom_appliances")
 
     @staticmethod
@@ -362,17 +364,12 @@ class CustomApplianceDialog(EventGroup):
     def __new__(cls) -> rx.Component:
         """Create and return the dialog."""
         return components.Dialog(
-            "Create Custom Appliance",
+            CustomApplianceState.dialog_title,
             components.ProgressPanels(
                 components.ProgressPanels.Step(
                     "General Configuration",
                     CustomGeneralPanel(),
                     validate=cls.validate_general,
-                ),
-                components.ProgressPanels.Step(
-                    "Network Configuration",
-                    CustomNetworkPanel(),
-                    validate=cls.validate_network,
                 ),
                 components.ProgressPanels.Step(
                     "Workflow Steps",

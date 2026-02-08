@@ -6,12 +6,12 @@ import reflex as rx
 
 from orbitlab.clients.proxmox.compute.client import ProxmoxCompute
 from orbitlab.data_types import FrontendEvents
-from orbitlab.manifest.lxc import LXCManifest
+from orbitlab.manifest.compute_instances.lxc import LXCManifest
 from orbitlab.web import components
 from orbitlab.web.utilities import EventGroup
 
 from .models import CreateLXCForm
-from .progress_panels import GeneralConfigurationPanel, NetworkConfigurationPanel, ReviewPanel
+from .progress_panels import GeneralConfigurationPanel, ReviewPanel
 from .states import LaunchLXCState, LXCsState
 
 
@@ -84,11 +84,6 @@ class LaunchApplianceDialog(EventGroup):
                     "General Configuration",
                     GeneralConfigurationPanel(),
                     validate=cls.validate_general,
-                ),
-                components.ProgressPanels.Step(
-                    "Network Configuration",
-                    NetworkConfigurationPanel(),
-                    validate=cls.validate_network,
                 ),
                 components.ProgressPanels.Step(
                     "Review & Verify",

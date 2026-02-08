@@ -33,27 +33,21 @@ class LeafCertificate(BaseModel):
 
     @property
     def key_usage(self) -> list[KeyUsageTypes]:
-        """Returns the list of key usage types for the certificate based on the server_auth flag.
-
-        Returns:
-            list[KeyUsageTypes]: The key usage types applicable to this certificate.
-        """
+        """Returns the list of key usage types for the certificate based on the server_auth flag."""
         usages = [KeyUsageTypes.DIGITAL_SIGNATURE, KeyUsageTypes.KEY_AGREEMENT]
         if self.server_auth:
             usages.append(KeyUsageTypes.KEY_ENCIPHERMENT)
         return usages
 
     def get_x509_san(self) -> x509.SubjectAlternativeName | None:
-        """
-        Returns an x509.SubjectAlternativeName object if DNS or IP SANs are present, otherwise returns None.
-
-        Returns:
-            x509.SubjectAlternativeName | None: The subject alternative name extension or None if no SANs are specified.
-        """
-        if self.san_dns or self.san_ips:
-            return x509.SubjectAlternativeName(
-                [x509.DNSName(name) for name in self.san_dns] + [x509.IPAddress(ip_address(ip)) for ip in self.san_ips],
-            )
+        """Returns an x509.SubjectAlternativeName object if SANs are present, otherwise returns None."""
+        general_names = []
+        if self.san_dns:
+            general_names.extend([x509.DNSName(value=name) for name in self.san_dns])
+        if self.san_ips:
+            general_names.extend([x509.IPAddress(value=ip_address(address=address)) for address in self.san_ips])
+        if general_names:
+            return x509.SubjectAlternativeName(general_names=general_names)
         return None
 
 

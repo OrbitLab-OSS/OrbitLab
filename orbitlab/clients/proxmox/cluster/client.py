@@ -1,8 +1,9 @@
 """Proxmox Cluster Client."""
 
 from orbitlab.clients.proxmox.base import Proxmox
+from orbitlab.clients.proxmox.base.models import ProxmoxClusterStatus
 
-from .models import CurrentHAStatus, ProxmoxClusterStatus, StorageResources
+from .models import CurrentHAStatus, StorageResources
 
 
 class ProxmoxCluster(Proxmox):

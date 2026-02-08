@@ -24,7 +24,8 @@ system_binary_paths = [
 all = "::"
 lock = "generate-lockfiles"
 venv = "export --py-resolve-format=symlinked_immutable_virtualenv --resolve=python-default"
-dev = ":reflex -- run"
+reflex = ":reflex --"
+dev = "reflex run"
 
 [source]
 root_patterns = [

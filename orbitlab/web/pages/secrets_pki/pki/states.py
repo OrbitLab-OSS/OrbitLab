@@ -25,8 +25,13 @@ class CertificatesState(CacheBuster, rx.State):
 
     @rx.var
     def intermediate_certificates(self) -> list[CertificateManifest]:
-        """Get all root certificate authority manifests from the certificates list."""
+        """Get all intermediate certificate authority manifests from the certificates list."""
         return [cert for cert in self.certificates if cert.metadata.type == CertificateTypes.INTERMEDIATE]
+
+    @rx.var
+    def leaf_certificates(self) -> list[CertificateManifest]:
+        """Get all leaf certificate manifests from the certificates list."""
+        return [cert for cert in self.certificates if cert.metadata.type == CertificateTypes.LEAF]
 
 
 class CertificateAuthoritiesState(CertificatesState):
@@ -48,9 +53,14 @@ class CertificateAuthoritiesState(CertificatesState):
 
 
 class IntermediateCertificatesState(CertificatesState):
-    """State for managing Certificate Authorities."""
+    """State for managing Intermediate Certificate Authorities."""
 
     cert_filter: Literal["All", "Valid", "Warning", "Expired"] = "All"
+
+    @rx.var
+    def names(self) -> list[str]:
+        """Get a list of intermediate certificate authority names."""
+        return [cert.name for cert in self.intermediate_certificates]
 
     @rx.var
     def filtered_certificates(self) -> list[CertificateManifest]:
@@ -60,11 +70,30 @@ class IntermediateCertificatesState(CertificatesState):
         return [ca for ca in self.intermediate_certificates if ca.metadata.status == self.cert_filter.lower()]
 
 
+class LeafCertificatesState(CertificatesState):
+    """State for managing Leaf Certificates."""
+
+    cert_filter: Literal["All", "Valid", "Warning", "Expired"] = "All"
+
+    @rx.var
+    def names(self) -> list[str]:
+        """Get a list of intermediate certificate authority names."""
+        return [cert.name for cert in self.leaf_certificates]
+
+    @rx.var
+    def filtered_certificates(self) -> list[CertificateManifest]:
+        """Filter intermediate certificates based on the current filter setting."""
+        if self.cert_filter == "All":
+            return self.leaf_certificates
+        return [ca for ca in self.leaf_certificates if ca.metadata.status == self.cert_filter.lower()]
+
+
 class ManageCertificateState(rx.State):
     """State for managing individual Certificate Authority operations."""
 
     _manifest: CertificateManifest | None = None
     revoke_disabled: bool = True
+    delete_disabled: bool = True
 
     @rx.var
     def name(self) -> str:
@@ -86,7 +115,7 @@ class ManageCertificateState(rx.State):
         if self._manifest:
             if self._manifest.metadata.common_name == self._manifest.metadata.issuer:
                 return "Self"
-            return self._manifest.metadata.common_name
+            return self._manifest.metadata.issuer
         return ""
 
     @rx.var
@@ -174,10 +203,38 @@ class ManageCertificateState(rx.State):
         return ""
 
     @rx.var
+    def certificate_chain_data(self) -> str:
+        """Get the certificate chain PEM data of the current certificate manifest, or an empty string if not set."""
+        if self._manifest:
+            return f"{self._manifest.metadata.certificate}\n{self._manifest.metadata.chain}"
+        return ""
+
+    @rx.var
+    def key_data(self) -> str:
+        """Get the certificate key PEM data of the current certificate manifest, or an empty string if not set."""
+        if self._manifest:
+            return self._manifest.get_key()
+        return ""
+
+    @rx.var
     def domain_constraint(self) -> str:
         """Get the certificate PEM data of the current certificate manifest, or an empty string if not set."""
         if self._manifest and self._manifest.metadata.domain_constraint:
             return self._manifest.metadata.domain_constraint
+        return ""
+
+    @rx.var
+    def dns_sans(self) -> str:
+        """Get the DNS Subject Alternative Names (SANs) as a newline-separated string, or an empty string if not set."""
+        if self._manifest and self._manifest.metadata.san_dns:
+            return "\n".join(self._manifest.metadata.san_dns)
+        return ""
+
+    @rx.var
+    def ip_sans(self) -> str:
+        """Get the IP Subject Alternative Names (SANs) as a newline-separated string, or an empty string if not set."""
+        if self._manifest and self._manifest.metadata.san_ips:
+            return "\n".join(self._manifest.metadata.san_ips)
         return ""
 
     @rx.event

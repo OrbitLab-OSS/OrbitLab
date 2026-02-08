@@ -15,11 +15,14 @@ class ManifestKind(StrEnum):
 
     BASE_APPLIANCE = auto()
     CUSTOM_APPLIANCE = auto()
+    BASE_IMAGE = auto()
+    CUSTOM_IMAGE = auto()
     CLUSTER = auto()
     NODE = auto()
     IPAM = auto()
     SECTOR = auto()
     LXC = auto()
+    VM = auto()
     SECRET = auto()
     CERTIFICATE = auto()
     CSR = auto()
@@ -139,7 +142,7 @@ class StorageProfile(StrEnum):
     """Enumeration of possible storage profiles in OrbitLab."""
 
     LOCAL = auto()
-    LINSTOR = auto()
+    # LINSTOR = auto()
 
 
 class StorageType(StrEnum):
@@ -183,7 +186,7 @@ class TaskStatus(StrEnum):
     STOPPED = auto()
 
 
-class CustomApplianceStepType(StrEnum):
+class WorkflowStepType(StrEnum):
     """Enumeration of possible custom appliance step types in OrbitLab."""
 
     SCRIPT = auto()
@@ -216,7 +219,7 @@ class SectorState(StrEnum):
     DELETING = auto()
 
 
-class CustomApplianceWorkflowStatus(StrEnum):
+class WorkflowStatus(StrEnum):
     """Enumeration of possible workflow statuses for custom appliances in OrbitLab."""
 
     PENDING = auto()
@@ -227,8 +230,8 @@ class CustomApplianceWorkflowStatus(StrEnum):
     FAILED = auto()
 
 
-class LXCState(StrEnum):
-    """Enumeration of possible LXC States in OrbitLab."""
+class ComputeState(StrEnum):
+    """Enumeration of possible Compute States in OrbitLab."""
 
     STARTING = auto()
     RUNNING = auto()
@@ -238,13 +241,14 @@ class LXCState(StrEnum):
     TERMINATING = auto()
 
 
-class LXCStatus(StrEnum):
-    """Enumeration of possible LXC Status requests for Proxmox."""
+class ComputeStatus(StrEnum):
+    """Enumeration of possible Compute Status requests for Proxmox."""
 
     REBOOT = auto()
     START = auto()
     STOP = auto()
     SHUTDOWN = auto()
+    TERMINATE = auto()
 
 
 class HealthCheckProtocol(StrEnum):

@@ -285,7 +285,7 @@ class Certificates:
 
         # Store private key in vault
         secret_name = Path(
-            f"certificates/{CertificateTypes.INTERMEDIATE}/{hashlib.sha256(leaf_certificate.common_name.encode()).hexdigest()}",
+            f"certificates/{CertificateTypes.LEAF}/{hashlib.sha256(leaf_certificate.common_name.encode()).hexdigest()}",
         )
         version = self.vault.create(secret_name=secret_name, value=self.__key_to_pem__(private_key))
 
@@ -346,7 +346,7 @@ class Certificates:
         san = lc.get_x509_san()
         if san:
             builder = builder.add_extension(san, critical=False)
-        csr = builder.sign(private_key, hashes.SHA256())  # pyright: ignore[reportArgumentType]
+        csr = builder.sign(private_key=private_key, algorithm=hashes.SHA256()) # pyright: ignore[reportArgumentType]
 
         manifest = CSRManifest.model_validate(
             {
@@ -414,6 +414,8 @@ class Certificates:
             .not_valid_after(not_after)
             .add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=True)
         )
+        for extension in csr.extensions._extensions:  # noqa: SLF001
+            builder = builder.add_extension(extension.value, critical=extension.critical)
 
         cert = builder.sign(private_key=signing_key, algorithm=hashes.SHA256())  # pyright: ignore[reportArgumentType]
         cert_pem = self.__cert_to_pem__(cert)

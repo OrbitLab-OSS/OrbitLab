@@ -1,10 +1,10 @@
 """Discovery Service base."""
 
 from orbitlab.clients.proxmox import ProxmoxCluster, ProxmoxNetworks
-from orbitlab.clients.proxmox.appliances import ProxmoxAppliances
+from orbitlab.clients.proxmox.compute_templates import ProxmoxComputeTemplates
 from orbitlab.data_types import SectorState
-from orbitlab.manifest.appliances import BaseApplianceManifest
 from orbitlab.manifest.cluster import ClusterManifest
+from orbitlab.manifest.compute_templates.appliances import BaseApplianceManifest
 from orbitlab.manifest.ipam import IpamManifest
 from orbitlab.manifest.nodes import NodeManifest
 from orbitlab.manifest.sector import SectorManifest
@@ -53,7 +53,7 @@ class DiscoveryService:
         """Initialize the Discovery Service."""
         self.cluster = ProxmoxCluster()
         self.networks = ProxmoxNetworks()
-        self.appliances = ProxmoxAppliances()
+        self.appliances = ProxmoxComputeTemplates()
 
     def discover_cluster(self) -> ClusterManifest | None:
         """Discover and return cluster configuration."""
