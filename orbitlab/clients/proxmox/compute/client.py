@@ -171,12 +171,13 @@ class ProxmoxCompute(Proxmox):
         self.download_vendored_image(storage=image.spec.storage, asset=asset)
         image.update(asset=asset)
 
-    def launch_lxc(self, lxc: "LXCManifest") -> None:
+    def launch_lxc(self, lxc: "LXCManifest") -> int:
         """Create an LXC compute resource."""
         vmid = self.get_next_vmid()
         params = lxc.create_lxc_params(vmid=vmid)
         self.create_lxc(node=lxc.metadata.node, params=params, start=True)
         lxc.set_status(status=ComputeStatus.START, completed=True)
+        return vmid
 
     def set_lxc_status(self, lxc: "LXCManifest", status: ComputeStatus) -> None:
         """Set the status of an LXC container."""

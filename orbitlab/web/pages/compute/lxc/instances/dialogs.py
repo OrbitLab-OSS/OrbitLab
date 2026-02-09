@@ -9,6 +9,8 @@ from orbitlab.data_types import FrontendEvents
 from orbitlab.manifest.compute_instances.lxc import LXCManifest
 from orbitlab.web import components
 from orbitlab.web.utilities import EventGroup
+from orbitlab.worker import Worker
+from orbitlab.worker.workflows import LXCCreateV1
 
 from .models import CreateLXCForm
 from .progress_panels import GeneralConfigurationPanel, ReviewPanel
@@ -42,13 +44,16 @@ class LaunchApplianceDialog(EventGroup):
         """Create the custom appliance with the configured settings and workflow steps."""
         state.form_data.update(form)
         form_data = CreateLXCForm.model_validate(state.form_data)
-        lxc = LXCManifest.create(form=form_data)
+        manifest = LXCManifest.create(form=form_data)
         state.reset()
+        await Worker.create_workflow(
+            workflow=LXCCreateV1,
+            payload=LXCCreateV1.PAYLOAD(manifest=manifest.name)
+        )
         return [
-            LaunchApplianceDialog.create_in_background(lxc),
             components.Dialog.close(LaunchApplianceDialog.dialog_id),
             components.ProgressPanels.reset(LaunchApplianceDialog.progress_id),
-            rx.toast.info(message=f"Creating LXC {lxc.name}"),
+            rx.toast.info(message=f"Creating LXC {manifest.name}"),
             LXCsState.cache_clear("running"),
         ]
 

@@ -437,12 +437,12 @@ class SplashPage(EventGroup):
             state.cluster_mode = cluster_manifest.metadata.mode
 
         for node in cluster_manifest.spec.nodes:
-            node_manifest = NodeManifest.load(name=node.name)
+            node_manifest = NodeManifest.load(name=node)
             if node_manifest.metadata.networking_configured:
                 continue
             async with state:
-                state.subtitle = f"Configuring {node.name} (this may take a few minutes)..."
-            await rx.run_in_thread(discovery_service.NodeManagement(node.name).configure_networking)
+                state.subtitle = f"Configuring {node} (this may take a few minutes)..."
+            await rx.run_in_thread(discovery_service.NodeManagement(node).configure_networking)
             node_manifest.metadata.networking_configured = True
             node_manifest.save()
 

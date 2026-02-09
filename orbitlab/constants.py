@@ -81,3 +81,7 @@ class ProxmoxRE(SimpleNamespace):
     """Constants for Proxmox-related remote execution operations."""
 
     SCRIPT: LiteralString = SCRIPT
+
+
+class EventStreams(SimpleNamespace):
+    EVENTS = "ol:events"

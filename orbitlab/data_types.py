@@ -256,3 +256,19 @@ class HealthCheckProtocol(StrEnum):
 
     HTTP = auto()
     HTTPS = auto()
+
+
+class EventStatus(StrEnum):
+    IN_PROGRESS = "in-progress"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+
+
+class WorkflowState(StrEnum):
+    PENDING = auto()
+    VALIDATING = auto()
+    PROVISIONING = auto()
+    CONFIGURING = auto()
+    FINALIZING = auto()
+    SUCCEEDED = auto()
+    FAILED = auto()

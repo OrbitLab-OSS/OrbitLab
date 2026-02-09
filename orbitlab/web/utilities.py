@@ -64,7 +64,7 @@ class EventGroup:
 
 async def _get_user_state(client_token: str, state: type[T]) -> T:
     manager = rx.state.get_state_manager()
-    base_state = await manager.get_state(client_token)
+    base_state = await manager.get_state(f"{client_token}_{state.get_full_name()}")
     return await base_state.get_state(state)
 
 

@@ -101,7 +101,7 @@ class Defaults(BaseModel):
 class ClusterSpec(Spec):
     """Specification for an OrbitLab cluster."""
 
-    nodes: list[Ref] = Field(default_factory=list)
+    nodes: list[str] = Field(default_factory=list)
     backplane: Backplane
     sectors: dict[int, Ref] = Field(default_factory=dict)
     defaults: Defaults = Defaults()
@@ -115,7 +115,7 @@ class ClusterManifest(BaseManifest[ClusterMetadata, ClusterSpec]):
     @property
     def exit_nodes(self) -> str:
         """Return a comma-separated string of all cluster node names."""
-        return ",".join([node.name for node in self.spec.nodes])
+        return ",".join([node for node in self.spec.nodes])
 
     def assign_ip(self, vmid: int) -> IPv4Interface:
         """Assign an IP address to the given VMID using the backplane IPAM manifest."""
@@ -143,17 +143,17 @@ class ClusterManifest(BaseManifest[ClusterMetadata, ClusterSpec]):
 
     def add_node(self, node: NodeManifest) -> None:
         """Add a node to the cluster and update the backplane controller peers."""
-        self.spec.nodes.append(node.to_ref())
+        self.spec.nodes.append(node.name)
         self.spec.backplane.controller.peers.append(node.metadata.ip)
         self.save()
 
     def list_nodes(self) -> list[str]:
         """Return a list of node names in this cluster."""
-        return [node.name for node in self.spec.nodes]
+        return [node for node in self.spec.nodes]
 
     def get_nodes(self) -> list[NodeManifest]:
         """Return a list of all NodeManifest objects for nodes in this cluster."""
-        return [NodeManifest.load(name=node.name) for node in self.spec.nodes]
+        return [NodeManifest.load(name=node) for node in self.spec.nodes]
 
     def default_node(self) -> NodeManifest:
         """Get the default node for the cluster."""
