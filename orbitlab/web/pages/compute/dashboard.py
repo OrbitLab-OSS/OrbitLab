@@ -4,15 +4,15 @@ from typing import ClassVar, Literal
 
 import reflex as rx
 
-from orbitlab.clients.proxmox import ProxmoxCompute
+from orbitlab.proxmox import ProxmoxCompute
 from orbitlab.web import components
 
-from .layout import compute_page
+from orbitlab.web.layout import orbitlab_page
 from .lxc.instances.dialogs import LaunchApplianceDialog
 
 
 @rx.page("/compute")
-@compute_page
+@orbitlab_page
 def compute_dashboard() -> rx.Component:
     """Proxmox Nodes Page."""
     return rx.el.div(

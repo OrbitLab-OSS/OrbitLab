@@ -1,8 +1,11 @@
 """Orbitlab VM Instances Models."""
 
-from pydantic import BaseModel
+from typing import Self
+
+from pydantic import BaseModel, model_validator
 
 from orbitlab.manifest.compute_templates.images import BaseImageManifest, CustomImageManifest
+from orbitlab.services import SecretVault
 
 
 class CreateVMForm(BaseModel):
@@ -25,3 +28,9 @@ class CreateVMForm(BaseModel):
         if self.image in BaseImageManifest.get_existing():
             return BaseImageManifest.load(name=self.image).volume_id
         return CustomImageManifest.load(name=self.image).volume_id
+
+    @model_validator(mode="after")
+    def ensure_password(self) -> Self:
+        if not self.password:
+            self.password = SecretVault.generate_random_password()
+        return self

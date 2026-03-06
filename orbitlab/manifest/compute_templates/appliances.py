@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Annotated, Self
 
 from pydantic import Field
 
-from orbitlab.data_types import ManifestKind, WorkflowStatus
+from orbitlab.data_types import ManifestKind
 from orbitlab.manifest.base import BaseManifest, Metadata, Spec
 from orbitlab.manifest.serialization import SerializeEnum
 from orbitlab.services.vault.client import SecretVault
@@ -13,7 +13,7 @@ from orbitlab.services.vault.client import SecretVault
 from .base import ComputeTemplateSpec, WorkflowUtilities
 
 if TYPE_CHECKING:
-    from orbitlab.clients.proxmox.compute_templates.models import ApplianceInfo, StoredAppliance
+    from orbitlab.proxmox.compute_templates.models import ApplianceInfo, StoredAppliance
     from orbitlab.web.pages.compute.lxc.appliances.models import CreateCustomApplianceForm
 
 
@@ -29,6 +29,7 @@ class BaseApplianceSpec(Spec):
 
     node: str
     template: str
+    volume_id: str = ""
     storage: str
 
 
@@ -36,11 +37,6 @@ class BaseApplianceManifest(BaseManifest[BaseApplianceMetadata, BaseApplianceSpe
     """Base LXC Appliance Manifest."""
 
     kind: Annotated[ManifestKind, SerializeEnum] = ManifestKind.BASE_APPLIANCE
-
-    @property
-    def ostemplate(self) -> str:
-        """Return the Proxmox ostemplate string for this appliance."""
-        return f"{self.spec.storage}:vztmpl/{self.spec.template}"
 
     @classmethod
     def create_from_appliance_info(
@@ -64,20 +60,20 @@ class BaseApplianceManifest(BaseManifest[BaseApplianceMetadata, BaseApplianceSpe
         manifest.save()
         return manifest
 
-    @classmethod
-    def create_from_stored_appliance(cls, node: str, appliance: "StoredAppliance") -> Self:
-        """Create a BaseApplianceManifest from a stored appliance and save it."""
-        return cls(
-            name=cls._generate_id("la"),
-            metadata=BaseApplianceMetadata(
-                description="",
-            ),
-            spec=BaseApplianceSpec(
-                node=node,
-                template=appliance.template,
-                storage=appliance.storage,
-            ),
-        )
+    # @classmethod
+    # def create_from_stored_appliance(cls, node: str, appliance: "StoredAppliance") -> Self:
+    #     """Create a BaseApplianceManifest from a stored appliance and save it."""
+    #     return cls(
+    #         name=cls._generate_id("la"),
+    #         metadata=BaseApplianceMetadata(
+    #             description="",
+    #         ),
+    #         spec=BaseApplianceSpec(
+    #             node=node,
+    #             template=appliance.template,
+    #             storage=appliance.storage,
+    #         ),
+    #     )
 
 
 class CustomApplianceMetadata(Metadata):
@@ -87,16 +83,13 @@ class CustomApplianceMetadata(Metadata):
     created_on: datetime = datetime.now(UTC)
     last_update: datetime | None = None
     last_execution: datetime | None = None
-    status: Annotated[WorkflowStatus, SerializeEnum] = Field(
-        default=WorkflowStatus.PENDING,
-    )
-    logs: list[str] = Field(default_factory=list)
 
 
 class CustomApplianceSpec(ComputeTemplateSpec):
     """Specification for a custom appliance template."""
 
     base_appliance: str
+    volume_id: str = ""
     node: str
     storage: str
     rootfs: str
@@ -111,11 +104,6 @@ class CustomApplianceManifest(BaseManifest[CustomApplianceMetadata, CustomApplia
 
     kind: Annotated[ManifestKind, SerializeEnum] = ManifestKind.CUSTOM_APPLIANCE
 
-    @property
-    def ostemplate(self) -> str:
-        """Return the Proxmox volume ID string for this custom appliance."""
-        return f"{self.spec.storage}:vztmpl/{self.name}.tar.gz"
-
     def workflow_params(self, vmid: int) -> dict[str, str | int]:
         """Generate the parameters required to create a Proxmox LXC container from this manifest."""
         base = BaseApplianceManifest.load(name=self.spec.base_appliance)
@@ -128,7 +116,7 @@ class CustomApplianceManifest(BaseManifest[CustomApplianceMetadata, CustomApplia
             "vmid": vmid,
             "memory": f"{self.spec.memory * 1024}",
             "swap": f"{self.spec.swap * 1024}",
-            "ostemplate": base.ostemplate,
+            "ostemplate": base.spec.volume_id,
             "hostname": f"oca-wf-{vmid}",
             "rootfs": f"{self.spec.rootfs}:8",
             "password": SecretVault.generate_random_password(),
@@ -154,7 +142,7 @@ class CustomApplianceManifest(BaseManifest[CustomApplianceMetadata, CustomApplia
     def create(cls, form_data: "CreateCustomApplianceForm") -> Self:
         """Create a manifest from the CreateCustomAppliance form data."""
         manifest = cls(
-            name=cls._generate_id(prefix="lai"),
+            name=cls._generate_id(prefix="la"),
             metadata=CustomApplianceMetadata(name=form_data.name),
             spec=CustomApplianceSpec(
                 base_appliance=form_data.base_appliance,

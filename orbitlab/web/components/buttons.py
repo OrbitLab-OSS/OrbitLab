@@ -81,7 +81,7 @@ class IconButtonProps(TypedDict, total=False):
 class IconButton:
     """A button component that displays only an icon."""
 
-    def __new__(cls, icon: str, **props: Unpack[IconButtonProps]) -> rx.Component:
+    def __new__(cls, icon: str | rx.Var[str], **props: Unpack[IconButtonProps]) -> rx.Component:
         """Create and return the icon button component."""
         class_name = props.pop("class_name", "")
         danger = props.pop("danger", False)

@@ -1,19 +1,15 @@
 """OrbitLab LXC Tables."""
 
-from datetime import UTC, datetime
-
 import reflex as rx
 
-from orbitlab.clients.proxmox.compute_templates import ProxmoxComputeTemplates
 from orbitlab.data_types import FrontendEvents, WorkflowStatus
 from orbitlab.manifest.compute_templates.appliances import BaseApplianceManifest, CustomApplianceManifest
 from orbitlab.manifest.compute_templates.workflow_models import FileStep, ScriptStep
-from orbitlab.services.discovery import DiscoveryService
 from orbitlab.web import components
-from orbitlab.web.utilities import EventGroup
+from orbitlab.web.utilities import EventGroup, get_worker
 
-from .dialogs import CustomApplianceDialog, CustomApplianceState, DeleteConfirmationDialog
-from .states import AppliancesState
+from .dialogs import CustomApplianceDialog, CustomApplianceState, DeleteApplianceDialog, WorkflowLogsViewDialog
+from .states import BaseApplianceTableState, CustomApplianceTableState
 
 
 class BaseApplianceTable(EventGroup):
@@ -21,42 +17,28 @@ class BaseApplianceTable(EventGroup):
 
     @staticmethod
     @rx.event
-    async def run_appliance_discovery(_: rx.State) -> FrontendEvents:
-        """Run appliance discovery and refresh the base appliances list."""
-        await rx.run_in_thread(DiscoveryService().discover_appliances)
-        return AppliancesState.cache_clear("base_appliances")
-
-    @staticmethod
-    @rx.event(background=True)
-    async def delete(_: rx.State, name: str) -> FrontendEvents:
-        """Run appliance discovery and refresh the base appliances list."""
-        appliance = BaseApplianceManifest.load(name=name)
-        await rx.run_in_thread(lambda: ProxmoxComputeTemplates().delete_appliance(appliance=appliance))
-        appliance.delete()
-        return [
-            AppliancesState.cache_clear("base_appliances"),
-            rx.toast.success(f"Appliance {name} successfully deleted."),
-        ]
-
-    @staticmethod
-    @rx.event(background=True)
     async def re_download_appliance(_: rx.State, name: str) -> FrontendEvents:
         """Re-download the specified appliance by name."""
-        appliance = BaseApplianceManifest.load(name=name)
-        await rx.run_in_thread(lambda: ProxmoxComputeTemplates().download_appliance(appliance=appliance))
-        appliance.metadata.download_date = datetime.now(UTC)
-        appliance.save()
-        return [
-            AppliancesState.cache_clear("base_appliances"),
-            rx.toast.success(f"Appliance {name} download complete!"),
-        ]
+        worker = get_worker()
+        error = await worker.create_workflow(
+            name="appliance.download",
+            version="v1",
+            payload={"manifest": name, "update": True},
+        )
+        if error:
+            return rx.toast.error(error)
+        return rx.toast.info(f"Updating {name}...")
 
     @classmethod
     def __table_row__(cls, appliance: BaseApplianceManifest) -> rx.Component:
         """Create and return the table row component."""
         return rx.el.tr(
             rx.el.td(
-                appliance.name,
+                rx.el.div(
+                    rx.text(appliance.spec.template, class_name="text-base"),
+                    rx.text(appliance.name, class_name="text-xs text-gray-500"),
+                    class_name="flex-col space-y-1 items-center",
+                ),
                 class_name="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-800 dark:text-gray-200",
             ),
             rx.el.td(
@@ -76,10 +58,7 @@ class BaseApplianceTable(EventGroup):
                     components.Buttons.Icon("ellipsis-vertical"),
                     components.Menu.Item(
                         "Re-Download",
-                        on_click=[
-                            rx.toast.info(f"Re-downloading {appliance.name}..."),
-                            BaseApplianceTable.re_download_appliance(appliance.name),
-                        ],
+                        on_click=BaseApplianceTable.re_download_appliance(appliance.name),
                     ),
                     components.Menu.Item(
                         "Create Custom Appliance",
@@ -88,7 +67,7 @@ class BaseApplianceTable(EventGroup):
                     components.Menu.Separator(),
                     components.Menu.Item(
                         "Delete",
-                        on_click=cls.delete(appliance.name),
+                        on_click=DeleteApplianceDialog.confirm(appliance.name),
                         danger=True,
                     ),
                 ),
@@ -120,7 +99,7 @@ class BaseApplianceTable(EventGroup):
                         class_name="bg-white/60 dark:bg-white/[0.03] backdrop-blur-sm",
                     ),
                     rx.el.tbody(
-                        rx.foreach(AppliancesState.base_appliances, lambda app: cls.__table_row__(app)),
+                        rx.foreach(BaseApplianceTableState.base_appliances, lambda app: cls.__table_row__(app)),
                         class_name=(
                             "divide-y divide-gray-200 dark:divide-white/[0.08] bg-white/70 dark:bg-[#0E1015]/60 "
                             "backdrop-blur-sm"
@@ -144,10 +123,9 @@ class BaseApplianceTable(EventGroup):
                 rx.el.div(
                     rx.el.h3("Base Appliances", class_name="text-center"),
                     rx.el.div(
-                        components.Buttons.Icon("refresh-ccw", on_click=AppliancesState.cache_clear("base_appliances")),
-                        components.Menu(
-                            components.Buttons.Primary("Manage", icon="chevron-down"),
-                            components.Menu.Item("Rerun Discovery", on_click=cls.run_appliance_discovery),
+                        components.Buttons.Icon(
+                            "refresh-ccw",
+                            on_click=BaseApplianceTableState.cache_clear("base_appliances"),
                         ),
                         class_name="flex space-x-4",
                     ),
@@ -183,6 +161,7 @@ class CustomApplianceTable(EventGroup):
     @classmethod
     def __table_row__(cls, appliance: CustomApplianceManifest) -> rx.Component:
         """Create and return the table row component."""
+        status = CustomApplianceTableState.workflow_states.get(appliance.name, "Never Ran").to(str)
         return rx.el.tr(
             rx.el.td(
                 rx.el.div(
@@ -207,16 +186,16 @@ class CustomApplianceTable(EventGroup):
                 components.HoverCard(
                     rx.el.div(
                         rx.match(
-                            appliance.metadata.status,
+                            status,
                             (
                                 WorkflowStatus.SUCCEEDED,
-                                components.Badge(appliance.metadata.status.capitalize(), color_scheme="green"),
+                                components.Badge(status.capitalize(), color_scheme="green"),
                             ),
                             (
                                 WorkflowStatus.FAILED,
-                                components.Badge(appliance.metadata.status.capitalize(), color_scheme="red"),
+                                components.Badge(status.capitalize(), color_scheme="red"),
                             ),
-                            components.Badge(appliance.metadata.status.capitalize(), color_scheme="blue"),
+                            components.Badge(status.capitalize(), color_scheme="blue"),
                         ),
                     ),
                     rx.cond(
@@ -251,8 +230,13 @@ class CustomApplianceTable(EventGroup):
                     ),
                     components.Menu.Separator(),
                     components.Menu.Item(
+                        "View Logs",
+                        on_click=WorkflowLogsViewDialog.view_workflow_logs(appliance.name),
+                    ),
+                    components.Menu.Separator(),
+                    components.Menu.Item(
                         "Delete",
-                        on_click=DeleteConfirmationDialog.confirm_deletion(appliance.name),
+                        on_click=DeleteApplianceDialog.confirm(appliance.name),
                         danger=True,
                     ),
                 ),
@@ -286,7 +270,7 @@ class CustomApplianceTable(EventGroup):
                         class_name="bg-white/60 dark:bg-white/[0.03] backdrop-blur-sm",
                     ),
                     rx.el.tbody(
-                        rx.foreach(AppliancesState.custom_appliances, lambda app: cls.__table_row__(app)),
+                        rx.foreach(CustomApplianceTableState.custom_appliances, lambda app: cls.__table_row__(app)),
                         class_name=(
                             "divide-y divide-gray-200 dark:divide-white/[0.08] bg-white/70 dark:bg-[#0E1015]/60 "
                             "backdrop-blur-sm"
@@ -307,13 +291,13 @@ class CustomApplianceTable(EventGroup):
                 ),
             ),
             CustomApplianceDialog(),
-            DeleteConfirmationDialog(),
+            WorkflowLogsViewDialog(),
             header=components.Card.Header(
                 rx.el.div(
                     rx.el.h3("Custom Appliances", class_name="text-center"),
                     components.Buttons.Icon(
                         "refresh-ccw",
-                        on_click=AppliancesState.cache_clear("custom_appliances"),
+                        on_click=CustomApplianceTableState.cache_clear("custom_appliances"),
                     ),
                     class_name="w-full flex justify-between items-center",
                 ),

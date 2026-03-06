@@ -1,13 +1,12 @@
 """Discovery Service base."""
 
-from orbitlab.clients.proxmox import ProxmoxCluster, ProxmoxNetworks
-from orbitlab.clients.proxmox.compute_templates import ProxmoxComputeTemplates
 from orbitlab.data_types import SectorState
 from orbitlab.manifest.cluster import ClusterManifest
 from orbitlab.manifest.compute_templates.appliances import BaseApplianceManifest
-from orbitlab.manifest.ipam import IpamManifest
 from orbitlab.manifest.nodes import NodeManifest
 from orbitlab.manifest.sector import SectorManifest
+from orbitlab.proxmox import ProxmoxCluster, ProxmoxNetworks
+from orbitlab.proxmox.compute_templates import ProxmoxComputeTemplates
 
 
 class NodeManagement:
@@ -68,7 +67,7 @@ class DiscoveryService:
         cluster_manifest = ClusterManifest.create(
             cluster=status.get_cluster(),
             mtu=self.networks.get_mtu(),
-            reserved_tags=[vnet.tag for vnet in self.networks.list_vnets()],
+            reserved_tags=self.networks.list_vnets().get_all_tags(),
         )
         ha_status = self.cluster.get_ha_status()
         storage_resources = self.cluster.list_storage_resources()
@@ -88,7 +87,7 @@ class DiscoveryService:
         cluster.spec.backplane.controller.asn = backplane_info.controller.asn
         cluster.spec.backplane.controller.peers = backplane_info.controller.peers
         cluster.spec.backplane.cidr_block = backplane_info.subnet.cidr
-        cluster.spec.backplane.gateway = backplane_info.subnet.gateway
+        cluster.spec.backplane.gateway_address = backplane_info.subnet.gateway
         cluster.save()
 
     def discover_sectors(self, cluster: ClusterManifest) -> None:
@@ -97,25 +96,6 @@ class DiscoveryService:
         for sector in self.networks.list_sectors():
             if sector.vnet.name in existing:
                 continue
-            ipam = IpamManifest.model_validate(
-                {
-                    "name": f"ipam-{sector.vnet.name}",
-                    "metadata": {
-                        "sector_name": sector.vnet.alias,
-                        "sector_id": sector.vnet.name,
-                    },
-                    "spec": {
-                        "subnets": [
-                            {
-                                "cidr_block": subnet.cidr,
-                                "name": f"subnet-{index}",
-                            }
-                            for index, subnet in enumerate(sector.subnets.root)
-                        ],
-                    },
-                },
-            )
-            ipam.save()
             sector_manifest = SectorManifest.model_validate(
                 {
                     "name": sector.vnet.name,
@@ -133,28 +113,27 @@ class DiscoveryService:
                             }
                             for index, subnet in enumerate(sector.subnets.root)
                         ],
-                        "ipam": ipam.to_ref(),
                         "gateway_vmid": sector.gateway_vmid,
                     },
                 },
             )
             sector_manifest.save()
-            cluster.add_sector(tag=sector.vnet.tag, ref=sector_manifest.to_ref())
-            for vmid, address in sector.assignments.items():
-                if subnet := ipam.get_subnet_by_ip(address=address):
-                    subnet.add_assignment(vmid=vmid, address=address)
-            ipam.save()
+            # cluster.add_sector(tag=sector.vnet.tag, ref=sector_manifest.to_ref())
+            # for vmid, address in sector.assignments.items():
+            #     if subnet := ipam.get_subnet_by_ip(address=address):
+            #         subnet.add_assignment(vmid=vmid, address=address)
+            # ipam.save()
 
     def discover_appliances(self) -> None:
         """Discover and create manifests for stored appliances in the cluster."""
         cluster = ClusterManifest.load(name=next(iter(ClusterManifest.get_existing())))
         existing_appliances = BaseApplianceManifest.get_existing()
-        for node in cluster.get_nodes():
-            for storage in node.spec.storage:
-                for appliance in self.appliances.list_stored_appliances(node=node.name, storage=storage.name):
-                    manifest = BaseApplianceManifest.create_from_stored_appliance(
-                        node_ref=node.to_ref(),
-                        appliance=appliance,
-                    )
-                    if manifest.name not in existing_appliances:
-                        manifest.save()
+        # for node in cluster.get_nodes():
+        #     for storage in node.spec.storage:
+        #         for appliance in self.appliances.list_stored_appliances(node=node.name, storage=storage.name):
+                    # manifest = BaseApplianceManifest.create_from_stored_appliance(
+                    #     node_ref=node.to_ref(),
+                    #     appliance=appliance,
+                    # )
+                    # if manifest.name not in existing_appliances:
+                    #     manifest.save()

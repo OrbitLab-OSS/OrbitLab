@@ -6,28 +6,32 @@ from typing import Final
 import reflex as rx
 
 from orbitlab.data_types import FrontendEvents, KeyUsageTypes
-from orbitlab.manifest.secrets import CertificateManifest
-from orbitlab.services.pki.client import Certificates
-from orbitlab.services.pki.models import IntermediateCA, LeafCertificate, Subject
+from orbitlab.manifest.pki import (
+    IntermediateCertificateManifest,
+    LeafCertificateManifest,
+    RootCertificateManifest,
+    Subject,
+)
 from orbitlab.web import components
-from orbitlab.web.utilities import EventGroup, custom_download
+from orbitlab.web.utilities import EventGroup, custom_download, get_worker
 
 from .states import (
-    CertificateAuthoritiesState,
     IntermediateCertificatesState,
-    LeafCertificatesState,
-    ManageCertificateState,
+    ManageIntermediateCertificateState,
+    ManageLeafCertificateState,
+    ManageRootCertificateState,
+    RootCertificatesState,
 )
 
 
-class CreateCertificateAuthorityDialog(EventGroup):
+class CreateRootCertificateDialog(EventGroup):
     """Dialog component for creating a new certificate authority."""
 
     @staticmethod
     @rx.event
-    async def create_certificate_authority(state: CertificateAuthoritiesState, form: dict) -> FrontendEvents:
+    async def create_certificate_authority(_: rx.State, form: dict) -> FrontendEvents:
         """Create a new certificate authority from form data."""
-        manifest = Certificates().create_certificate_authority(
+        manifest = RootCertificateManifest.create(
             subject=Subject(
                 common_name=form["common_name"],
                 org=form["org"],
@@ -38,8 +42,18 @@ class CreateCertificateAuthorityDialog(EventGroup):
             ),
             key_usage=[KeyUsageTypes(usage) for usage in json.loads(form["key_usage"])],
         )
-        state.certificate_authorities.append(manifest)
-        return components.Dialog.close(CreateCertificateAuthorityDialog.dialog_id)
+        worker = get_worker()
+        error = await worker.create_workflow(
+            name="pki.create-root",
+            version="v1",
+            payload={"manifest": manifest.name},
+        )
+        if error:
+            return rx.toast.error(error)
+        return [
+            rx.toast.info(f"Creating {form['common_name']}..."),
+            components.Dialog.close(CreateRootCertificateDialog.dialog_id),
+        ]
 
     dialog_id: Final = "create-certificate-authority-dialog"
     form_id: Final = "create-certificate-authority-form"
@@ -56,9 +70,11 @@ class CreateCertificateAuthorityDialog(EventGroup):
                         components.Input(
                             placeholder="My Root CA 1",
                             pattern=r"[A-Za-z0-9_.\-\* ]{1,64}(?:\.[A-Za-z0-9_.\-\* ]{1,64})*",
+                            auto_complete="root-ca-common-name",
                             form=cls.form_id,
                             name="common_name",
                             required=True,
+                            class_name="w-full"
                         ),
                     ),
                     components.FieldSet.Field(
@@ -69,6 +85,7 @@ class CreateCertificateAuthorityDialog(EventGroup):
                             form=cls.form_id,
                             name="org",
                             required=True,
+                            class_name="w-full"
                         ),
                     ),
                     components.FieldSet.Field(
@@ -79,6 +96,7 @@ class CreateCertificateAuthorityDialog(EventGroup):
                             form=cls.form_id,
                             name="org_unit",
                             required=True,
+                            class_name="w-full"
                         ),
                     ),
                     components.FieldSet.Field(
@@ -89,6 +107,7 @@ class CreateCertificateAuthorityDialog(EventGroup):
                             form=cls.form_id,
                             name="country",
                             required=True,
+                            class_name="w-full"
                         ),
                     ),
                     components.FieldSet.Field(
@@ -99,6 +118,7 @@ class CreateCertificateAuthorityDialog(EventGroup):
                             form=cls.form_id,
                             name="state_or_province",
                             required=True,
+                            class_name="w-full"
                         ),
                     ),
                     components.FieldSet.Field(
@@ -109,6 +129,7 @@ class CreateCertificateAuthorityDialog(EventGroup):
                             form=cls.form_id,
                             name="locality",
                             required=True,
+                            class_name="w-full"
                         ),
                     ),
                 ),
@@ -139,87 +160,102 @@ class CreateCertificateAuthorityDialog(EventGroup):
             rx.el.div(
                 components.Buttons.Secondary("Cancel", on_click=lambda: components.Dialog.close(cls.dialog_id)),
                 components.Buttons.Primary("Submit", form=cls.form_id),
-                class_name="w-full flex justify-end mt-4 space-x-3",
+                class_name="w-full flex justify-end mt-4 space-x-3 my-8",
             ),
             dialog_id=cls.dialog_id,
             class_name="max-w-[50vw] w-[50vw] max-h-[75vh] h-[75vh]",
         )
 
 
-class ConfirmRevokeCADialog(EventGroup):
-    """Dialog component for confirming certificate authority revocation."""
+class DeleteRootCertificateDialog(EventGroup):
+    """Dialog component for confirming certificate authority deletion."""
 
     @staticmethod
     @rx.event
-    async def revoke_ca(state: ManageCertificateState) -> FrontendEvents:
-        """Revoke the certificate authority and close related dialogs."""
-        # TODO: Actually Revoke cert
-        state.reset()
+    async def delete(state: ManageRootCertificateState) -> FrontendEvents:
+        """Delete the certificate authority and close related dialogs."""
+        worker = get_worker()
+        error = await worker.create_workflow(
+            name="pki.delete",
+            version="v1",
+            payload={"manifest": state.id},
+        )
+        if error:
+            return rx.toast.error(error)
         return [
-            components.Dialog.close(ConfirmRevokeCADialog.dialog_id),
-            components.Dialog.close(ManageCertificateAuthorityDialog.dialog_id),
+            rx.toast.info(f"Deleting {state.common_name}..."),
+            components.Dialog.close(ManageRootCertificateDialog.dialog_id),
+            DeleteRootCertificateDialog.close,
         ]
 
     @staticmethod
     @rx.event
-    async def cancel_revoke(state: ManageCertificateState) -> FrontendEvents:
-        """Cancel the certificate authority revocation process."""
-        state.revoke_disabled = True
-        return components.Dialog.close(ConfirmRevokeCADialog.dialog_id)
+    async def close(state: ManageRootCertificateState) -> FrontendEvents:
+        """Cancel the certificate authority deletion process."""
+        state.reset()
+        return components.Dialog.close(DeleteRootCertificateDialog.dialog_id)
 
     @staticmethod
     @rx.event
-    async def ensure_ca_names_match(state: ManageCertificateState, value: str) -> None:
-        """Enable or disable the revoke button based on name match."""
-        if state.manifest.name == value:
-            state.revoke_disabled = False
+    async def ensure_ca_names_match(state: ManageRootCertificateState, value: str) -> None:
+        """Enable or disable the delete button based on name match."""
+        if state.common_name == value:
+            state.delete_disabled = False
         else:
-            state.revoke_disabled = True
+            state.delete_disabled = True
 
-    dialog_id: Final = "confirm-revoke-ca-dialog"
+    dialog_id: Final = "delete-root-ca-dialog"
 
     def __new__(cls) -> rx.Component:
         """Create and return dialog component."""
         return components.Dialog(
-            f"Revoke {ManageCertificateState.name}",
+            f"Revoke {ManageRootCertificateState.common_name}",
             rx.el.div(
                 rx.text(
-                    "Revoking this Root CA will invalidate all Intermediate CAs and leaf certificates that uses this "
-                    "certificate as a trust anchor.",
+                    "Deleting this Root CA will will not delete and signed Intermediate CAs, but it can no longer be "
+                    "used as a trust anchor for new compute instances.",
                 ),
                 rx.text(
-                    "If you are sure you want to revoke ",
-                    rx.el.span(ManageCertificateState.name, class_name="font-bold"),
-                    rx.el.span(" type its name below."),
+                    "If you are sure you want to delete ",
+                    rx.el.span(ManageRootCertificateState.common_name, class_name="font-bold"),
+                    rx.el.span(", type its name below."),
                 ),
                 class_name="w-full flex-col space-y-6 my-8",
             ),
             components.Input(
-                placeholder=ManageCertificateState.name,
+                placeholder=ManageRootCertificateState.common_name,
                 on_change=cls.ensure_ca_names_match,
             ),
             rx.el.div(
-                components.Buttons.Secondary("Cancel", on_click=cls.cancel_revoke),
+                components.Buttons.Secondary("Cancel", on_click=cls.close),
                 components.Buttons.Primary(
                     "Confirm",
-                    disabled=ManageCertificateState.revoke_disabled,
-                    on_click=cls.revoke_ca,
+                    disabled=ManageRootCertificateState.delete_disabled,
+                    on_click=cls.delete,
                 ),
-                class_name="w-full flex justify-end space-x-4",
+                class_name="w-full flex justify-end space-x-4 my-8",
             ),
             dialog_id=cls.dialog_id,
+            class_name="max-w-[50vw] w-fit",
         )
 
 
-class ManageCertificateAuthorityDialog:
+class ManageRootCertificateDialog(EventGroup):
     """Dialog component for managing certificate authority details."""
+
+    @staticmethod
+    @rx.event
+    async def manage(state: ManageRootCertificateState, name: str) -> FrontendEvents:
+        """Load and display the root certificate management dialog."""
+        state.manifest = RootCertificateManifest.load(name=name)
+        return components.Dialog.open(ManageRootCertificateDialog.dialog_id)
 
     dialog_id: Final = "manage-certificate-authority-dialog"
 
     def __new__(cls) -> rx.Component:
         """Create and return dialog component."""
         return components.Dialog(
-            f"Manage {ManageCertificateState.name}",
+            f"Manage {ManageRootCertificateState.common_name}",
             rx.el.div(
                 rx.el.div(
                     components.Menu(
@@ -230,15 +266,15 @@ class ManageCertificateAuthorityDialog:
                         components.Menu.Item(
                             "Download Certificate",
                             on_click=custom_download(
-                                data=ManageCertificateState.certificate_data,
-                                filename=f"{ManageCertificateState.name.lower().replace(' ', '_')}.crt",
+                                data=ManageRootCertificateState.certificate_data,
+                                filename=f"{ManageRootCertificateState.download_name}.crt",
                                 mime_type="application/x-pem-file",
                             ),
                         ),
                         components.Menu.Separator(),
                         components.Menu.Item(
-                            "Revoke",
-                            on_click=components.Dialog.close(ConfirmRevokeCADialog.dialog_id),
+                            "Delete",
+                            on_click=components.Dialog.open(DeleteRootCertificateDialog.dialog_id),
                             class_name="text-red-400 hover:text-red-500 hover:bg-red-500/10 hover:border-red-500/50",
                         ),
                     ),
@@ -252,55 +288,56 @@ class ManageCertificateAuthorityDialog:
                     rx.data_list.root(
                         rx.data_list.item(
                             rx.data_list.label("Common Name"),
-                            rx.data_list.value(ManageCertificateState.common_name),
+                            rx.data_list.value(ManageRootCertificateState.common_name),
                         ),
                         rx.data_list.item(
                             rx.data_list.label("Issuer"),
-                            rx.data_list.value(ManageCertificateState.issuer),
+                            rx.data_list.value(ManageRootCertificateState.issuer),
                         ),
                         rx.data_list.item(
                             rx.data_list.label("Serial Number"),
-                            rx.data_list.value(ManageCertificateState.serial_number),
+                            rx.data_list.value(ManageRootCertificateState.serial_number),
                         ),
                         rx.data_list.item(
                             rx.data_list.label("Organization"),
-                            rx.data_list.value(ManageCertificateState.org),
+                            rx.data_list.value(ManageRootCertificateState.org),
                         ),
                         rx.data_list.item(
                             rx.data_list.label("Organizational Unit"),
-                            rx.data_list.value(ManageCertificateState.org_unit),
+                            rx.data_list.value(ManageRootCertificateState.org_unit),
                         ),
                         rx.data_list.item(
                             rx.data_list.label("Country"),
-                            rx.data_list.value(ManageCertificateState.country),
+                            rx.data_list.value(ManageRootCertificateState.country),
                         ),
                         rx.data_list.item(
                             rx.data_list.label("State or Province"),
-                            rx.data_list.value(ManageCertificateState.state_or_province),
+                            rx.data_list.value(ManageRootCertificateState.state_or_province),
                         ),
                         rx.data_list.item(
                             rx.data_list.label("Locality"),
-                            rx.data_list.value(ManageCertificateState.locality),
+                            rx.data_list.value(ManageRootCertificateState.locality),
                         ),
                         rx.data_list.item(
                             rx.data_list.label("Not Before"),
-                            rx.data_list.value(rx.moment(ManageCertificateState.not_before)),
+                            rx.data_list.value(rx.moment(ManageRootCertificateState.not_before)),
                         ),
                         rx.data_list.item(
                             rx.data_list.label("Not After"),
-                            rx.data_list.value(rx.moment(ManageCertificateState.not_after)),
+                            rx.data_list.value(rx.moment(ManageRootCertificateState.not_after)),
                         ),
                         rx.data_list.item(
                             rx.data_list.label("Fingerprint"),
-                            rx.data_list.value(ManageCertificateState.fingerprint),
+                            rx.data_list.value(ManageRootCertificateState.fingerprint),
                         ),
                         rx.data_list.item(
                             rx.data_list.label("Key Usages"),
                             rx.data_list.value(
                                 rx.foreach(
-                                    ManageCertificateState.key_usage,
+                                    ManageRootCertificateState.key_usage,
                                     lambda usage: components.Badge(usage, color_scheme="blue"),
                                 ),
+                                class_name="flex-wrap",
                             ),
                         ),
                         class_name="max-h-[35vh]",
@@ -318,17 +355,28 @@ class CreateIntermediateCADialog(EventGroup):
 
     @staticmethod
     @rx.event
-    async def create_intermediate_ca(state: IntermediateCertificatesState, form: dict) -> FrontendEvents:
+    async def create_intermediate_ca(_: rx.State, form: dict) -> FrontendEvents:
         """Create a new intermediate certificate authority from form data."""
-        manifest = Certificates().create_intermediate_certificate(
-            IntermediateCA(
-                common_name=form["common_name"],
-                root_ca=form["root_ca"],
-                domain_constraint=form["domain_constraint"],
-            ),
+        root_manifest = RootCertificateManifest.load(name=form["root_ca"])
+        subject = root_manifest.spec.subject
+        subject.common_name = form["common_name"]
+        manifest = IntermediateCertificateManifest.create(
+            subject=subject,
+            root_ca=form["root_ca"],
+            domain_constraint=form["domain_constraint"],
         )
-        state.intermediate_certificates.append(manifest)
-        return components.Dialog.open(CreateIntermediateCADialog.dialog_id)
+        worker = get_worker()
+        error = await worker.create_workflow(
+            name="pki.create-intermediate",
+            version="v1",
+            payload={"manifest": manifest.name},
+        )
+        if error:
+            return rx.toast.error(error)
+        return [
+            rx.toast.info(f"Creating {form['common_name']}..."),
+            components.Dialog.close(CreateIntermediateCADialog.dialog_id),
+        ]
 
     dialog_id: Final = "create-intermediate-ca-dialog"
     form_id: Final = "create-intermediate-ca-form"
@@ -339,11 +387,11 @@ class CreateIntermediateCADialog(EventGroup):
             "Create Intermediate Signing Certificate",
             rx.el.form(
                 rx.el.p(
-                    "Select the Root CA to use as the trust anchor for the Intermediate Signing CA.",
-                    class_name="my-6",
-                ),
-                rx.el.p(
-                    "The domain constrain specifies what domains the ICA is allowed to issue.",
+                    (
+                        "Select the Root CA to use as the trust anchor for the Intermediate Signing CA. "
+                        "The domain constrain specifies what domains the ICA is allowed to issue. Key usage is "
+                        "inhereted from the selected trust anchor."
+                    ),
                     class_name="my-6",
                 ),
                 components.FieldSet(
@@ -351,21 +399,24 @@ class CreateIntermediateCADialog(EventGroup):
                     components.FieldSet.Field(
                         "Common Name: ",
                         components.Input(
-                            placeholder="My Root CA 1",
+                            placeholder="My Intermediate CA 1",
                             pattern=r"[A-Za-z0-9_.\-\* ]{1,64}(?:\.[A-Za-z0-9_.\-\* ]{1,64})*",
+                            auto_complete="intermediate-ca-common-name",
                             form=cls.form_id,
                             name="common_name",
                             required=True,
+                            class_name="w-full"
                         ),
                     ),
                     components.FieldSet.Field(
                         "Root CA: ",
                         components.Select(
-                            CertificateAuthoritiesState.names,
+                            RootCertificatesState.select_options,
                             placeholder="Select Root CA",
                             form=cls.form_id,
                             name="root_ca",
                             required=True,
+                            class_name="w-full"
                         ),
                     ),
                     components.FieldSet.Field(
@@ -376,6 +427,7 @@ class CreateIntermediateCADialog(EventGroup):
                             form=cls.form_id,
                             name="domain_constraint",
                             required=True,
+                            class_name="w-full"
                         ),
                     ),
                 ),
@@ -389,103 +441,132 @@ class CreateIntermediateCADialog(EventGroup):
                 class_name="w-full flex justify-end mt-4 space-x-3",
             ),
             dialog_id=cls.dialog_id,
-            class_name="max-w-[50vw] w-[50vw] max-h-[75vh] h-[75vh]",
+            class_name="max-w-[50vw] w-[50vw]",
         )
 
 
-class ConfirmRevokeIntermediateCADialog(EventGroup):
-    """Dialog component for confirming intermediate certificate authority revocation."""
+class DeleteIntermediateCertificateDialog(EventGroup):
+    """Dialog component for confirming intermediate certificate authority deletion."""
 
     @staticmethod
     @rx.event
-    async def cancel_revoke(state: ManageCertificateState) -> FrontendEvents:
-        """Cancel the intermediate certificate authority revocation process."""
-        state.revoke_disabled = True
-        return components.Dialog.close(ConfirmRevokeIntermediateCADialog.dialog_id)
-
-    @staticmethod
-    @rx.event
-    async def ensure_ica_names_match(state: ManageCertificateState, value: str) -> None:
-        """Enable or disable the revoke button based on name match."""
-        if state.name == value:
-            state.revoke_disabled = False
-        else:
-            state.revoke_disabled = True
-
-    @staticmethod
-    @rx.event
-    async def revoke_ica(state: ManageCertificateState) -> FrontendEvents:
-        """Revoke the intermediate certificate authority and close related dialogs."""
-        # TODO: Actually Revoke cert
+    async def close(state: ManageIntermediateCertificateState) -> FrontendEvents:
+        """Cancel the intermediate certificate authority deletion process."""
         state.reset()
+        return components.Dialog.close(DeleteIntermediateCertificateDialog.dialog_id)
+
+    @staticmethod
+    @rx.event
+    async def ensure_ica_names_match(state: ManageIntermediateCertificateState, value: str) -> None:
+        """Enable or disable the delete button based on name match."""
+        if state.common_name == value:
+            state.delete_disabled = False
+        else:
+            state.delete_disabled = True
+
+    @staticmethod
+    @rx.event
+    async def delete(state: ManageIntermediateCertificateState) -> FrontendEvents:
+        """Delete the intermediate certificate authority and close related dialogs."""
+        worker = get_worker()
+        error = await worker.create_workflow(
+            name="pki.delete",
+            version="v1",
+            payload={"manifest": state.id},
+        )
+        if error:
+            return rx.toast.error(error)
         return [
-            components.Dialog.close(ConfirmRevokeIntermediateCADialog.dialog_id),
+            rx.toast.info(f"Deleting {state.common_name}..."),
             components.Dialog.close(ManageIntermediateCertDialog.dialog_id),
+            DeleteIntermediateCertificateDialog.close,
         ]
 
-    dialog_id: Final = "confirm-revoke-intermediate-ca-dialog"
+    dialog_id: Final = "confirm-delete-intermediate-ca-dialog"
 
     def __new__(cls) -> rx.Component:
         """Create and return the dialog component."""
         return components.Dialog(
-            f"Revoke {ManageCertificateState.name}",
+            f"Delete {ManageIntermediateCertificateState.common_name}",
             rx.el.div(
                 rx.text(
-                    "Revoking this Root CA will invalidate all Intermediate CAs and leaf certificates that uses this "
+                    "Deleting this Root CA will invalidate all Intermediate CAs and leaf certificates that uses this "
                     "certificate as a trust anchor.",
                 ),
                 rx.text(
-                    "If you are sure you want to revoke ",
-                    rx.el.span(ManageCertificateState.name, class_name="font-bold"),
+                    "If you are sure you want to delete ",
+                    rx.el.span(ManageIntermediateCertificateState.common_name, class_name="font-bold"),
                     rx.el.span(" type its name below."),
                 ),
                 class_name="w-full flex-col space-y-6 my-8",
             ),
             components.Input(
-                placeholder=ManageCertificateState.name,
+                placeholder=ManageIntermediateCertificateState.common_name,
                 on_change=cls.ensure_ica_names_match,
             ),
             rx.el.div(
-                components.Buttons.Secondary("Cancel", on_click=cls.cancel_revoke),
+                components.Buttons.Secondary("Cancel", on_click=cls.close),
                 components.Buttons.Primary(
                     "Confirm",
-                    disabled=ManageCertificateState.revoke_disabled,
-                    on_click=cls.revoke_ica,
+                    disabled=ManageIntermediateCertificateState.delete_disabled,
+                    on_click=cls.delete,
                 ),
-                class_name="w-full flex justify-end space-x-4",
+                class_name="w-full flex justify-end space-x-4 my-8",
             ),
             dialog_id=cls.dialog_id,
+            class_name="max-w-[50vw] w-fit",
         )
 
 
-class ManageIntermediateCertDialog:
+class ManageIntermediateCertDialog(EventGroup):
     """Dialog component for managing intermediate certificate authority details."""
+
+    @staticmethod
+    @rx.event
+    async def manage(state: ManageIntermediateCertificateState, name: str) -> FrontendEvents:
+        """Load and display the root certificate management dialog."""
+        state.manifest = IntermediateCertificateManifest.load(name=name)
+        return components.Dialog.open(ManageIntermediateCertDialog.dialog_id)
 
     dialog_id: Final = "manage-intermediate-ca-dialog"
 
     def __new__(cls) -> rx.Component:
         """Create and return the dialog component."""
         return components.Dialog(
-            f"Manage {ManageCertificateState.name}",
+            f"Manage {ManageIntermediateCertificateState.common_name}",
             rx.el.div(
                 rx.el.div(
-                    components.Buttons.Primary(
-                        "Download",
-                        icon="download",
-                        on_click=custom_download(
-                            data=ManageCertificateState.certificate_data,
-                            filename=f"{ManageCertificateState.name.lower().replace(' ', '_')}.crt",
-                            mime_type="application/x-pem-file",
+                    components.Menu(
+                        components.Buttons.Primary(
+                            "Manage Certificate",
+                            icon="chevron-down",
+                        ),
+                        components.Menu.Item(
+                            "Download Certificate",
+                            on_click=custom_download(
+                                data=ManageIntermediateCertificateState.certificate_data,
+                                filename=f"{ManageIntermediateCertificateState.download_name}.crt",
+                                mime_type="application/x-pem-file",
+                            ),
+                        ),
+                        components.Menu.Item(
+                            "Download Chain",
+                            on_click=custom_download(
+                                data=ManageIntermediateCertificateState.certificate_chain_data,
+                                filename=f"{ManageIntermediateCertificateState.download_name}-chain.crt",
+                                mime_type="application/x-pem-file",
+                            ),
+                        ),
+                        components.Menu.Separator(),
+                        components.Menu.Item(
+                            "Delete",
+                            on_click=components.Dialog.open(DeleteIntermediateCertificateDialog.dialog_id),
+                            class_name="text-red-400 hover:text-red-500 hover:bg-red-500/10 hover:border-red-500/50",
                         ),
                     ),
                     components.Buttons.Secondary(
                         "Close",
                         on_click=components.Dialog.close(cls.dialog_id),
-                    ),
-                    components.Buttons.Secondary(
-                        "Revoke",
-                        class_name="bg-red-500",
-                        on_click=components.Dialog.open(ConfirmRevokeIntermediateCADialog.dialog_id),
                     ),
                     class_name="w-full flex justify-end space-x-4 my-4",
                 ),
@@ -493,67 +574,51 @@ class ManageIntermediateCertDialog:
                     rx.data_list.root(
                         rx.data_list.item(
                             rx.data_list.label("Common Name"),
-                            rx.data_list.value(ManageCertificateState.common_name),
+                            rx.data_list.value(ManageIntermediateCertificateState.common_name),
                         ),
                         rx.data_list.item(
                             rx.data_list.label("Domain Constraint"),
-                            rx.data_list.value(ManageCertificateState.domain_constraint),
+                            rx.data_list.value(ManageIntermediateCertificateState.domain_constraint),
                         ),
                         rx.data_list.item(
                             rx.data_list.label("Issuer"),
-                            rx.data_list.value(
-                                rx.cond(
-                                    ManageCertificateState.common_name
-                                    == ManageCertificateState.issuer,
-                                    "Self",
-                                    ManageCertificateState.issuer,
-                                ),
-                            ),
+                            rx.data_list.value(ManageIntermediateCertificateState.issuer),
                         ),
                         rx.data_list.item(
                             rx.data_list.label("Serial Number"),
-                            rx.data_list.value(ManageCertificateState.serial_number),
+                            rx.data_list.value(ManageIntermediateCertificateState.serial_number),
                         ),
                         rx.data_list.item(
                             rx.data_list.label("Organization"),
-                            rx.data_list.value(ManageCertificateState.org),
+                            rx.data_list.value(ManageIntermediateCertificateState.org),
                         ),
                         rx.data_list.item(
                             rx.data_list.label("Organizational Unit"),
-                            rx.data_list.value(ManageCertificateState.org_unit),
+                            rx.data_list.value(ManageIntermediateCertificateState.org_unit),
                         ),
                         rx.data_list.item(
                             rx.data_list.label("Country"),
-                            rx.data_list.value(ManageCertificateState.country),
+                            rx.data_list.value(ManageIntermediateCertificateState.country),
                         ),
                         rx.data_list.item(
                             rx.data_list.label("State or Province"),
-                            rx.data_list.value(ManageCertificateState.state_or_province),
+                            rx.data_list.value(ManageIntermediateCertificateState.state_or_province),
                         ),
                         rx.data_list.item(
                             rx.data_list.label("Locality"),
-                            rx.data_list.value(ManageCertificateState.locality),
+                            rx.data_list.value(ManageIntermediateCertificateState.locality),
                         ),
                         rx.data_list.item(
                             rx.data_list.label("Not Before"),
-                            rx.data_list.value(rx.moment(ManageCertificateState.not_before)),
+                            rx.data_list.value(rx.moment(ManageIntermediateCertificateState.not_before)),
                         ),
                         rx.data_list.item(
                             rx.data_list.label("Not After"),
-                            rx.data_list.value(rx.moment(ManageCertificateState.not_after)),
+                            rx.data_list.value(rx.moment(ManageIntermediateCertificateState.not_after)),
                         ),
                         rx.data_list.item(
                             rx.data_list.label("Fingerprint"),
-                            rx.data_list.value(ManageCertificateState.fingerprint),
-                        ),
-                        rx.data_list.item(
-                            rx.data_list.label("Key Usages"),
-                            rx.data_list.value(
-                                rx.foreach(
-                                    ManageCertificateState.key_usage,
-                                    lambda usage: components.Badge(usage, color_scheme="blue"),
-                                ),
-                            ),
+                            rx.data_list.value(ManageIntermediateCertificateState.fingerprint),
                         ),
                         class_name="max-h-[35vh]",
                     ),
@@ -569,37 +634,30 @@ class CreateLeafCertificateDialog(EventGroup):
     """Dialog component for creating a new leaf certificate."""
 
     @staticmethod
-    @rx.event(background=True)
-    async def create_certificate(state: LeafCertificatesState, form: dict) -> FrontendEvents:
-        """Create a new leaf certificate from form data."""
-        alternate_dns_names: list[str] = form.get("san_dns", "").split(",")
-        alternate_ip_names: list[str] = form.get("san_ips", "").split(",")
-        manifest = Certificates().create_leaf_certificate(
-            leaf_certificate=LeafCertificate(
-                intermediate_ca=form["intermediate_ca"],
-                common_name=form["common_name"],
-                san_dns=[san.strip() for san in alternate_dns_names if san],
-                san_ips=[san.strip() for san in alternate_ip_names if san],
-                server_auth="server_auth" in form,
-            ),
-        )
-        async with state:
-            state.leaf_certificates.append(manifest)
-            state.reset()
-        return [
-            rx.toast.info(f"Certificate `{manifest.name}` created!"),
-            LeafCertificatesState.cache_clear("certificates"),
-        ]
-
-    @staticmethod
     @rx.event
-    async def create_leaf_cert(_: LeafCertificatesState, form: dict) -> FrontendEvents:
+    async def create_certificate(_: rx.State, form: dict) -> FrontendEvents:
         """Create a new leaf certificate from form data."""
-        name = form["common_name"]
+        intermediate_manifest = IntermediateCertificateManifest.load(name=form["intermediate_ca"])
+        subject = intermediate_manifest.spec.subject
+        subject.common_name = form["common_name"]
+        manifest = LeafCertificateManifest.create(
+            subject=subject,
+            signing_ca=form["intermediate_ca"],
+            san_dns=[san.strip() for san in form.get("san_dns", "").split(",") if san],
+            san_ips=[san.strip() for san in form.get("san_ips", "").split(",") if san],
+            server_auth="server_auth" in form,
+        )
+        worker = get_worker()
+        error = await worker.create_workflow(
+            name="pki.create-leaf",
+            version="v1",
+            payload={"manifest": manifest.name},
+        )
+        if error:
+            return rx.toast.error(error)
         return [
-            rx.toast.info(f"Creating certificate `{name}`..."),
+            rx.toast.info(f"Creating {form['common_name']}..."),
             components.Dialog.close(CreateLeafCertificateDialog.dialog_id),
-            CreateLeafCertificateDialog.create_certificate(form),
         ]
 
     dialog_id: Final = "create-leaf-certificate-dialog"
@@ -617,15 +675,17 @@ class CreateLeafCertificateDialog(EventGroup):
                         components.Input(
                             placeholder="test.example.com",
                             pattern=r"[A-Za-z0-9_.\-\* ]{1,64}(?:\.[A-Za-z0-9_.\-\* ]{1,64})*",
+                            auto_complete="leaf-cert-common-name",
                             form=cls.form_id,
                             name="common_name",
                             required=True,
+                            class_name="w-full"
                         ),
                     ),
                     components.FieldSet.Field(
                         "Signing CA: ",
                         components.Select(
-                            IntermediateCertificatesState.names,
+                            IntermediateCertificatesState.select_options,
                             placeholder="Select Signing CA",
                             form=cls.form_id,
                             name="intermediate_ca",
@@ -639,6 +699,7 @@ class CreateLeafCertificateDialog(EventGroup):
                             placeholder="test.example.com,*.example.com",
                             form=cls.form_id,
                             name="san_dns",
+                            class_name="w-full",
                         ),
                         description="Comma-separated DNS names",
                     ),
@@ -648,6 +709,7 @@ class CreateLeafCertificateDialog(EventGroup):
                             placeholder="192.168.0.1,172.16.0.1",
                             form=cls.form_id,
                             name="san_ips",
+                            class_name="w-full",
                         ),
                         description="Comma-separated IP addresses",
                     ),
@@ -661,28 +723,35 @@ class CreateLeafCertificateDialog(EventGroup):
                     ),
                 ),
                 id=cls.form_id,
-                on_submit=cls.create_leaf_cert,
+                on_submit=cls.create_certificate,
                 class_name="px-3 overflow-y-auto",
             ),
             rx.el.div(
                 components.Buttons.Secondary("Cancel", on_click=lambda: components.Dialog.close(cls.dialog_id)),
                 components.Buttons.Primary("Submit", form=cls.form_id),
-                class_name="w-full flex justify-end mt-4 space-x-3",
+                class_name="w-full flex justify-end mt-4 space-x-3 my-8",
             ),
             dialog_id=cls.dialog_id,
-            class_name="max-w-[50vw] w-[50vw] max-h-[75vh] h-[75vh]",
+            class_name="max-w-[50vw] w-[50vw]",
         )
 
 
-class ManageLeafCertDialog:
+class ManageLeafCertDialog(EventGroup):
     """Dialog component for managing leaf certificate details."""
+
+    @staticmethod
+    @rx.event
+    async def manage(state: ManageLeafCertificateState, name: str) -> FrontendEvents:
+        """Load and display the root certificate management dialog."""
+        state.manifest = LeafCertificateManifest.load(name=name)
+        return components.Dialog.open(ManageLeafCertDialog.dialog_id)
 
     dialog_id: Final = "manage-leaf-certificate-dialog"
 
     def __new__(cls) -> rx.Component:
         """Create and return the dialog component."""
         return components.Dialog(
-            f"Manage {ManageCertificateState.name}",
+            f"Manage {ManageLeafCertificateState.common_name}",
             rx.el.div(
                 rx.el.div(
                     components.Menu(
@@ -693,31 +762,31 @@ class ManageLeafCertDialog:
                         components.Menu.Item(
                             "Download Certificate",
                             on_click=custom_download(
-                                data=ManageCertificateState.certificate_data,
-                                filename=f"{ManageCertificateState.name.lower().replace(' ', '_')}.crt",
+                                data=ManageLeafCertificateState.certificate_data,
+                                filename=f"{ManageLeafCertificateState.download_name}.crt",
                                 mime_type="application/x-pem-file",
                             ),
                         ),
                         components.Menu.Item(
                             "Download Chain",
                             on_click=custom_download(
-                                data=ManageCertificateState.certificate_chain_data,
-                                filename=f"{ManageCertificateState.name.lower().replace(' ', '_')}-chain.crt",
+                                data=ManageLeafCertificateState.certificate_chain_data,
+                                filename=f"{ManageLeafCertificateState.download_name}-chain.crt",
                                 mime_type="application/x-pem-file",
                             ),
                         ),
                         components.Menu.Item(
                             "Download Key",
                             on_click=custom_download(
-                                data=ManageCertificateState.key_data,
-                                filename=f"{ManageCertificateState.name.lower().replace(' ', '_')}.key",
+                                data=ManageLeafCertificateState.key_data,
+                                filename=f"{ManageLeafCertificateState.download_name}.key",
                                 mime_type="application/x-pem-file",
                             ),
                         ),
                         components.Menu.Separator(),
                         components.Menu.Item(
                             "Delete",
-                            on_click=components.Dialog.open(ConfirmDeleteLeafCertDialog.dialog_id),
+                            on_click=components.Dialog.open(DeleteLeafCertificateDialog.dialog_id),
                             class_name="text-red-400 hover:text-red-500 hover:bg-red-500/10 hover:border-red-500/50",
                         ),
                     ),
@@ -731,62 +800,56 @@ class ManageLeafCertDialog:
                     rx.data_list.root(
                         rx.data_list.item(
                             rx.data_list.label("Common Name"),
-                            rx.data_list.value(ManageCertificateState.common_name),
+                            rx.data_list.value(ManageLeafCertificateState.common_name),
                         ),
                         rx.data_list.item(
                             rx.data_list.label("SANs"),
                             rx.data_list.value(
-                                rx.text(ManageCertificateState.dns_sans, rx.el.span(ManageCertificateState.ip_sans)),
+                                rx.text(
+                                    ManageLeafCertificateState.dns_sans,
+                                    rx.el.span(ManageLeafCertificateState.ip_sans),
+                                ),
                             ),
                         ),
                         rx.data_list.item(
                             rx.data_list.label("Issuer"),
-                            rx.data_list.value(ManageCertificateState.issuer),
+                            rx.data_list.value(ManageLeafCertificateState.issuer),
                         ),
                         rx.data_list.item(
                             rx.data_list.label("Serial Number"),
-                            rx.data_list.value(ManageCertificateState.serial_number),
+                            rx.data_list.value(ManageLeafCertificateState.serial_number),
                         ),
                         rx.data_list.item(
                             rx.data_list.label("Organization"),
-                            rx.data_list.value(ManageCertificateState.org),
+                            rx.data_list.value(ManageLeafCertificateState.org),
                         ),
                         rx.data_list.item(
                             rx.data_list.label("Organizational Unit"),
-                            rx.data_list.value(ManageCertificateState.org_unit),
+                            rx.data_list.value(ManageLeafCertificateState.org_unit),
                         ),
                         rx.data_list.item(
                             rx.data_list.label("Country"),
-                            rx.data_list.value(ManageCertificateState.country),
+                            rx.data_list.value(ManageLeafCertificateState.country),
                         ),
                         rx.data_list.item(
                             rx.data_list.label("State or Province"),
-                            rx.data_list.value(ManageCertificateState.state_or_province),
+                            rx.data_list.value(ManageLeafCertificateState.state_or_province),
                         ),
                         rx.data_list.item(
                             rx.data_list.label("Locality"),
-                            rx.data_list.value(ManageCertificateState.locality),
+                            rx.data_list.value(ManageLeafCertificateState.locality),
                         ),
                         rx.data_list.item(
                             rx.data_list.label("Not Before"),
-                            rx.data_list.value(rx.moment(ManageCertificateState.not_before)),
+                            rx.data_list.value(rx.moment(ManageLeafCertificateState.not_before)),
                         ),
                         rx.data_list.item(
                             rx.data_list.label("Not After"),
-                            rx.data_list.value(rx.moment(ManageCertificateState.not_after)),
+                            rx.data_list.value(rx.moment(ManageLeafCertificateState.not_after)),
                         ),
                         rx.data_list.item(
                             rx.data_list.label("Fingerprint"),
-                            rx.data_list.value(ManageCertificateState.fingerprint),
-                        ),
-                        rx.data_list.item(
-                            rx.data_list.label("Key Usages"),
-                            rx.data_list.value(
-                                rx.foreach(
-                                    ManageCertificateState.key_usage,
-                                    lambda usage: components.Badge(usage, color_scheme="blue"),
-                                ),
-                            ),
+                            rx.data_list.value(ManageLeafCertificateState.fingerprint),
                         ),
                         class_name="max-h-[35vh]",
                     ),
@@ -798,32 +861,38 @@ class ManageLeafCertDialog:
         )
 
 
-class ConfirmDeleteLeafCertDialog(EventGroup):
+class DeleteLeafCertificateDialog(EventGroup):
     """Dialog component for confirming the deletion of a leaf certificate."""
 
     @staticmethod
     @rx.event
-    async def cancel(state: ManageCertificateState) -> FrontendEvents:
+    async def close(state: ManageLeafCertificateState) -> FrontendEvents:
         """Cancel the leaf certificate deletion process and close the dialog."""
-        state.delete_disabled = True
-        return components.Dialog.close(ConfirmDeleteLeafCertDialog.dialog_id)
-
-    @staticmethod
-    @rx.event
-    async def ensure_cert_names_match(state: ManageCertificateState, value: str) -> None:
-        """Enable or disable the delete button based on whether the entered name matches the certificate name."""
-        state.delete_disabled = state.name != value
-
-    @staticmethod
-    @rx.event
-    async def delete_cert(state: ManageCertificateState) -> FrontendEvents:
-        """Delete the selected leaf certificate and close related dialogs."""
-        CertificateManifest.load(name=state.name).delete()
         state.reset()
+        return components.Dialog.close(DeleteLeafCertificateDialog.dialog_id)
+
+    @staticmethod
+    @rx.event
+    async def ensure_cert_names_match(state: ManageLeafCertificateState, value: str) -> None:
+        """Enable or disable the delete button based on whether the entered name matches the certificate name."""
+        state.delete_disabled = state.common_name != value
+
+    @staticmethod
+    @rx.event
+    async def delete_cert(state: ManageLeafCertificateState) -> FrontendEvents:
+        """Delete the selected leaf certificate and close related dialogs."""
+        worker = get_worker()
+        error = await worker.create_workflow(
+            name="pki.delete",
+            version="v1",
+            payload={"manifest": state.id},
+        )
+        if error:
+            return rx.toast.error(error)
         return [
-            components.Dialog.close(ConfirmDeleteLeafCertDialog.dialog_id),
+            rx.toast.info(f"Deleting {state.common_name}..."),
             components.Dialog.close(ManageLeafCertDialog.dialog_id),
-            LeafCertificatesState.cache_clear("certificates"),
+            DeleteLeafCertificateDialog.close,
         ]
 
     dialog_id: Final = "confirm-delete-leaf-certificate-dialog"
@@ -831,27 +900,28 @@ class ConfirmDeleteLeafCertDialog(EventGroup):
     def __new__(cls) -> rx.Component:
         """Create and return the dialog component."""
         return components.Dialog(
-            f"Delete {ManageCertificateState.name}",
+            f"Delete {ManageLeafCertificateState.common_name}",
             rx.el.div(
                 rx.text(
                     "If you are sure you want to delete leaf certificate ",
-                    rx.el.span(ManageCertificateState.name, class_name="font-bold"),
+                    rx.el.span(ManageLeafCertificateState.common_name, class_name="font-bold"),
                     rx.el.span(" type its name below."),
                 ),
                 class_name="w-full flex-col space-y-6 my-8",
             ),
             components.Input(
-                placeholder=ManageCertificateState.name,
+                placeholder=ManageLeafCertificateState.common_name,
                 on_change=cls.ensure_cert_names_match,
             ),
             rx.el.div(
-                components.Buttons.Secondary("Cancel", on_click=cls.cancel),
+                components.Buttons.Secondary("Cancel", on_click=cls.close),
                 components.Buttons.Primary(
                     "Delete",
-                    disabled=ManageCertificateState.delete_disabled,
+                    disabled=ManageLeafCertificateState.delete_disabled,
                     on_click=cls.delete_cert,
                 ),
-                class_name="w-full flex justify-end space-x-4",
+                class_name="w-full flex justify-end space-x-4 my-8",
             ),
             dialog_id=cls.dialog_id,
+            class_name="max-w-[40vw] w-fit",
         )

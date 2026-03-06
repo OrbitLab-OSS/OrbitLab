@@ -46,6 +46,7 @@ class GeneralConfigurationPanel(EventGroup):
                         placeholder="Select Image",
                         name="image",
                         required=True,
+                        class_name="w-full",
                     ),
                 ),
                 components.FieldSet.Field(
@@ -58,6 +59,7 @@ class GeneralConfigurationPanel(EventGroup):
                         max="64",
                         name="name",
                         required=True,
+                        class_name="w-full",
                     ),
                 ),
                 components.FieldSet.Field(
@@ -69,6 +71,7 @@ class GeneralConfigurationPanel(EventGroup):
                         on_change=cls.set_node,
                         name="node",
                         required=True,
+                        class_name="w-full",
                     ),
                 ),
                 components.FieldSet.Field(
@@ -80,6 +83,7 @@ class GeneralConfigurationPanel(EventGroup):
                         placeholder="Select Storage",
                         name="storage",
                         required=True,
+                        class_name="w-full",
                     ),
                 ),
                 components.FieldSet.Field(
@@ -124,7 +128,7 @@ class GeneralConfigurationPanel(EventGroup):
                 ),
             ),
             components.FieldSet(
-                "Sector Config",
+                "Networking",
                 components.FieldSet.Field(
                     "Sector",
                     components.Select(
@@ -133,6 +137,7 @@ class GeneralConfigurationPanel(EventGroup):
                         on_change=cls.set_sector,
                         name="sector",
                         required=True,
+                        class_name="w-full",
                     ),
                 ),
             ),
@@ -147,6 +152,7 @@ class GeneralConfigurationPanel(EventGroup):
                             min="8",
                             max="64",
                             name="password",
+                            class_name="w-full",
                         ),
                         rx.text(
                             "If not provided, the password will be randomly generated.",

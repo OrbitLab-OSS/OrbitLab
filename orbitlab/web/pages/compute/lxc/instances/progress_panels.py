@@ -3,7 +3,8 @@
 import reflex as rx
 
 from orbitlab.web import components
-from orbitlab.web.pages.nodes.states import ProxmoxState
+from orbitlab.web.defaults import ClusterDefaults
+from orbitlab.web.pages.sectors.dashboard.states import SectorsTableState
 from orbitlab.web.utilities import EventGroup
 
 from .states import LaunchLXCState
@@ -32,12 +33,6 @@ class GeneralConfigurationPanel(EventGroup):
         """Set the storage selection in the form data."""
         state.form_data["rootdir"] = storage
 
-    @staticmethod
-    @rx.event
-    async def set_sector(state: LaunchLXCState, sector: str) -> None:
-        """Set the network name for a specific network configuration."""
-        state.sector = sector
-
     def __new__(cls) -> rx.Component:
         """Create and return the Progress Panel components."""
         return rx.fragment(
@@ -51,6 +46,7 @@ class GeneralConfigurationPanel(EventGroup):
                         placeholder="Select Appliance",
                         name="appliance",
                         required=True,
+                        class_name="w-full",
                     ),
                 ),
                 components.FieldSet.Field(
@@ -63,28 +59,31 @@ class GeneralConfigurationPanel(EventGroup):
                         max="64",
                         name="name",
                         required=True,
+                        class_name="w-full",
                     ),
                 ),
                 components.FieldSet.Field(
                     "Node: ",
                     components.Select(
-                        ProxmoxState.node_names,
+                        ClusterDefaults.available_nodes,
+                        default_value=ClusterDefaults.proxmox_node,
                         placeholder="Select Node",
-                        default_value=LaunchLXCState.node,
                         on_change=cls.set_node,
                         name="node",
                         required=True,
+                        class_name="w-full",
                     ),
                 ),
                 components.FieldSet.Field(
                     "Disk Store: ",
                     components.Select(
                         LaunchLXCState.available_rootfs,
-                        default_value=LaunchLXCState.rootfs,
+                        default_value=ClusterDefaults.rootdir_storage,
                         on_change=cls.set_rootdir,
                         placeholder="Select Storage",
                         name="rootfs",
                         required=True,
+                        class_name="w-full",
                     ),
                 ),
                 components.FieldSet.Field(
@@ -127,29 +126,37 @@ class GeneralConfigurationPanel(EventGroup):
                         required=True,
                     ),
                 ),
+            ),
+            components.FieldSet(
+                "Networking",
                 components.FieldSet.Field(
                     "Sector",
                     components.Select(
-                        LaunchLXCState.sectors,
-                        value=LaunchLXCState.sector,
-                        on_change=cls.set_sector,
+                        SectorsTableState.sector_options,
                         name="sector",
                         required=True,
+                        class_name="w-full",
                     ),
                 ),
             ),
             components.FieldSet(
                 "Secrets",
                 components.FieldSet.Field(
-                    "Password",
-                    components.Input(
-                        default_value=LaunchLXCState.name,
-                        type="password",
-                        error="Must be between 8 to 64 characters",
-                        min="8",
-                        max="64",
-                        name="password",
-                        required=True,
+                    "Root Password",
+                    rx.el.div(
+                        components.Input(
+                            type="password",
+                            error="Must be between 8 to 64 characters",
+                            min="8",
+                            max="64",
+                            name="password",
+                            class_name="w-full",
+                        ),
+                        rx.text(
+                            "If not provided, the password will be randomly generated.",
+                            class_name="text-sm font-light opacity-50",
+                        ),
+                        class_name="flex-col space-y-1 justify-start align-start",
                     ),
                 ),
                 components.FieldSet.Field(

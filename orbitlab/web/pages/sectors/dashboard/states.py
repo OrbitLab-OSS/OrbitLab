@@ -2,18 +2,39 @@
 
 import reflex as rx
 
-from orbitlab.clients.proxmox.networks import AttachedInstances
 from orbitlab.manifest.sector import SectorManifest
-from orbitlab.web.utilities import CacheBuster
+from orbitlab.proxmox.networks import AttachedInstances
+from orbitlab.web.utilities import CacheBuster, get_redis
 
 
-class SectorsState(CacheBuster, rx.State):
+class SectorsTableState(CacheBuster, rx.State):
     """State for managing and retrieving sector manifests in the dashboard."""
 
     @rx.var(deps=["_cached_sectors"])
     def sectors(self)-> list[SectorManifest]:
         """Get all existing sector manifests."""
         return [SectorManifest.load(name=name) for name in SectorManifest.get_existing()]
+
+    @rx.var
+    async def state_mapping(self) -> dict[str, str]:
+        """Mapping of Sector IDs to thier states."""
+        return {
+            sector.name: await self._get_sector_state(sector=sector.name) or "Pending"
+            for sector in self.sectors
+        }
+
+    @rx.var
+    def sector_options(self) -> dict[str, str]:
+        """Available Sector options used by Select-type components."""
+        return {f"{sector.spec.alias} ({sector.spec.cidr_block})": sector.name for sector in self.sectors}
+
+    @classmethod
+    async def _get_sector_state(cls, sector: str) -> str:
+        redis = get_redis()
+        state: bytes = await redis.hget(name=f"ol:sector:{sector}", key="state")
+        if state:
+            return state.decode()
+        return "pending"
 
 
 class CreateSectorDialogState(rx.State):

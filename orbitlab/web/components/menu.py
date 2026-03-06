@@ -47,13 +47,20 @@ class Props(TypedDict, total=False):
     data_collapsed: rx.Var[bool]
 
 
-class SubMenu:
+class SubMenuItem:
     """A dropdown submenu component for grouping related menu items."""
 
     def __new__(cls, name: str, *children: rx.Component, **props: Unpack[Props]) -> rx.Component:
         """Create and return the menu component."""
         return rx.dropdown_menu.sub(
-            rx.dropdown_menu.sub_trigger(name),
+            rx.dropdown_menu.sub_trigger(
+                name,
+                class_name=(
+                    "p-3 rounded-full text-[rgb(0,150,255)] transition-all duration-200 ease-in-out "
+                    "hover:border hover:scale-105 hover:text-[rgb(0,200,255)] hover:bg-[rgba(0,150,255,0.1)] "
+                    "hover:border-[rgba(0,200,255,0.5)] hover:shadow-[0_0_6px_rgba(0,150,255,0.25)] cursor-pointer"
+                ),
+            ),
             rx.dropdown_menu.sub_content(*children),
             **props,
         )
@@ -64,7 +71,7 @@ class Menu:
 
     Item = staticmethod(MenuItem)
     Separator = staticmethod(rx.dropdown_menu.separator)
-    SubMenu = staticmethod(SubMenu)
+    SubMenu = staticmethod(SubMenuItem)
 
     def __new__(cls, trigger: rx.Component, *children: rx.Component, **props: Unpack[Props]) -> rx.Component:
         """Create and return the menu component."""

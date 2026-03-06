@@ -11,11 +11,13 @@ from starlette.exceptions import WebSocketException
 from starlette.routing import WebSocketRoute
 from starlette.websockets import WebSocket
 
-from orbitlab.clients.proxmox import Proxmox
 from orbitlab.data_types import InitializationState
+from orbitlab.proxmox import Proxmox
 from orbitlab.web import components
-from orbitlab.web.pages import pages
+from orbitlab.web.pages import pages  # noqa: F401
+from orbitlab.web.utilities import get_worker
 from orbitlab.worker import Worker
+from orbitlab.web.layout import orbitlab_page
 
 from .splash_page import SplashPage, SplashPageState
 
@@ -26,30 +28,19 @@ class HomePageState(rx.State):
     loading: bool = True
 
 
+@orbitlab_page
+def dashboard() -> rx.Component:
+    return rx.el.div(
+        class_name="w-full flex space-x-6",
+    )
+
+
 @rx.page("/")
 def home() -> rx.Component:
     """Home page that displays either the main dashboard or splash page based on configuration status."""
     return rx.cond(
         SplashPageState.initialization_state == InitializationState.COMPLETE,
-        rx.el.div(
-            components.SideBar(
-                components.SideBar.NavItem(icon="server", text="Proxmox Nodes", href="/nodes"),
-                components.SideBar.NavItem(icon="server-cog", text="Compute", href="/compute"),
-                components.SideBar.NavItem(icon="book-lock", text="Secrets & PKI", href="/secrets-pki"),
-                components.SideBar.NavItem(icon="network", text="Sectors", href="/sectors"),
-            ),
-            rx.el.div(
-                class_name=(
-                    "min-h-screen w-full flex flex-col p-4 "
-                    "bg-gradient-to-b from-gray-200 to-gray-400 "
-                    "dark:from-[#111317] dark:to-[#151820] "
-                    "text-gray-800 dark:text-[#E8F1FF] "
-                    "selection:bg-[#36E2F4]/40 selection:text-white "
-                    "backdrop-blur-sm transition-colors duration-300 ease-in-out"
-                ),
-            ),
-            class_name="min-h-screen w-full flex",
-        ),
+        dashboard(),
         SplashPage(),
     )
 

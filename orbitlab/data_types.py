@@ -2,13 +2,16 @@
 
 from enum import StrEnum, auto
 from types import FunctionType
+from typing import Literal
 
 from reflex.event import EventCallback, EventHandler, EventSpec
 
 type FrontendEvents = (
     EventCallback | EventHandler | EventSpec | list[EventCallback | EventHandler | EventSpec] | FunctionType
 )
-
+type StreamEventData = tuple[bytes, dict[bytes, bytes]]
+type RedisStreamEvent = tuple[bytes, tuple[StreamEventData]]
+type OrbitLabApplianceType = Literal["backplane-dns", "gateway", "datacore", "dockfs", "etcd", "relay"]
 
 class ManifestKind(StrEnum):
     """Enumeration of possible manifest kinds in OrbitLab."""
@@ -18,13 +21,16 @@ class ManifestKind(StrEnum):
     BASE_IMAGE = auto()
     CUSTOM_IMAGE = auto()
     CLUSTER = auto()
+    DOCK_FS = auto()
+    DATA_CORE = auto()
     NODE = auto()
-    IPAM = auto()
     SECTOR = auto()
     LXC = auto()
     VM = auto()
     SECRET = auto()
-    CERTIFICATE = auto()
+    ROOT_CERTIFICATE = auto()
+    INTERMEDIATE_CERTIFICATE = auto()
+    LEAF_CERTIFICATE = auto()
     CSR = auto()
     SSH_KEY = auto()
     AUTOSCALING = auto()
@@ -74,15 +80,6 @@ class NetworkMethods(StrEnum):
     MANUAL = auto()
     STATIC = auto()
     AUTO = auto()
-
-
-class CertificateTypes(StrEnum):
-    """Enumeration of possible certificate types in OrbitLab."""
-
-    ROOT = auto()
-    INTERMEDIATE = auto()
-    LEAF = auto()
-    CLIENT = auto()
 
 
 class SSHKeyTypes(StrEnum):
@@ -171,14 +168,6 @@ class ApplianceType(StrEnum):
     TURNKEY = auto()
 
 
-class OrbitLabApplianceType(StrEnum):
-    """Enumeration of possible OrbitLab appliance types."""
-
-    SECTOR_GATEWAY = "SectorGateway"
-    SECTOR_DNS = "SectorDNS"
-    BACKPLANE_DNS = "BackplaneDNS"
-
-
 class TaskStatus(StrEnum):
     """Enumeration of possible appliance types in OrbitLab."""
 
@@ -250,6 +239,24 @@ class ComputeStatus(StrEnum):
     SHUTDOWN = auto()
     TERMINATE = auto()
 
+    @classmethod
+    def get_state(cls, status: str | StrEnum) -> ComputeState:
+        """Return the ComputeState corresponding to the given ComputeStatus."""
+        if isinstance(status, StrEnum):
+            status = status.value
+        match status:
+            case "reboot":
+                return ComputeState.RESTARTING
+            case "start":
+                return ComputeState.STARTING
+            case "stop":
+                return ComputeState.STOPPING
+            case "shutdown":
+                return ComputeState.STOPPING
+            case "terminate":
+                return ComputeState.TERMINATING
+        raise ValueError
+
 
 class HealthCheckProtocol(StrEnum):
     """Enumeration of possible Health Check Protocols in OrbitLab."""
@@ -272,3 +279,36 @@ class WorkflowState(StrEnum):
     FINALIZING = auto()
     SUCCEEDED = auto()
     FAILED = auto()
+
+
+class ETCDStatus(StrEnum):
+    ABSENT = auto()
+    PENDING = auto()
+    DEGRADED = auto()
+    AVAILABLE = auto()
+    DELETING = auto()
+
+
+class DockFSState(StrEnum):
+    PENDING = auto()
+    DEGRADED = auto()
+    AVAILABLE = auto()
+    DELETING = auto()
+
+
+class DataCoreStatus(StrEnum):
+    PENDING = auto()
+    DEGRADED = auto()
+    AVAILABLE = auto()
+    DELETING = auto()
+
+
+class DataCoreEvent(StrEnum):
+    ON_START = "on_start"
+    ON_STOP = "on_stop"
+    ON_ROLE_CHANGE = "on_role_change"
+
+
+class DataCoreNodeRole(StrEnum):
+    PRIMARY = auto()
+    REPLICA = auto()

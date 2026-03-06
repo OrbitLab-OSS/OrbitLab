@@ -91,16 +91,23 @@ class SecretsTable(EventGroup):
                             ),
                         ),
                     ),
-                    components.Buttons.Icon(
-                        icon="copy",
-                        on_click=cls.copy_to_clipboard(secret.spec.secret_name, secret.spec.version),
-                    ),
-                    components.Buttons.Icon(
-                        icon="trash-2",
-                        danger=True,
-                        on_click=cls.open_delete_secret_dialog(secret),
-                    ),
                     class_name="flex space-x-5 items-center",
+                ),
+                class_name="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-800 dark:text-gray-200",
+            ),
+            rx.el.td(
+                components.Menu(
+                    components.Buttons.Icon("ellipsis-vertical"),
+                    components.Menu.Item(
+                        "Copy to Clipboard",
+                        on_click=cls.copy_to_clipboard(secret.spec.secret_name, secret.spec.version)
+                    ),
+                    components.Menu.Separator(),
+                    components.Menu.Item(
+                        "Delete",
+                        on_click=cls.open_delete_secret_dialog(secret),
+                        danger=True,
+                    ),
                 ),
                 class_name="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-800 dark:text-gray-200",
             ),
@@ -126,6 +133,7 @@ class SecretsTable(EventGroup):
                             rx.el.th("Version", class_name=header_class),
                             rx.el.th("Description", class_name=header_class),
                             rx.el.th("Value", class_name=header_class),
+                            rx.el.th("", class_name=header_class),
                         ),
                         class_name="bg-white/60 dark:bg-white/[0.03] backdrop-blur-sm",
                     ),

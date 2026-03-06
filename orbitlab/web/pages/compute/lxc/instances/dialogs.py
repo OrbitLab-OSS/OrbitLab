@@ -4,21 +4,27 @@ from typing import Final
 
 import reflex as rx
 
-from orbitlab.clients.proxmox.compute.client import ProxmoxCompute
-from orbitlab.data_types import FrontendEvents
+from orbitlab.data_types import ComputeStatus, FrontendEvents
 from orbitlab.manifest.compute_instances.lxc import LXCManifest
 from orbitlab.web import components
-from orbitlab.web.utilities import EventGroup
-from orbitlab.worker import Worker
-from orbitlab.worker.workflows import LXCCreateV1
+from orbitlab.web.defaults import ClusterDefaults
+from orbitlab.web.utilities import EventGroup, get_worker
 
 from .models import CreateLXCForm
 from .progress_panels import GeneralConfigurationPanel, ReviewPanel
-from .states import LaunchLXCState, LXCsState
+from .states import LaunchLXCState, LXCInstancesTableState
 
 
 class LaunchApplianceDialog(EventGroup):
     """Dialog for launching LXC appliances."""
+
+    @staticmethod
+    @rx.event
+    async def open(state: LaunchLXCState) -> FrontendEvents:
+        """Set the default node and open the dialog."""
+        state.reset()
+        state.node = await state.get_var_value(ClusterDefaults.proxmox_node)
+        return components.Dialog.open(LaunchApplianceDialog.dialog_id)
 
     @staticmethod
     @rx.event
@@ -43,38 +49,28 @@ class LaunchApplianceDialog(EventGroup):
     async def create_lxc(state: LaunchLXCState, form: dict) -> FrontendEvents:
         """Create the custom appliance with the configured settings and workflow steps."""
         state.form_data.update(form)
-        form_data = CreateLXCForm.model_validate(state.form_data)
-        manifest = LXCManifest.create(form=form_data)
-        state.reset()
-        await Worker.create_workflow(
-            workflow=LXCCreateV1,
-            payload=LXCCreateV1.PAYLOAD(manifest=manifest.name)
+        manifest = LXCManifest.create(form_data=CreateLXCForm.model_validate(state.form_data))
+        worker = get_worker()
+        error = await worker.create_workflow(
+            name="lxc.create",
+            version="v1",
+            payload={"manifest": manifest.name},
         )
+        if error:
+            return rx.toast.error(error)
         return [
-            components.Dialog.close(LaunchApplianceDialog.dialog_id),
-            components.ProgressPanels.reset(LaunchApplianceDialog.progress_id),
-            rx.toast.info(message=f"Creating LXC {manifest.name}"),
-            LXCsState.cache_clear("running"),
+            rx.toast.info(f"Launching {manifest.name}..."),
+            LaunchApplianceDialog.close,
         ]
 
     @staticmethod
     @rx.event
-    async def cancel(state: LaunchLXCState) -> FrontendEvents:
+    async def close(state: LaunchLXCState) -> FrontendEvents:
         """Cancel the appliance creation process and reset the dialog state."""
         state.reset()
         return [
             components.Dialog.close(LaunchApplianceDialog.dialog_id),
             components.ProgressPanels.reset(LaunchApplianceDialog.progress_id),
-        ]
-
-    @staticmethod
-    @rx.event(background=True)
-    async def create_in_background(_: rx.State, lxc: LXCManifest) -> FrontendEvents:
-        """Launch an LXC container in the background and notify when it is running."""
-        await rx.run_in_thread(lambda: ProxmoxCompute().launch_lxc(lxc=lxc))
-        return [
-            rx.toast.success(message=f"LXC {lxc.name} running!"),
-            LXCsState.cache_clear("running"),
         ]
 
     dialog_id: Final = "launch-appliance-dialog"
@@ -83,7 +79,7 @@ class LaunchApplianceDialog(EventGroup):
     def __new__(cls) -> rx.Component:
         """Create and return the dialog."""
         return components.Dialog(
-            "Create Custom Appliance",
+            "Create LXC Instance",
             components.ProgressPanels(
                 components.ProgressPanels.Step(
                     "General Configuration",
@@ -95,8 +91,66 @@ class LaunchApplianceDialog(EventGroup):
                     ReviewPanel(),
                     validate=cls.create_lxc,
                 ),
-                cancel_button=components.Buttons.Secondary("Cancel", on_click=cls.cancel),
+                cancel_button=components.Buttons.Secondary("Cancel", on_click=cls.close),
                 progress_id=cls.progress_id,
+            ),
+            dialog_id=cls.dialog_id,
+            class_name="max-w-[75vw] w-fit",
+        )
+
+
+class TerminateLXCInstanceDialog(EventGroup):
+    """Terminate a running LXC instance Dialog."""
+
+    @staticmethod
+    @rx.event
+    async def confirm(state: LXCInstancesTableState, instance_id: str) -> FrontendEvents:
+        """Set the instance ID to terminate and open the dialog."""
+        state.instance_to_terminate = instance_id
+        return components.Dialog.open(TerminateLXCInstanceDialog.dialog_id)
+
+    @staticmethod
+    @rx.event
+    async def terminate(state: LXCInstancesTableState) -> None:
+        """Update the status of an LXC container and trigger backend and frontend updates."""
+        worker = get_worker()
+        error = await worker.create_workflow(
+            name="lxc.state-change",
+            version="v1",
+            payload={"manifest": state.instance_to_terminate, "desired_status": ComputeStatus.TERMINATE},
+        )
+        if error:
+            return rx.toast.error(error)
+        return [
+            rx.toast.info(f"Terminating {state.instance_to_terminate}..."),
+            TerminateLXCInstanceDialog.close,
+        ]
+
+    @staticmethod
+    @rx.event
+    async def close(state: LXCInstancesTableState) -> FrontendEvents:
+        """Cancel terminating the instance."""
+        state.instance_to_terminate = ""
+        return components.Dialog.close(TerminateLXCInstanceDialog.dialog_id)
+
+    dialog_id: Final = "terminate-lxc-instance-dialog"
+
+    def __new__(cls) -> rx.Component:
+        """Create and return the dialog."""
+        return components.Dialog(
+            "Terminate LXC Instance",
+            rx.el.div(
+                rx.text(
+                    "You are about to terminate ",
+                    rx.el.span(LXCInstancesTableState.instance_to_terminate, class_name="font-bold"),
+                    ". This will delete all attached disks.",
+                ),
+                class_name="w-full flex-col space-y-6 my-8",
+            ),
+            rx.el.div(
+                components.Buttons.Secondary("Cancel", on_click=cls.close),
+                components.Buttons.Primary("Confirm", on_click=cls.terminate),
+                class_name="w-full flex justify-end space-x-4 my-8",
             ),
             dialog_id=cls.dialog_id,
             class_name="max-w-[75vw] w-fit",

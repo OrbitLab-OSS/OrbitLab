@@ -1,8 +1,6 @@
 """OrbitLab LXC Models."""
 
-import json
-
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field
 
 from orbitlab.manifest.compute_templates.workflow_models import WorkflowStep
 
@@ -17,17 +15,8 @@ class CreateCustomApplianceForm(BaseModel):
     rootfs: str
     memory: int
     swap: int
-    certificate_authorities: list[str] | None
     workflow_steps: list[WorkflowStep]
     sector: str
-
-    @field_validator("certificate_authorities", mode="plain")
-    @classmethod
-    def validate_certs(cls, value: str) -> list[str] | None:
-        """Validate and parse certificate authorities from JSON string."""
-        if value:
-            return json.loads(value)
-        return None
 
 
 class ApplianceItemDownload(BaseModel):

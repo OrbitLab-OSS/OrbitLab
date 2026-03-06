@@ -11,10 +11,9 @@ from orbitlab.manifest.compute_templates.workflow_models import FileConfig, Work
 from orbitlab.web import components
 from orbitlab.web.defaults import ClusterDefaults
 from orbitlab.web.pages.nodes.states import ProxmoxState
-from orbitlab.web.pages.secrets_pki.pki.states import CertificateAuthoritiesState, CertificatesState
 from orbitlab.web.utilities import EventGroup
 
-from .states import AppliancesState, CustomApplianceState
+from .states import CustomApplianceState
 
 
 class GeneralConfigurationPanel(EventGroup):
@@ -66,16 +65,18 @@ class GeneralConfigurationPanel(EventGroup):
                         max="128",
                         name="name",
                         required=True,
+                        class_name="w-full",
                     ),
                 ),
                 components.FieldSet.Field(
                     "Base Appliance: ",
                     components.Select(
-                        AppliancesState.base_appliance_names,
+                        CustomApplianceState.available_appliances,
                         default_value=CustomApplianceState.base_appliance,
                         placeholder="Select Base Appliance",
                         name="base_appliance",
                         required=True,
+                        class_name="w-full",
                     ),
                 ),
                 components.FieldSet.Field(
@@ -87,6 +88,7 @@ class GeneralConfigurationPanel(EventGroup):
                         on_change=cls.set_node,
                         name="node",
                         required=True,
+                        class_name="w-full",
                     ),
                 ),
                 components.FieldSet.Field(
@@ -98,17 +100,19 @@ class GeneralConfigurationPanel(EventGroup):
                         placeholder="Select Storage",
                         name="storage",
                         required=True,
+                        class_name="w-full",
                     ),
                 ),
                 components.FieldSet.Field(
-                    "LXC Root: ",
+                    "Rootdir Storage: ",
                     components.Select(
                         CustomApplianceState.available_rootfs,
-                        default_value=CustomApplianceState.rootfs,
+                        default_value=ClusterDefaults.rootdir_storage,
                         on_change=cls.set_rootdir,
                         placeholder="Select Storage",
                         name="rootfs",
                         required=True,
+                        class_name="w-full",
                     ),
                 ),
                 components.FieldSet.Field(
@@ -137,26 +141,11 @@ class GeneralConfigurationPanel(EventGroup):
                 components.FieldSet.Field(
                     "Sector",
                     components.Select(
-                        CustomApplianceState.available_sectors,
+                        ClusterDefaults.available_sectors,
                         value=CustomApplianceState.sector,
                         on_change=cls.set_sector,
                         required=True,
-                    ),
-                ),
-            ),
-            components.FieldSet(
-                "Certificates & Secrets",
-                components.FieldSet.Field(
-                    "Root CAs",
-                    components.MultiSelect(
-                        CertificateAuthoritiesState.names,
-                        placeholder="Select CAs",
-                        name="certificate_authorities",
-                        refresh_button=components.Buttons.Icon(
-                            "refresh-ccw",
-                            size=12,
-                            on_click=CertificatesState.cache_clear("certificates"),
-                        ),
+                        class_name="w-full",
                     ),
                 ),
             ),
@@ -552,19 +541,19 @@ class ReviewPanel:
                     components.DataList.Label("Storage"),
                     components.DataList.Value(CustomApplianceState.storage),
                 ),
-                components.DataList.Item(
-                    components.DataList.Label("Root CAs"),
-                    components.DataList.Value(
-                        rx.cond(
-                            CustomApplianceState.root_certs.length() > 0,
-                            rx.foreach(
-                                CustomApplianceState.root_certs,
-                                lambda name: components.Badge(name, color_scheme="blue"),
-                            ),
-                            rx.text("N/A", class_name="font-light italic"),
-                        ),
-                    ),
-                ),
+                # components.DataList.Item(
+                #     components.DataList.Label("Root CAs"),
+                #     components.DataList.Value(
+                #         rx.cond(
+                #             CustomApplianceState.root_certs.length() > 0,
+                #             rx.foreach(
+                #                 CustomApplianceState.root_certs,
+                #                 lambda name: components.Badge(name, color_scheme="blue"),
+                #             ),
+                #             rx.text("N/A", class_name="font-light italic"),
+                #         ),
+                #     ),
+                # ),
                 components.DataList.Item(
                     components.DataList.Label("Workflow Steps"),
                     components.DataList.Value(

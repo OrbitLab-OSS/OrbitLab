@@ -60,9 +60,12 @@ class BaseManifest(BaseModel, Generic[MetaType, SpecType]):
     @classmethod
     def load(cls, name: str) -> Self:
         """Load a manifest from a YAML file by name."""
+        if name not in cls.get_existing():
+            raise ManifestNotFoundError(name=name)
+
         path: Path = Directories.MANIFEST_ROOT / cls.model_fields["kind"].default / f"{name}.yaml"
         if not path.exists():
-            raise ManifestNotFoundError(name=name, kind=cls.kind)
+            raise ManifestNotFoundError(name=name)
 
         with path.open("r", encoding="utf-8") as f:
             return cls.model_validate(yaml.safe_load(f))
@@ -90,10 +93,13 @@ class BaseManifest(BaseModel, Generic[MetaType, SpecType]):
         return [p.stem for p in path.glob("*.yaml")]
 
     @classmethod
-    def _generate_id(cls, prefix: str) -> str:
+    def _generate_id(cls, prefix: str, count: int = 12, *, skip_check: bool = False) -> str:
+        if skip_check:
+            random_id = "".join(secrets.choice(string.ascii_lowercase + string.digits) for _ in range(count))
+            return f"{prefix}-{random_id}"
         existing = cls.get_existing()
         while True:
-            random_id = "".join(secrets.choice(string.ascii_lowercase + string.digits) for _ in range(12))
+            random_id = "".join(secrets.choice(string.ascii_lowercase + string.digits) for _ in range(count))
             manifest_id = f"{prefix}-{random_id}"
             if manifest_id not in existing:
                 break

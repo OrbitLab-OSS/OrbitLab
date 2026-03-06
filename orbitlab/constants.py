@@ -65,7 +65,9 @@ class NetworkSettings(SimpleNamespace):
     """Constants for OrbitLab's networking settings."""
 
     BACKPLANE = Backplane
-    RESERVED_USABLE_IPS: Final = 10
+    RESERVED_INFRA_IPS: Final = 10
+    RESERVED_BROADCAST_IPS: Final = -5
+    RESERVED_SECTOR_IPS = 50
 
 
 SCRIPT = """cat <<EOF > {filename}
@@ -84,4 +86,7 @@ class ProxmoxRE(SimpleNamespace):
 
 
 class EventStreams(SimpleNamespace):
+    """Constants for OrbitLab event stream identifiers."""
+
+    WORKFLOWS = "ol:workflows"
     EVENTS = "ol:events"

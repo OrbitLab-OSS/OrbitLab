@@ -12,3 +12,10 @@ pex_binary(
 python_sources(
     name="root",
 )
+
+pex_binary(
+    name="orbital-relay",
+    entry_point="proxy:main",
+    dependencies=[":pyproject"],
+    interpreter_constraints=[">=3.13"]
+)

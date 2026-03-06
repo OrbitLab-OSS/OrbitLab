@@ -2,20 +2,20 @@
 
 
 import json
+from typing import Literal
 
 import reflex as rx
 
-from orbitlab.clients.proxmox.compute.client import ProxmoxCompute
-from orbitlab.clients.proxmox.compute.models import Asset
 from orbitlab.data_types import StorageContentType
-from orbitlab.manifest.cluster import ClusterManifest
 from orbitlab.manifest.compute_templates import CustomImageManifest
 from orbitlab.manifest.compute_templates.images import BaseImageManifest
 from orbitlab.manifest.compute_templates.workflow_models import FileConfig, WorkflowStep
 from orbitlab.manifest.nodes import NodeManifest
 from orbitlab.manifest.sector import SectorManifest
+from orbitlab.proxmox import ProxmoxComputeTemplates
+from orbitlab.proxmox.compute.models import VendoredImage
 from orbitlab.web import components
-from orbitlab.web.utilities import CacheBuster
+from orbitlab.web.utilities import CacheBuster, get_redis
 
 
 class BaseImagesTableState(CacheBuster, rx.State):
@@ -24,39 +24,22 @@ class BaseImagesTableState(CacheBuster, rx.State):
     nodes: rx.Field[list[str]] = rx.field(default_factory=NodeManifest.get_existing)
 
     @rx.var(deps=["_cached_available_images"])
-    def available_images(self) -> dict[str, Asset]:
+    def available_images(self) -> list[BaseImageManifest]:
         """Return a dictionary of available images keyed by their name."""
-        return {asset.name: asset for asset in ProxmoxCompute.get_vendored_images().list_images()}
-
-    @rx.var
-    def existing(self) -> dict[str, BaseImageManifest | None]:
-        """Return a dictionary mapping image names to their loaded BaseImageManifest or None if not present."""
-        _existing = BaseImageManifest.get_existing()
-        return {
-            name: BaseImageManifest.load(name=name)
-            if name in _existing else None for name in self.available_images
-        }
+        return [BaseImageManifest.load(name=name) for name in BaseImageManifest.get_existing()]
 
 
 class DownloadImageDialogState(rx.State):
     """State for managing the download image dialog, including selected asset and node."""
 
-    asset: rx.Field[Asset | None] = rx.field(default=None)
+    vendored_images: rx.Field[list[VendoredImage]] = rx.field(default_factory=list)
+    nodes: rx.Field[list[str]] = rx.field(default_factory=NodeManifest.get_existing)
     node: rx.Field[str] = rx.field(default="")
 
     @rx.var
-    def os_name(self) -> str:
-        """Return the formatted OS name of the selected asset, or an empty string if no asset is selected."""
-        if self.asset:
-            return self.asset.formatted_name
-        return ""
-
-    @rx.var
-    def nodes(self) -> list[str]:
-        """Return a list of existing node names if an asset is selected, otherwise an empty list."""
-        if self.asset:
-            return NodeManifest.get_existing()
-        return []
+    def available_images(self) -> dict[str, str]:
+        existing = [BaseImageManifest.load(name=name).metadata.os for name in BaseImageManifest.get_existing()]
+        return {img.formatted_name: img.filename for img in self.vendored_images if img.formatted_name not in existing}
 
     @rx.var
     def import_storages(self) -> list[str]:
@@ -75,8 +58,6 @@ class CustomImageDialogState(rx.State):
     memory_gb: rx.Field[int] = rx.field(default=2)
     cores: rx.Field[int] = rx.field(default=2)
     disk_size: rx.Field[int] = rx.field(default=8)
-
-    base_images: rx.Field[list[str]] = rx.field(default_factory=BaseImageManifest.get_existing)
 
     form_data: rx.Field[dict] = rx.field(default_factory=dict)
     step_order: rx.Field[list[components.SortableItem]] = rx.field(default_factory=list)
@@ -97,10 +78,7 @@ class CustomImageDialogState(rx.State):
     @rx.var
     def node(self) -> str:
         """Get the selected node name from form data."""
-        default_node = ""
-        if cluster := next(iter(ClusterManifest.get_existing()), None):
-            default_node = ClusterManifest.load(name=cluster).spec.defaults.node
-        return self.form_data.get("node", default_node)
+        return self.form_data.get("node", "")
 
     @rx.var
     def name(self) -> str:
@@ -130,8 +108,9 @@ class CustomImageDialogState(rx.State):
     @rx.var
     def root_certs(self) -> list[str]:
         """Get the selected root CAs from form data."""
-        certs = self.form_data.get("certificate_authorities") or "[]"
-        return json.loads(certs)
+        # certs = self.form_data.get("certificate_authorities") or "[]"
+        # return json.loads(certs)
+        return []
 
     @rx.var
     def step_names_in_order(self) -> list[str]:
@@ -139,20 +118,31 @@ class CustomImageDialogState(rx.State):
         return [self.steps_config[step["id"]].name for step in self.step_order]
 
     @rx.var
+    def base_images(self) -> dict[str, str]:
+        return {
+            f"{base.metadata.os} ({base.name})": base.name
+            for base in [BaseImageManifest.load(name=name) for name in BaseImageManifest.get_existing()]
+        }
+
+    @rx.var
     def available_image_stores(self) -> list[str]:
         """Return a list of available image storage locations for the selected node."""
         if self.node:
-            return NodeManifest.load(name=self.node).list_storages(content_type=StorageContentType.IMPORT)
+            return ProxmoxComputeTemplates().list_storages_for_node(
+                node=self.node, content_type=StorageContentType.IMPORT,
+            )
         return []
 
     @rx.var
     def available_disk_stores(self) -> list[str]:
         """Return a list of available VM disk storage locations for the selected node."""
         if self.node:
-            return NodeManifest.load(name=self.node).list_storages(content_type=StorageContentType.IMAGES)
+            return ProxmoxComputeTemplates().list_storages_for_node(
+                node=self.node, content_type=StorageContentType.IMAGES,
+            )
         return []
 
-    @rx.var
+    @rx.var(cache=False)
     def available_sectors(self) -> dict[str, str]:
         """Get a mapping of sector display names to sector names."""
         return {
@@ -180,10 +170,50 @@ class CustomImageDialogState(rx.State):
             self.steps_config[index] = WorkflowStep.model_validate(step.model_dump())
 
 
+async def get_workflow_status(manifest_name: str) -> str:
+    """Retrieve a value from Redis for a given manifest and key."""
+    redis = get_redis()
+    status = await redis.hget(name=f"ol:image:{manifest_name}", key="status")
+    if isinstance(status, bytes):
+        return status.decode()
+    return "Never Ran"
+
+
 class CustomImagesTableState(CacheBuster, rx.State):
     """State management for the custom images table."""
+    workflow_to_view: str = ""
 
     @rx.var(deps=["_cached_custom_images"])
     def custom_images(self) -> list[CustomImageManifest]:
         """Return a list of loaded CustomImageManifest instances for existing custom images."""
         return [CustomImageManifest.load(name=name) for name in CustomImageManifest.get_existing()]
+
+    @rx.var(deps=["_cached_logs"])
+    async def logs(self) -> str:
+        """Workflow logs."""
+        if self.workflow_to_view:
+            redis = get_redis()
+            logs: bytes = await redis.hget(name=f"ol:image:{self.workflow_to_view}", key="logs")
+            return logs.decode()
+        return ""
+
+    @rx.var
+    async def workflow_states(self) -> dict[str, str]:
+        """Mapping of manifest names to Workflow States."""
+        return {
+            manifest.name: await get_workflow_status(manifest_name=manifest.name)
+            for manifest in self.custom_images
+        }
+
+
+class DeleteImageDialogState(rx.State):
+    """State for managing the delete image dialog, including confirmation."""
+
+    name: str = ""
+    image_type: Literal["base", "custom"] = "base"
+    confirmation: str = ""
+
+    @rx.var
+    def delete_disabled(self) -> bool:
+        """Return True if the delete action should be disabled (name and confirmation do not match)."""
+        return self.name != self.confirmation

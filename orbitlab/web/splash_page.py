@@ -7,8 +7,6 @@ from typing import Final
 
 import reflex as rx
 
-from orbitlab.clients.proxmox import ProxmoxNetworks
-from orbitlab.clients.proxmox.compute_templates import ProxmoxComputeTemplates
 from orbitlab.constants import NetworkSettings
 from orbitlab.data_types import (
     ClusterMode,
@@ -19,8 +17,9 @@ from orbitlab.data_types import (
     StorageProfile,
 )
 from orbitlab.manifest.cluster import ClusterManifest
-from orbitlab.manifest.ipam import IpamManifest
 from orbitlab.manifest.nodes import NodeManifest
+from orbitlab.proxmox import ProxmoxNetworks
+from orbitlab.proxmox.compute_templates import ProxmoxComputeTemplates
 from orbitlab.services.discovery import DiscoveryService
 from orbitlab.web.components import Buttons, Callout, Dialog, FieldSet, Input, OrbitLabLogo, Select
 from orbitlab.web.utilities import EventGroup
@@ -47,7 +46,7 @@ class SplashPageState(rx.State):
         """Return a list of node names once cluster_mode is set."""
         if self.cluster_mode is None:
             return []
-        return ClusterManifest.load(name=next(iter(ClusterManifest.get_existing()))).list_nodes()
+        return ClusterManifest.load(name=next(iter(ClusterManifest.get_existing()))).spec.nodes
 
     @rx.var
     def vztmpls(self) -> list[str]:
@@ -126,45 +125,45 @@ class ConfigureDefaultsDialog(EventGroup):
     @classmethod
     def run_download(cls) -> None:
         """Download the latest OrbitLab gateway appliance and update the cluster manifest."""
-        cluster_manifest = ClusterManifest.load(name=next(iter(ClusterManifest.get_existing())))
-        if cluster_manifest.spec.defaults.storage.vztmpl:
-            storage = cluster_manifest.spec.defaults.storage.vztmpl
-        elif cluster_manifest.spec.defaults.node:
-            storage = cluster_manifest.default_node().get_storage(content_type=StorageContentType.VZTMPL)
-        latest_gateway = ProxmoxComputeTemplates().download_latest_orbitlab_appliance(
-            storage=storage,
-            appliance_type=OrbitLabApplianceType.SECTOR_GATEWAY,
-        )
-        latest_backplane_dns = ProxmoxComputeTemplates().download_latest_orbitlab_appliance(
-            storage=storage,
-            appliance_type=OrbitLabApplianceType.BACKPLANE_DNS,
-        )
-        cluster_manifest.metadata.sector_gateway_appliance = latest_gateway
-        cluster_manifest.metadata.backplane_dns_appliance = latest_backplane_dns
-        cluster_manifest.metadata.initialized = True
-        cluster_manifest.save()
+        # cluster_manifest = ClusterManifest.load(name=next(iter(ClusterManifest.get_existing())))
+        # if cluster_manifest.spec.defaults.storage.vztmpl:
+        #     storage = cluster_manifest.spec.defaults.storage.vztmpl
+        # elif cluster_manifest.spec.defaults.node:
+        #     storage = cluster_manifest.default_node().get_storage(content_type=StorageContentType.VZTMPL)
+        # latest_gateway = ProxmoxComputeTemplates().download_latest_orbitlab_appliance(
+        #     storage=storage,
+        #     appliance_type=OrbitLabApplianceType.SECTOR_GATEWAY,
+        # )
+        # latest_backplane_dns = ProxmoxComputeTemplates().download_latest_orbitlab_appliance(
+        #     storage=storage,
+        #     appliance_type=OrbitLabApplianceType.BACKPLANE_DNS,
+        # )
+        # cluster_manifest.metadata.sector_gateway_appliance = latest_gateway
+        # cluster_manifest.metadata.backplane_dns_appliance = latest_backplane_dns
+        # cluster_manifest.metadata.initialized = True
+        # cluster_manifest.save()
 
     @staticmethod
     @rx.event(background=True)
     async def setup_appliances(state: SplashPageState) -> FrontendEvents:
         """Download and configure appliances for the cluster."""
-        async with state:
-            state.subtitle = "Downloading latest appliances..."
-        await rx.run_in_thread(ConfigureDefaultsDialog.run_download)
-        async with state:
-            state.initialization_state = InitializationState.COMPLETE
-        return ConfigureDefaultsDialog.generate_default_certs
+        # async with state:
+        #     state.subtitle = "Downloading latest appliances..."
+        # await rx.run_in_thread(ConfigureDefaultsDialog.run_download)
+        # async with state:
+        #     state.initialization_state = InitializationState.COMPLETE
+        # return ConfigureDefaultsDialog.generate_default_certs
 
     @staticmethod
     @rx.event(background=True)
     async def generate_default_certs(state: SplashPageState) -> None:
         """Generate default certificates for the OrbitLab cluster."""
-        async with state:
-            state.subtitle = "Generating default certificates..."
-        # await rx.run_in_thread(ConfigureDefaultsDialog.run_download)
-        async with state:
-            state.subtitle = "Done."
-            state.initialization_state = InitializationState.COMPLETE
+        # async with state:
+        #     state.subtitle = "Generating default certificates..."
+        # # await rx.run_in_thread(ConfigureDefaultsDialog.run_download)
+        # async with state:
+        #     state.subtitle = "Done."
+        #     state.initialization_state = InitializationState.COMPLETE
 
     @staticmethod
     @rx.event
@@ -469,8 +468,6 @@ class SplashPage(EventGroup):
             return Dialog.open(InvalidProxmoxConfigurationDialog.dialog_id)
 
         cluster_manifest = ClusterManifest.load(name=next(iter(ClusterManifest.get_existing())))
-        if NetworkSettings.BACKPLANE.IPAM not in IpamManifest.get_existing():
-            cluster_manifest.spec.backplane.create_ipam_manifest()
 
         if controller:
             async with state:

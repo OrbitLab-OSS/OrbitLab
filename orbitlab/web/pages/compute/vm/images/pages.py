@@ -3,14 +3,14 @@
 import reflex as rx
 
 from orbitlab.web.components import Buttons, PageHeader
-from orbitlab.web.pages.compute.layout import compute_page
+from orbitlab.web.layout import orbitlab_page
 
-from .dialogs import CustomImageDialog
+from .dialogs import CustomImageDialog, DeleteImageDialog, DownloadImageDialog
 from .tables import BaseImagesTable, CustomImagesTable
 
 
 @rx.page("/compute/vm/images")
-@compute_page
+@orbitlab_page
 def images_page() -> rx.Component:
     """Render the VM Images page."""
     return rx.el.div(
@@ -24,10 +24,12 @@ def images_page() -> rx.Component:
             Buttons.Primary(
                 "Download Base Image",
                 icon="cloud-download",
+                on_click=DownloadImageDialog.open,
             ),
         ),
         BaseImagesTable(),
         CustomImagesTable(),
         CustomImageDialog(),
+        DeleteImageDialog(),
         class_name="w-full h-full flex flex-col",
     )

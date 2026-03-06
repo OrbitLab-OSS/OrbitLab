@@ -3,14 +3,14 @@
 import reflex as rx
 
 from orbitlab.web import components
-from orbitlab.web.pages.compute.layout import compute_page
+from orbitlab.web.layout import orbitlab_page
 
 from .dialogs import LaunchVMDialog
 from .tables import VMInstancesTable
 
 
 @rx.page("/compute/vm/instances")
-@compute_page
+@orbitlab_page
 def vm_instances() -> rx.Component:
     """Render the VM Instances management page."""
     return rx.el.div(

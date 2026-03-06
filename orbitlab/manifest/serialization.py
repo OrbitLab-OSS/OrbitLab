@@ -1,5 +1,7 @@
 """Serialization utilities for orbitlab manifest schemas."""
 
+import base64
+import binascii
 from collections.abc import Callable
 from enum import StrEnum
 from ipaddress import IPv4Address
@@ -33,6 +35,19 @@ def serialize_enum_list(enums: list[StrEnum]) -> list[str]:
     return [enum.value for enum in enums]
 
 
+def base64_to_str(data: str) -> str:
+    """Decode a base64-encoded string to its original string value."""
+    try:
+        return base64.b64decode(data, validate=True).decode()
+    except binascii.Error:
+        return data
+
+
+def to_base64(data: str) -> str:
+    """Encode a string to base64."""
+    return base64.b64encode(data.encode()).decode()
+
+
 SerializeEnum = PlainSerializer(lambda v: v.value)
 SerializeEnumList = PlainSerializer(serialize_enum_list)
 SerializePath = PlainSerializer(lambda v: str(v))
@@ -46,3 +61,4 @@ PveContentList = Annotated[
 ]
 PeerList = Annotated[list[IPv4Address], PlainValidator(func=peer_list_str), SerializeIPList]
 PveStorageType = Annotated[StorageType, SerializeEnum]
+CertificateData = Annotated[str, PlainValidator(base64_to_str), PlainSerializer(to_base64)]

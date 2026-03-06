@@ -12,13 +12,19 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ed25519, rsa
 from cryptography.hazmat.primitives.asymmetric.types import PrivateKeyTypes
 from cryptography.x509.base import Certificate
-from cryptography.x509.oid import NameOID
 
 from orbitlab.constants import PKI
-from orbitlab.data_types import CertificateTypes, CSRStatus, KeyUsageTypes, SSHKeyTypes
-from orbitlab.manifest.secrets import CertificateManifest, CSRManifest, SSHKeyManifest
+from orbitlab.data_types import KeyUsageTypes, SSHKeyTypes
+from orbitlab.manifest.pki import (
+    CertificateIssued,
+    CertificateIssuedWithChain,
+    IntermediateCertificateManifest,
+    LeafCertificateManifest,
+    RootCertificateManifest,
+    SecretManifest,
+    SSHKeyManifest,
+)
 from orbitlab.services.pki import exceptions
-from orbitlab.services.pki.models import IntermediateCA, LeafCertificate, Subject
 from orbitlab.services.vault.client import SecretVault
 
 
@@ -28,8 +34,6 @@ class Certificates:
     def __init__(self) -> None:
         """Initialize Certificates with manifest and vault clients, and load existing certificates."""
         self.vault = SecretVault()
-        self.existing_certificates = CertificateManifest.get_existing()
-        self.existing_requests = CSRManifest.get_existing()
 
     def __load_private_key__(self, pem: str) -> PrivateKeyTypes:
         """Load a private RSA key from a PEM-encoded string."""
@@ -38,10 +42,6 @@ class Certificates:
     def __load_cert__(self, pem: str) -> x509.Certificate:
         """Load an X.509 certificate from a PEM-encoded string."""
         return x509.load_pem_x509_certificate(pem.encode())
-
-    def __load_csr__(self, pem: str) -> x509.CertificateSigningRequest:
-        """Load a Certificate Signing Request (CSR) from a PEM-encoded string."""
-        return x509.load_pem_x509_csr(pem.encode())
 
     def __generate_fingerprint__(self, pem: str) -> str:
         """Generate a SHA256 fingerprint for the given PEM data."""
@@ -71,55 +71,10 @@ class Certificates:
         """Convert a certificate object to a PEM-encoded string."""
         return cert.public_bytes(serialization.Encoding.PEM).decode()
 
-    def __get_common_name__(self, csr: x509.CertificateSigningRequest) -> str | None:
-        """Extract the common name (CN) from a certificate signing request (CSR)."""
-        common_name = csr.subject.get_attributes_for_oid(NameOID.COMMON_NAME)
-        if not common_name:
-            return None
-        common_name = common_name[0].value
-        if isinstance(common_name, bytes):
-            common_name = common_name.decode()
-        return common_name  # pyright: ignore[reportReturnType]
-
-    def __get_signing_cert__(self, intermediate_ca: str) -> CertificateManifest:
-        """Retrieve the manifest for the specified intermediate CA, ensuring it exists and is of the correct type."""
-        if intermediate_ca not in self.existing_certificates:
-            raise exceptions.CertificateExistsError(name=intermediate_ca, exists=False)
-
-        intermediate_manifest = CertificateManifest.load(name=intermediate_ca)
-        if intermediate_manifest.metadata.type != CertificateTypes.INTERMEDIATE:
-            raise exceptions.CertificateTypeError(
-                common_name=intermediate_ca,
-                cert_type=CertificateTypes.INTERMEDIATE,
-            )
-        return intermediate_manifest
-
-    def __verify_csr_signing_request__(
-        self,
-        manifest: CSRManifest,
-        csr: x509.CertificateSigningRequest,
-    ) -> CSRManifest:
-        """Verify the status and fingerprint of a CSR signing request and update its status if necessary."""
-        if manifest.spec.status == CSRStatus.PENDING:
-            if manifest.spec.submitted_at < (datetime.now(UTC) - timedelta(days=30)):
-                manifest.spec.status = CSRStatus.REJECTED
-                manifest.spec.rejected_reason = "Request older than 30 days. Submit a new request."
-            elif manifest.spec.csr_fingerprint != self.__generate_fingerprint__(self.__csr_to_pem__(csr)):
-                manifest.spec.status = CSRStatus.REJECTED
-                manifest.spec.rejected_reason = "CSR fingerprint does not match previous request."
-        return manifest
-
-    def create_certificate_authority(
-        self,
-        subject: Subject,
-        key_usage: list[KeyUsageTypes],
-    ) -> CertificateManifest:
-        """Create a new certificate authority (CA) with the given subject and key usage."""
-        if subject.common_name in self.existing_certificates:
-            raise exceptions.CertificateExistsError(name=subject.common_name, exists=True)
-
+    def create_certificate_authority(self, manifest: RootCertificateManifest) -> None:
+        """Create a new root certificate authority (CA)."""
         private_key = self.__generate_rsa_key__()
-        name = subject.to_x509()
+        name = manifest.spec.subject.to_x509()
         now = datetime.now(UTC)
         serial_number = self.__generate_serial__()
         not_before = now - timedelta(minutes=5)
@@ -134,7 +89,7 @@ class Certificates:
             .not_valid_before(not_before)
             .not_valid_after(not_after)
             .add_extension(x509.BasicConstraints(ca=True, path_length=None), critical=True)
-            .add_extension(x509.KeyUsage(**KeyUsageTypes.to_x509_usage_params(key_usage)), critical=True)
+            .add_extension(x509.KeyUsage(**KeyUsageTypes.to_x509_usage_params(manifest.spec.key_usage)), critical=True)
         )
 
         cert = builder.sign(private_key=private_key, algorithm=hashes.SHA256())
@@ -144,56 +99,27 @@ class Certificates:
 
         # Store private key in vault
         secret_name = Path(
-            f"certificates/{CertificateTypes.ROOT}/{hashlib.sha256(subject.common_name.encode()).hexdigest()}",
+            f"certificates/root/{hashlib.sha256(manifest.spec.subject.common_name.encode()).hexdigest()}",
         )
-        version = self.vault.create(secret_name=secret_name, value=key_pem)
-
-        manifest = CertificateManifest.model_validate(
-            {
-                "name": subject.common_name,
-                "metadata": {
-                    "type": CertificateTypes.ROOT,
-                    "common_name": subject.common_name,
-                    "issuer": subject.common_name,
-                    "org": subject.org,
-                    "org_unit": subject.org_unit,
-                    "country": subject.country,
-                    "state_or_province": subject.state_or_province,
-                    "locality": subject.locality,
-                    "not_before": not_before,
-                    "not_after": not_after,
-                    "fingerprint": self.__generate_fingerprint__(cert_pem),
-                    "serial_number": str(serial_number),
-                    "certificate": cert_pem,
-                    "key_usage": key_usage,
-                },
-                "spec": {
-                    "secret_name": str(secret_name),
-                    "version": version,
-                },
-            },
+        secret_manifest = SecretManifest.store_private_key(secret_name=secret_name, key_data=key_pem)
+        manifest.spec.issued = CertificateIssued(
+            issuer=manifest.spec.subject.common_name,
+            not_before=not_before,
+            not_after=not_after,
+            certificate=cert_pem,
+            fingerprint=self.__generate_fingerprint__(cert_pem),
+            serial_number=str(serial_number),
+            secret=secret_manifest.to_ref(),
         )
         manifest.save()
         return manifest
 
-    def create_intermediate_certificate(self, intermediate_ca: IntermediateCA) -> CertificateManifest:
+    def create_intermediate_certificate(self, manifest: IntermediateCertificateManifest) -> None:
         """Create a new intermediate certificate signed by the specified root CA."""
-        if intermediate_ca.common_name in self.existing_certificates:
-            raise exceptions.CertificateExistsError(name=intermediate_ca.common_name, exists=True)
-        if intermediate_ca.root_ca not in self.existing_certificates:
-            raise exceptions.CertificateExistsError(name=intermediate_ca.root_ca, exists=False)
+        root_manifest = RootCertificateManifest.load(manifest.spec.root_ca)
 
-        root_manifest: CertificateManifest = CertificateManifest.load(name=intermediate_ca.root_ca)
-        if root_manifest.metadata.type != CertificateTypes.ROOT:
-            raise exceptions.CertificateTypeError(common_name=intermediate_ca.root_ca, cert_type=CertificateTypes.ROOT)
-
-        root_private_key = self.vault.get(
-            secret_name=root_manifest.spec.secret_name,
-            version=root_manifest.spec.version,
-        )
-
-        root_key = self.__load_private_key__(root_private_key.secret_string.get_secret_value())
-        root_cert = self.__load_cert__(root_manifest.metadata.certificate)
+        root_key = self.__load_private_key__(root_manifest.get_key())
+        root_cert = self.__load_cert__(root_manifest.spec.issued.certificate)
 
         private_key = self.__generate_rsa_key__()
         now = datetime.now(UTC)
@@ -201,33 +127,24 @@ class Certificates:
         not_before = now - timedelta(minutes=5)
         not_after = now + timedelta(days=PKI.INTERMEDIATE_CA_DAYS_VALID)
 
-        subject = Subject(
-            common_name=intermediate_ca.common_name,
-            org=root_manifest.metadata.org,
-            org_unit=root_manifest.metadata.org_unit,
-            country=root_manifest.metadata.country,
-            state_or_province=root_manifest.metadata.state_or_province,
-            locality=root_manifest.metadata.locality,
-        )
-
         builder = (
             x509.CertificateBuilder()
             .serial_number(serial_number)
-            .subject_name(subject.to_x509())
+            .subject_name(manifest.spec.subject.to_x509())
             .issuer_name(root_cert.subject)
             .public_key(private_key.public_key())
             .not_valid_before(not_before)
             .not_valid_after(not_after)
             .add_extension(x509.BasicConstraints(ca=True, path_length=0), critical=True)
             .add_extension(
-                x509.KeyUsage(**KeyUsageTypes.to_x509_usage_params(root_manifest.metadata.key_usage)),
+                x509.KeyUsage(**KeyUsageTypes.to_x509_usage_params(root_manifest.spec.key_usage)),
                 critical=True,
             )
             .add_extension(x509.AuthorityKeyIdentifier.from_issuer_public_key(root_key.public_key()), critical=False)  # pyright: ignore[reportArgumentType]
             .add_extension(x509.SubjectKeyIdentifier.from_public_key(private_key.public_key()), critical=False)
             .add_extension(
                 x509.NameConstraints(
-                    permitted_subtrees=[x509.DNSName(intermediate_ca.domain_constraint)],
+                    permitted_subtrees=[x509.DNSName(manifest.metadata.domain_constraint)],
                     excluded_subtrees=None,
                 ),
                 critical=True,
@@ -240,164 +157,65 @@ class Certificates:
 
         # Store private key in vault
         secret_name = Path(
-            f"certificates/{CertificateTypes.INTERMEDIATE}/{hashlib.sha256(subject.common_name.encode()).hexdigest()}",
+            f"certificates/intermediate/{hashlib.sha256(manifest.spec.subject.common_name.encode()).hexdigest()}",
         )
-        version = self.vault.create(secret_name=secret_name, value=key_pem)
-
-        manifest = CertificateManifest.model_validate(
-            {
-                "name": subject.common_name,
-                "metadata": {
-                    "type": CertificateTypes.INTERMEDIATE,
-                    "common_name": subject.common_name,
-                    "issuer": root_manifest.metadata.common_name,
-                    "org": subject.org,
-                    "org_unit": subject.org_unit,
-                    "country": subject.country,
-                    "state_or_province": subject.state_or_province,
-                    "locality": subject.locality,
-                    "not_before": not_before,
-                    "not_after": not_after,
-                    "fingerprint": self.__generate_fingerprint__(cert_pem),
-                    "serial_number": str(serial_number),
-                    "certificate": cert_pem,
-                    "key_usage": root_manifest.metadata.key_usage,
-                    "domain_constraint": intermediate_ca.domain_constraint,
-                },
-                "spec": {
-                    "secret_name": str(secret_name),
-                    "version": version,
-                },
-            },
+        secret_manifest = SecretManifest.store_private_key(secret_name=secret_name, key_data=key_pem)
+        manifest.spec.issued = CertificateIssuedWithChain(
+            issuer=root_manifest.spec.subject.common_name,
+            not_before=not_before,
+            not_after=not_after,
+            certificate=cert_pem,
+            fingerprint=self.__generate_fingerprint__(cert_pem),
+            serial_number=str(serial_number),
+            secret=secret_manifest.to_ref(),
+            chain=root_manifest.spec.issued.certificate,
         )
         manifest.save()
         return manifest
 
-    def create_leaf_certificate(self, leaf_certificate: LeafCertificate) -> CertificateManifest:
+    def create_leaf_certificate(self, manifest: LeafCertificateManifest) -> None:
         """Create a new leaf certificate."""
-        if leaf_certificate.common_name in self.existing_certificates:
-            raise exceptions.CertificateExistsError(name=leaf_certificate.common_name, exists=True)
-
         private_key = self.__generate_rsa_key__()
-        csr_der = self.create_csr(self.__key_to_pem__(private_key), leaf_certificate)
-        self.existing_requests = CSRManifest.get_existing()  # Reload CSRs
-        csr_manifest = self.sign_csr(csr_der)
+
+        key_usage = [KeyUsageTypes.DIGITAL_SIGNATURE, KeyUsageTypes.KEY_AGREEMENT]
+        if manifest.spec.server_auth:
+            key_usage.append(KeyUsageTypes.KEY_ENCIPHERMENT)
+
+        builder = x509.CertificateSigningRequestBuilder().subject_name(manifest.spec.subject.to_x509())
+        san = manifest.get_x509_san()
+        if san:
+            builder = builder.add_extension(san, critical=False)
+        csr: x509.CertificateSigningRequest = builder.sign(private_key=private_key, algorithm=hashes.SHA256()) # pyright: ignore[reportArgumentType]
+        cert_pem = self.sign_csr(self.__csr_to_pem__(csr), signing_ca=manifest.spec.signing_ca)
+        signed_leaf = self.__load_cert__(cert_pem)
 
         # Store private key in vault
         secret_name = Path(
-            f"certificates/{CertificateTypes.LEAF}/{hashlib.sha256(leaf_certificate.common_name.encode()).hexdigest()}",
+            f"certificates/leaf/{hashlib.sha256(manifest.spec.subject.common_name.encode()).hexdigest()}",
         )
-        version = self.vault.create(secret_name=secret_name, value=self.__key_to_pem__(private_key))
-
-        manifest = CertificateManifest.model_validate(
-            {
-                "name": csr_manifest.name,
-                "metadata": {
-                    "type": CertificateTypes.LEAF,
-                    "common_name": csr_manifest.name,
-                    "issuer": csr_manifest.metadata.issuer,
-                    "org": csr_manifest.metadata.org,
-                    "org_unit": csr_manifest.metadata.org_unit,
-                    "country": csr_manifest.metadata.country,
-                    "state_or_province": csr_manifest.metadata.state_or_province,
-                    "locality": csr_manifest.metadata.locality,
-                    "not_before": csr_manifest.metadata.not_before,
-                    "not_after": csr_manifest.metadata.not_after,
-                    "fingerprint": csr_manifest.metadata.fingerprint,
-                    "serial_number": csr_manifest.metadata.serial_number,
-                    "certificate": csr_manifest.metadata.certificate,
-                    "key_usage": csr_manifest.metadata.key_usage,
-                    "san_dns": csr_manifest.metadata.san_dns,
-                    "san_ips": csr_manifest.metadata.san_ips,
-                    "chain": csr_manifest.metadata.chain,
-                },
-                "spec": {
-                    "secret_name": str(secret_name),
-                    "version": version,
-                },
-            },
+        secret_manifest = SecretManifest.store_private_key(
+            secret_name=secret_name, key_data=self.__key_to_pem__(private_key),
+        )
+        intermediate_manifest = IntermediateCertificateManifest.load(name=manifest.spec.signing_ca)
+        manifest.spec.issued = CertificateIssuedWithChain(
+            issuer=intermediate_manifest.spec.subject.common_name,
+            not_before=signed_leaf.not_valid_before_utc,
+            not_after=signed_leaf.not_valid_after_utc,
+            certificate=cert_pem,
+            fingerprint=self.__generate_fingerprint__(cert_pem),
+            serial_number=str(signed_leaf.serial_number),
+            secret=secret_manifest.to_ref(),
+            chain=intermediate_manifest.spec.issued.certificate,
         )
         manifest.save()
-        csr_manifest.delete()
         return manifest
 
-    def create_csr(self, key: str, lc: LeafCertificate) -> str:
-        """Create a Certificate Signing Request (CSR) for a given leaf certificate and private key."""
-        if lc.common_name in self.existing_requests:
-            raise exceptions.CSRExistsError(name=lc.common_name, exists=True)
-
-        private_key = self.__load_private_key__(key)
-        intermediate_manifest = self.__get_signing_cert__(intermediate_ca=lc.intermediate_ca)
-
-        subject = Subject(
-            common_name=lc.common_name,
-            org=intermediate_manifest.metadata.org,
-            org_unit=intermediate_manifest.metadata.org_unit,
-            country=intermediate_manifest.metadata.country,
-            state_or_province=intermediate_manifest.metadata.state_or_province,
-            locality=intermediate_manifest.metadata.locality,
-        )
-
-        key_usage = [KeyUsageTypes.DIGITAL_SIGNATURE, KeyUsageTypes.KEY_AGREEMENT]
-        if lc.server_auth:
-            key_usage.append(KeyUsageTypes.KEY_ENCIPHERMENT)
-
-        builder = x509.CertificateSigningRequestBuilder().subject_name(subject.to_x509())
-        san = lc.get_x509_san()
-        if san:
-            builder = builder.add_extension(san, critical=False)
-        csr = builder.sign(private_key=private_key, algorithm=hashes.SHA256()) # pyright: ignore[reportArgumentType]
-
-        manifest = CSRManifest.model_validate(
-            {
-                "name": lc.common_name,
-                "metadata": {
-                    "common_name": subject.common_name,
-                    "issuer": intermediate_manifest.metadata.common_name,
-                    "org": subject.org,
-                    "org_unit": subject.org_unit,
-                    "country": subject.country,
-                    "state_or_province": subject.state_or_province,
-                    "locality": subject.locality,
-                    "san_dns": lc.san_dns,
-                    "san_ips": lc.san_ips,
-                    "key_usage": key_usage,
-                },
-                "spec": {
-                    "key_fingerprint": self.__generate_fingerprint__(self.__key_to_pem__(private_key)),  # pyright: ignore[reportArgumentType]
-                    "csr_fingerprint": self.__generate_fingerprint__(self.__csr_to_pem__(csr)),
-                    "submitted_at": datetime.now(UTC),
-                    "status": CSRStatus.PENDING,
-                },
-            },
-        )
-        manifest.save()
-        return self.__csr_to_pem__(csr)
-
-    def sign_csr(self, csr_der: str) -> CSRManifest:
-        """Sign a Certificate Signing Request (CSR) and update its manifest status."""
-        csr = self.__load_csr__(csr_der)
-        common_name = self.__get_common_name__(csr=csr)
-
-        if not common_name:
-            raise exceptions.CSRSigningError(msg="Common Name not found in CSR.")
-
-        if common_name not in self.existing_requests:
-            raise exceptions.CSRExistsError(name=common_name, exists=False)
-
-        csr_manifest = CSRManifest.load(name=common_name)
-        csr_manifest = self.__verify_csr_signing_request__(manifest=csr_manifest, csr=csr)
-        if csr_manifest.spec.status != CSRStatus.PENDING:
-            return csr_manifest
-
-        intermediate_manifest = self.__get_signing_cert__(intermediate_ca=csr_manifest.metadata.issuer)
-        signing_private_key = self.vault.get(
-            secret_name=intermediate_manifest.spec.secret_name,
-            version=intermediate_manifest.spec.version,
-        )
-
-        signing_key = self.__load_private_key__(signing_private_key.secret_string.get_secret_value())
-        signing_cert = self.__load_cert__(intermediate_manifest.metadata.certificate)
+    def sign_csr(self, csr_der: str, signing_ca: str) -> str:
+        """Sign a Certificate Signing Request (CSR) return the cert PEM."""
+        csr = x509.load_pem_x509_csr(csr_der.encode())
+        intermediate_manifest = IntermediateCertificateManifest.load(name=signing_ca)
+        signing_key = self.__load_private_key__(intermediate_manifest.get_key())
+        signing_cert = self.__load_cert__(intermediate_manifest.spec.issued.certificate)
 
         now = datetime.now(UTC)
         serial_number = self.__generate_serial__()
@@ -418,19 +236,7 @@ class Certificates:
             builder = builder.add_extension(extension.value, critical=extension.critical)
 
         cert = builder.sign(private_key=signing_key, algorithm=hashes.SHA256())  # pyright: ignore[reportArgumentType]
-        cert_pem = self.__cert_to_pem__(cert)
-
-        csr_manifest.metadata.serial_number = str(serial_number)
-        csr_manifest.metadata.not_before = not_before
-        csr_manifest.metadata.not_after = not_after
-        csr_manifest.metadata.fingerprint = self.__generate_fingerprint__(cert_pem)
-        csr_manifest.metadata.chain = intermediate_manifest.metadata.certificate
-        csr_manifest.metadata.certificate = cert_pem
-        csr_manifest.spec.signed_at = now
-        csr_manifest.spec.status = CSRStatus.ISSUED
-
-        csr_manifest.save()
-        return csr_manifest
+        return self.__cert_to_pem__(cert)
 
 
 class SSHKey:

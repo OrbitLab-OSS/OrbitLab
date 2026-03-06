@@ -17,41 +17,39 @@ XTERM_CONSTANTS = Template(
     fontFamily: "Fira Code, courier-new, courier, monospace",
     cursorBlink: true
   };
+  const fitAddon = new FitAddon();
 """,
 )
 SOCKET_HOOKS: Final = """
   useEffect(() => {
     if (!terminal && ref && socketUrl) {
-      let term = new Terminal(termOptions);
+      let term = new Terminal(termOptions)
       term.open(ref.current);
-      term.onResize(function (size) {
-        console.log("onResize", size);
-        socket.send("1:" + size.cols + ":" + size.rows + ":");
-      });
       setTerminal(term);
     }
     if (terminal && !socket) {
       let websocket = new WebSocket(`${socketUrl}`)
       websocket.binaryType = "arraybuffer";
+      websocket.onopen = () => {
+        terminal.loadAddon(fitAddon);
+        terminal.loadAddon(new WebglAddon());
+        fitAddon.fit();
+      }
       websocket.onmessage = (event) => {
         terminal.write(new Uint8Array(event.data));
       };
+      terminal.onResize(function (size) {
+        websocket.send("1:" + size.cols + ":" + size.rows + ":");
+      });
       terminal.onData((data) => {
         websocket.send(`0:${data.length}:${data}`);
+      });
+      window.addEventListener('resize', function() {
+        fitAddon.fit();
       });
       setSocket(websocket)
     }
   }, [socketUrl, terminal, ref, socket])
-
-  function runTerminal() {
-    socket.onmessage = (event) => {
-      terminal.write(new Uint8Array(event.data));
-    };
-
-    terminal.onData((data) => {
-      socket.send(`0:${data.length}:${data}`);
-    });
-  }
 """
 
 class Xterm(rx.Component):
@@ -61,7 +59,11 @@ class Xterm(rx.Component):
 
     def add_imports(self) -> dict:
         """Add required imports for the xterm component."""
-        return {"": "@xterm/xterm/css/xterm.css"}
+        return {
+          "@xterm/addon-fit": rx.ImportVar(tag="FitAddon", is_default=False),
+          "@xterm/addon-webgl": rx.ImportVar(tag="WebglAddon", is_default=False),
+          "": "@xterm/xterm/css/xterm.css",
+        }
 
     def add_hooks(self) -> list:
         """Add React hooks for terminal functionality."""
@@ -95,7 +97,7 @@ class Xterm(rx.Component):
                 class_name="toast-body",
                 id=rx.Var.create("toastMessage"),
             ),
-            class_name="w-full h-full overflow-hidden",
+            class_name="w-full h-full shrink grow",
         ).render()
         rendered["props"].extend(["ref:ref"])
         return rendered

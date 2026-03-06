@@ -2,16 +2,13 @@
 
 import reflex as rx
 
-from orbitlab.clients.proxmox.compute.client import ProxmoxCompute
-from orbitlab.clients.proxmox.compute.models import Asset
 from orbitlab.data_types import FrontendEvents, WorkflowStatus
 from orbitlab.manifest.compute_templates import FileStep, ScriptStep
 from orbitlab.manifest.compute_templates.images import BaseImageManifest, CustomImageManifest
 from orbitlab.web import components
-from orbitlab.web.defaults import ClusterDefaults
-from orbitlab.web.utilities import EventGroup
+from orbitlab.web.utilities import EventGroup, get_worker
 
-from .dialogs import CustomImageDialog, DownloadImageDialog
+from .dialogs import CustomImageDialog, DeleteImageDialog, DownloadImageDialog, WorkflowLogsViewDialog
 from .states import BaseImagesTableState, CustomImageDialogState, CustomImagesTableState, DownloadImageDialogState
 
 
@@ -20,78 +17,40 @@ class BaseImagesTable(EventGroup):
 
     @staticmethod
     @rx.event
-    async def download(state: DownloadImageDialogState, asset: Asset) -> FrontendEvents:
-        """Handle the download event for a base image."""
-        state.asset = asset
-        state.node = await state.get_var_value(ClusterDefaults.proxmox_node)
-        return components.Dialog.open(DownloadImageDialog.dialog_id)
-
-    @staticmethod
-    @rx.event
-    async def update(_: rx.State, asset: Asset) -> FrontendEvents:
+    async def update(_: rx.State, manifest: str) -> FrontendEvents:
         """Trigger the update process for a base image asset."""
-        image = BaseImageManifest.load(name=asset.name)
-        if image.metadata.build_date == asset.build_date:
-            return rx.toast.info(f"{image.metadata.os} already up to date.")
-        return [
-            BaseImagesTable.update_in_background(image, asset),
-            rx.toast.info(f"Updating {image.metadata.os}..."),
-        ]
-
-    @staticmethod
-    @rx.event(background=True)
-    async def update_in_background(_: rx.State, image: BaseImageManifest, asset: Asset) -> FrontendEvents:
-        """Run the image update process in a background thread and update the UI upon completion."""
-        await rx.run_in_thread(
-            lambda: ProxmoxCompute().update_vendored_image(image=image, asset=asset),
+        worker = get_worker()
+        error = await worker.create_workflow(
+            name="image.update",
+            version="v1",
+            payload={"manifest": manifest},
         )
-        return [
-            BaseImagesTableState.cache_clear("available_images"),
-            rx.toast.success(f"Successfully updated {image.metadata.os}!"),
-        ]
+        if error:
+            return rx.toast.error(error)
+        return rx.toast.info(f"Updating {manifest}...")
 
     @classmethod
-    def __table_row__(cls, asset: Asset) -> rx.Component:
+    def __table_row__(cls, manifest: BaseImageManifest) -> rx.Component:
         """Create and return the table row component."""
-        manifest: rx.vars.ObjectVar[BaseImageManifest] = (
-            BaseImagesTableState.existing.get(asset.name)
-            .to(BaseImageManifest)
-        )
         return rx.el.tr(
             rx.el.td(
                 rx.el.div(
-                    rx.text(asset.formatted_name),
-                    rx.cond(
-                        manifest.is_not_none(),
-                        rx.text(manifest.spec.filename, class_name="text-sm text-gray-500"),
-                        rx.text(asset.name, class_name="text-sm text-gray-500"),
-                    ),
+                    rx.text(manifest.metadata.os),
+                    rx.text(manifest.name, class_name="text-sm text-gray-500"),
                     class_name="flex-col space-y-1 items-center",
                 ),
                 class_name="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-800 dark:text-gray-200",
             ),
             rx.el.td(
-                rx.cond(
-                    manifest.is_not_none(),
-                    rx.text(f"{manifest.spec.node}"),
-                    rx.text("-"),
-                ),
+                rx.text(f"{manifest.spec.node}"),
                 class_name="px-6 py-4 whitespace-nowrap text-sm text-gray-700 dark:text-gray-300",
             ),
             rx.el.td(
-                rx.cond(
-                    manifest.is_not_none(),
-                    rx.text(f"{manifest.spec.storage}"),
-                    rx.text("-"),
-                ),
+                rx.text(f"{manifest.spec.storage}"),
                 class_name="px-6 py-4 whitespace-nowrap text-sm text-gray-700 dark:text-gray-300",
             ),
             rx.el.td(
-                rx.cond(
-                    manifest.is_not_none(),
-                    rx.moment(manifest.metadata.download_date, local=True),
-                    rx.text("-"),
-                ),
+                rx.moment(manifest.metadata.download_date, local=True),
                 class_name="px-6 py-4 whitespace-nowrap text-sm text-gray-700 dark:text-gray-300",
             ),
             rx.el.td(
@@ -99,13 +58,14 @@ class BaseImagesTable(EventGroup):
                     components.Buttons.Icon("ellipsis-vertical"),
                     components.Menu.Item(
                         "Create Custom Image",
-                        on_click=CustomImageDialog.start_image_creation(manifest.spec.filename),
+                        on_click=CustomImageDialog.start_image_creation(manifest.name),
                     ),
+                    components.Menu.Item("Update", on_click=cls.update(manifest.name)),
                     components.Menu.Separator(),
-                    rx.cond(
-                        manifest.is_not_none(),
-                        components.Menu.Item("Update", on_click=cls.update(asset)),
-                        components.Menu.Item("Download", on_click=cls.download(asset)),
+                    components.Menu.Item(
+                        "Delete",
+                        on_click=DeleteImageDialog.confirm(manifest.name),
+                        danger=True,
                     ),
                 ),
                 class_name="px-6 py-4 whitespace-nowrap text-sm text-gray-700 dark:text-gray-300",
@@ -137,8 +97,8 @@ class BaseImagesTable(EventGroup):
                     ),
                     rx.el.tbody(
                         rx.foreach(
-                            BaseImagesTableState.available_images.values(),
-                            lambda app: cls.__table_row__(app),
+                            BaseImagesTableState.available_images,
+                            lambda image: cls.__table_row__(image),
                         ),
                         class_name=(
                             "divide-y divide-gray-200 dark:divide-white/[0.08] bg-white/70 dark:bg-[#0E1015]/60 "
@@ -202,6 +162,7 @@ class CustomImagesTable(EventGroup):
     @classmethod
     def __table_row__(cls, image: CustomImageManifest) -> rx.Component:
         """Create and return the table row component."""
+        status = CustomImagesTableState.workflow_states.get(image.name, "Never Ran").to(str)
         return rx.el.tr(
             rx.el.td(
                 rx.el.div(
@@ -226,16 +187,16 @@ class CustomImagesTable(EventGroup):
                 components.HoverCard(
                     rx.el.div(
                         rx.match(
-                            image.metadata.status,
+                            status,
                             (
                                 WorkflowStatus.SUCCEEDED,
-                                components.Badge(image.metadata.status.capitalize(), color_scheme="green"),
+                                components.Badge(status.capitalize(), color_scheme="green"),
                             ),
                             (
                                 WorkflowStatus.FAILED,
-                                components.Badge(image.metadata.status.capitalize(), color_scheme="red"),
+                                components.Badge(status.capitalize(), color_scheme="red"),
                             ),
-                            components.Badge(image.metadata.status.capitalize(), color_scheme="blue"),
+                            components.Badge(status.capitalize(), color_scheme="blue"),
                         ),
                     ),
                     rx.cond(
@@ -269,6 +230,16 @@ class CustomImagesTable(EventGroup):
                         on_click=CustomImageDialog.run_workflow(image.name),
                     ),
                     components.Menu.Separator(),
+                    components.Menu.Item(
+                        "View Logs",
+                        on_click=WorkflowLogsViewDialog.view_workflow_logs(image.name),
+                    ),
+                    components.Menu.Separator(),
+                    components.Menu.Item(
+                        "Delete",
+                        on_click=DeleteImageDialog.confirm(image.name),
+                        danger=True,
+                    ),
                 ),
                 class_name="px-6 py-4 whitespace-nowrap text-sm text-gray-700 dark:text-gray-300",
             ),
@@ -311,6 +282,7 @@ class CustomImagesTable(EventGroup):
                         "divide-y divide-gray-200 dark:divide-white/[0.08]"
                     ),
                 ),
+                WorkflowLogsViewDialog(),
                 class_name=(
                     "border border-gray-200 dark:border-white/[0.08] "
                     "rounded-b-xl overflow-x-auto shadow-md "

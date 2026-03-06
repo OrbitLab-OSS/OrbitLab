@@ -2,116 +2,91 @@
 
 import reflex as rx
 
-from orbitlab.clients.proxmox.compute.client import ProxmoxCompute
-from orbitlab.data_types import ComputeState, ComputeStatus, FrontendEvents
+from orbitlab.data_types import ComputeState, ComputeStatus
 from orbitlab.manifest.compute_instances.lxc import LXCManifest
 from orbitlab.web import components
-from orbitlab.web.utilities import EventGroup
+from orbitlab.web.pages.compute.lxc.instances.dialogs import TerminateLXCInstanceDialog
+from orbitlab.web.utilities import EventGroup, get_worker
 
-from .states import LXCsState
+from .states import LXCInstancesTableState
 
 
 class LXCInstancesTable(EventGroup):
     """Table component for displaying and managing running LXC appliances in OrbitLab."""
 
     @staticmethod
-    @rx.event(background=True)
-    async def update_addresses(_: rx.State) -> FrontendEvents:
-        """Update the private IPv4 addresses for all existing LXC manifests and clear the running cache."""
-        for name in LXCManifest.get_existing():
-            manifest = LXCManifest.load(name=name)
-            if manifest.metadata.status == ComputeState.RUNNING and manifest.metadata.vmid:
-                manifest.metadata.address = ProxmoxCompute().get_lxc_private_ipv4(
-                    node=manifest.metadata.node, vmid=manifest.metadata.vmid,
-                )
-                manifest.save()
-        return LXCsState.cache_clear("running")
-
-    @staticmethod
-    @rx.event(background=True)
-    async def run_set_lxc_status(_: rx.State, lxc: LXCManifest, status: ComputeStatus) -> FrontendEvents:
-        """Set the status of an LXC container asynchronously and update the frontend."""
-        await rx.run_in_thread(func=lambda: ProxmoxCompute().set_lxc_status(lxc=lxc, status=status))
-        match status:
-            case ComputeStatus.START:
-                verb = "started"
-            case ComputeStatus.STOP:
-                verb = "stopped"
-            case ComputeStatus.SHUTDOWN:
-                verb = "shutdown"
-            case ComputeStatus.REBOOT:
-                verb = "rebooted"
-            case ComputeStatus.TERMINATE:
-                verb = "terminated"
-        return [
-            LXCsState.cache_clear("running"),
-            rx.toast.success(message=f"LXC {lxc.name} {verb}."),
-        ]
-
-    @staticmethod
     @rx.event
-    async def set_lxc_status(_: rx.State, lxc_id: str, status: ComputeStatus) -> FrontendEvents:
+    async def set_lxc_status(_: rx.State, manifest: str, status: ComputeStatus) -> None:
         """Update the status of an LXC container and trigger backend and frontend updates."""
-        lxc = LXCManifest.load(name=lxc_id)
-        lxc.set_status(status=status)
-        return [
-            LXCInstancesTable.run_set_lxc_status(lxc, status),
-            LXCsState.cache_clear("running"),
-        ]
+        worker = get_worker()
+        error = await worker.create_workflow(
+            name="lxc.state-change",
+            version="v1",
+            payload={"manifest": manifest, "desired_status": status},
+        )
+        if error:
+            return rx.toast.error(error)
+        return rx.toast.info(f"Setting {manifest} to {status}...")
 
     @classmethod
-    def __table_row__(cls, lxc: LXCManifest) -> rx.Component:
+    def __table_row__(cls, instance: LXCManifest) -> rx.Component:
         """Create and return the table row component."""
-        is_running = rx.Var.create(lxc.metadata.status == ComputeState.RUNNING)
-        is_not_stopped = rx.Var.create(lxc.metadata.status == ComputeState.STOPPED).__invert__()
+        status = LXCInstancesTableState.state_map.get(instance.name, "pending").to(str)
+        address = LXCInstancesTableState.address_map.get(instance.name).to(str)
+        is_running = status == ComputeState.RUNNING
+        is_not_stopped = (status == ComputeState.STOPPED).__invert__()
         return rx.el.tr(
             rx.el.td(
                 rx.el.div(
-                    rx.text(lxc.name),
-                    rx.cond(
-                        rx.Var.create(lxc.metadata.vmid).is_not_none(),
-                        components.Badge(f"{lxc.metadata.vmid}"),
+                    rx.el.div(
+                        rx.text(instance.metadata.hostname),
+                        rx.cond(
+                            rx.Var.create(instance.metadata.vmid) > 0,
+                            components.Badge(f"{instance.metadata.vmid}"),
+                        ),
+                        class_name="flex space-x-4 items-center",
                     ),
-                    class_name="flex space-x-4 items-center",
+                    rx.text(instance.name, class_name="text-xs text-gray-500"),
+                    class_name="flex-col space-y-1 items-center",
                 ),
-                class_name="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-800 dark:text-gray-200",
-            ),
-            rx.el.td(
-                lxc.metadata.hostname,
                 class_name="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-800 dark:text-gray-200",
             ),
             rx.el.td(
                 rx.match(
-                    lxc.metadata.status,
-                    (ComputeState.RUNNING, components.Badge(lxc.metadata.status.capitalize(), color_scheme="green")),
-                    (ComputeState.STOPPED, components.Badge(lxc.metadata.status.capitalize(), color_scheme="orange")),
-                    (ComputeState.TERMINATING, components.Badge(lxc.metadata.status.capitalize(), color_scheme="red")),
-                    components.Badge(lxc.metadata.status.capitalize(), color_scheme="blue"),
+                    status,
+                    (ComputeState.RUNNING, components.Badge(status.capitalize(), color_scheme="green")),
+                    (ComputeState.STOPPED, components.Badge(status.capitalize(), color_scheme="orange")),
+                    (ComputeState.TERMINATING, components.Badge(status.capitalize(), color_scheme="red")),
+                    components.Badge(status.capitalize(), color_scheme="blue"),
                 ),
                 class_name="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-800 dark:text-gray-200",
             ),
             rx.el.td(
                 rx.el.div(
-                    rx.text(lxc.metadata.sector_name),
-                    components.Badge(f"{lxc.metadata.sector_id}"),
+                    rx.text(instance.metadata.sector_name),
+                    components.Badge(f"{instance.spec.sector}"),
                     class_name="flex space-x-4 items-center",
                 ),
                 class_name="px-6 py-4 whitespace-nowrap text-sm text-gray-700 dark:text-gray-300",
             ),
             rx.el.td(
                 rx.cond(
-                    rx.Var.create(lxc.metadata.address).is_not_none(),
-                    components.Badge(f"{lxc.metadata.address}", color_scheme="blue"),
+                    address.is_not_none(),
+                    components.Badge(address, color_scheme="blue"),
                     components.Badge("N/A", color_scheme="blue"),
                 ),
                 class_name="px-6 py-4 whitespace-nowrap text-sm text-gray-700 dark:text-gray-300",
             ),
             rx.el.td(
-                lxc.spec.cores,
+                instance.spec.cores,
                 class_name="px-6 py-4 whitespace-nowrap text-sm text-gray-700 dark:text-gray-300",
             ),
             rx.el.td(
-                f"{lxc.spec.memory}G ({lxc.spec.swap}G Swap)",
+                f"{instance.spec.memory}G",
+                class_name="px-6 py-4 whitespace-nowrap text-sm text-gray-700 dark:text-gray-300",
+            ),
+            rx.el.td(
+                f"{instance.spec.swap}G",
                 class_name="px-6 py-4 whitespace-nowrap text-sm text-gray-700 dark:text-gray-300",
             ),
             rx.el.td(
@@ -119,42 +94,30 @@ class LXCInstancesTable(EventGroup):
                     components.Buttons.Icon("ellipsis-vertical"),
                     components.Menu.Item(
                         "Console",
-                        on_click=rx.redirect(f"/terminal/lxc/{lxc.metadata.vmid}", is_external=True),
-                        disabled=lxc.metadata.status != ComputeState.RUNNING,
+                        on_click=rx.redirect(f"/terminal/lxc/{instance.metadata.vmid}", is_external=True),
+                        disabled=status != ComputeState.RUNNING,
                     ),
                     components.Menu.SubMenu(
                         "Instance State",
                         components.Menu.Item(
                             "Start",
-                            on_click=[
-                                cls.set_lxc_status(lxc.name, ComputeStatus.START),
-                                rx.toast.info(f"Starting {lxc.name}..."),
-                            ],
+                            on_click=cls.set_lxc_status(instance.name, ComputeStatus.START),
                             disabled=is_running,
                         ),
                         components.Menu.Item(
                             "Reboot",
-                            on_click=[
-                                cls.set_lxc_status(lxc.name, ComputeStatus.REBOOT),
-                                rx.toast.info(f"Rebooting {lxc.name}..."),
-                            ],
+                            on_click=cls.set_lxc_status(instance.name, ComputeStatus.REBOOT),
                             disabled=is_running.__invert__(),
                         ),
                         components.Menu.Item(
                             "Stop",
-                            on_click=[
-                                cls.set_lxc_status(lxc.name, ComputeStatus.STOP),
-                                rx.toast.info(f"Stopping {lxc.name}..."),
-                            ],
+                            on_click=cls.set_lxc_status(instance.name, ComputeStatus.STOP),
                             disabled=is_running.__invert__(),
                         ),
                         components.Menu.Separator(),
                         components.Menu.Item(
                             "Terminate",
-                            on_click=[
-                                cls.set_lxc_status(lxc.name, ComputeStatus.TERMINATE),
-                                rx.toast.info(f"Terminating {lxc.name}..."),
-                            ],
+                            on_click=TerminateLXCInstanceDialog.confirm(instance.name),
                             disabled=is_running.__invert__() & is_not_stopped,
                             danger=True,
                         ),
@@ -179,19 +142,19 @@ class LXCInstancesTable(EventGroup):
                 rx.el.table(
                     rx.el.thead(
                         rx.el.tr(
-                            rx.el.th("ID", class_name=header_class),
-                            rx.el.th("Hostname", class_name=header_class),
+                            rx.el.th("LXC Instance", class_name=header_class),
                             rx.el.th("Status", class_name=header_class),
                             rx.el.th("Sector", class_name=header_class),
                             rx.el.th("Private Address", class_name=header_class),
                             rx.el.th("Cores", class_name=header_class),
                             rx.el.th("Memory", class_name=header_class),
+                            rx.el.th("Swap", class_name=header_class),
                             rx.el.th("", class_name=header_class),
                         ),
                         class_name="bg-white/60 dark:bg-white/[0.03] backdrop-blur-sm",
                     ),
                     rx.el.tbody(
-                        rx.foreach(LXCsState.running, lambda app: cls.__table_row__(app)),
+                        rx.foreach(LXCInstancesTableState.running, lambda app: cls.__table_row__(app)),
                         class_name=(
                             "divide-y divide-gray-200 dark:divide-white/[0.08] bg-white/70 dark:bg-[#0E1015]/60 "
                             "backdrop-blur-sm"
@@ -202,6 +165,7 @@ class LXCInstancesTable(EventGroup):
                         "divide-y divide-gray-200 dark:divide-white/[0.08]"
                     ),
                 ),
+                TerminateLXCInstanceDialog(),
                 class_name=(
                     "border border-gray-200 dark:border-white/[0.08] "
                     "rounded-b-xl overflow-x-auto shadow-md "
@@ -215,7 +179,7 @@ class LXCInstancesTable(EventGroup):
                 rx.el.div(
                     rx.el.div(),
                     rx.el.div(
-                        components.Buttons.Icon("refresh-ccw", on_click=cls.update_addresses),
+                        components.Buttons.Icon("refresh-ccw", on_click=LXCInstancesTableState.cache_clear("running")),
                         class_name="flex space-x-4",
                     ),
                     class_name="w-full flex justify-between",

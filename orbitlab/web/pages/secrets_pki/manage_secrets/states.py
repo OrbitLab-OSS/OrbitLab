@@ -15,6 +15,12 @@ class SecretsState(CacheBuster, rx.State):
         return [SecretManifest.load(name=name) for name in SecretManifest.get_existing()]
 
 
+class CreateSecretDialogState(rx.State):
+    """State management for the create secret dialog."""
+
+    view_secret_value: rx.Field[bool] = rx.field(default=False)
+
+
 class DeleteSecretDialogState(rx.State):
     """State management for the delete secret dialog."""
 

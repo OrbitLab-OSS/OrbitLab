@@ -5,9 +5,9 @@ from types import SimpleNamespace
 from typing import Final
 
 import reflex as rx
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
-from orbitlab.clients.proxmox import Proxmox
+from orbitlab.proxmox import Proxmox
 from orbitlab.data_types import FrontendEvents, StorageContentType, StorageProfile
 from orbitlab.manifest.cluster import ClusterManifest, DefaultStorageSelections
 from orbitlab.web.components import Buttons, FieldSet, Select
@@ -217,6 +217,11 @@ class SideBarStateManager(rx.State):
         """Get the current URL path from the router."""
         return self.router.url.path
 
+    @rx.var
+    def primary_uri(self) -> str:
+        primary = next(iter([i for i in self.current_path.split("/") if i]), "")
+        return f"/{primary}"
+
     @rx.event
     async def register(self, sidebar_id: str) -> None:
         """Register a sidebar by its identifier and set its state to False."""
@@ -247,6 +252,10 @@ class SidebarSectionHeader(BaseModel):
     title: str
 
 
+class SidebarSection(SidebarNavItem):
+    children: list[SidebarNavItem | SidebarSectionHeader] = Field(default_factory=list)
+
+
 class SideBarRoot:
     """A collapsible sidebar component with navigation items and settings menu."""
 
@@ -270,33 +279,90 @@ class SideBarRoot:
         )
 
     @classmethod
-    def __nav_item__(cls, nav_item: SidebarNavItem, collapsed: rx.vars.BooleanVar) -> rx.Component:
-        """Create a navigation item button for the sidebar."""
-        return rx.el.button(
-            rx.el.div(
-                rx.icon(nav_item.icon, size=20, class_name="transition-colors duration-200"),
-                rx.el.span(
-                    nav_item.text,
-                    data_collapsed=collapsed,
-                    class_name="text-sm font-medium transition-all duration-200 data-[collapsed=true]:hidden",
+    def section_child(cls, item: SidebarNavItem | SidebarSectionHeader, collapsed: rx.vars.BooleanVar) -> rx.Component:
+        if isinstance(item, SidebarNavItem):
+            return rx.el.button(
+                rx.el.div(
+                    rx.icon(item.icon, size=20, class_name="transition-colors duration-200"),
+                    rx.el.span(
+                        item.text,
+                        data_collapsed=collapsed,
+                        class_name="text-sm font-medium transition-all duration-200 data-[collapsed=true]:hidden",
+                    ),
+                    class_name="flex items-center gap-3",
                 ),
-                class_name="flex items-center gap-3",
+                on_click=rx.redirect(item.href),
+                data_active=SideBarStateManager.current_path == item.href,
+                data_collapsed=collapsed,
+                class_name=(
+                    "flex items-start w-full px-3 py-2.5 rounded-lg data-[active=true]:bg-sky-100 "
+                    "data-[active=true]:text-sky-600 data-[active=true]:dark:bg-sky-900/50 "
+                    "data-[active=true]:dark:text-sky-300 data-[active=false]:text-gray-500 "
+                    "data-[active=false]:dark:text-gray-400 "
+                    "data-[active=false]:hover:bg-gray-100 data-[active=false]:dark:hover:bg-gray-800 "
+                    "data-[active=false]:hover:text-gray-800 data-[active=false]:dark:hover:text-gray-200 "
+                    "data-[collapsed=true]:justify-center"
+                ),
+            )
+        return rx.el.div(
+            rx.cond(
+                collapsed,
+                " •",
+                item.title.upper(),
             ),
-            on_click=rx.redirect(nav_item.href),
-            data_active=SideBarStateManager.current_path == nav_item.href,
             data_collapsed=collapsed,
             class_name=(
-                "flex items-start w-full px-3 py-2.5 rounded-lg data-[active=true]:bg-sky-100 "
-                "data-[active=true]:text-sky-600 data-[active=true]:dark:bg-sky-900/50 "
-                "data-[active=true]:dark:text-sky-300 data-[active=false]:text-gray-500 "
-                "data-[active=false]:dark:text-gray-400 "
-                "data-[active=false]:hover:bg-gray-100 data-[active=false]:dark:hover:bg-gray-800 "
-                "data-[active=false]:hover:text-gray-800 data-[active=false]:dark:hover:text-gray-200 "
-                "data-[collapsed=true]:justify-center"
+                "px-3 not-first:pt-8 pb-1 text-base font-semibold tracking-wider uppercase "
+                "text-[rgb(0,150,255)] dark:text-[rgb(0,200,255)] "
+                "select-none opacity-80 text-center"
             ),
         )
 
-    def __new__(cls, *nav_items: SidebarNavItem | SidebarSectionHeader, title: str = "OrbitLab") -> rx.Component:
+    @classmethod
+    def section(cls, section: SidebarSection, collapsed: rx.vars.BooleanVar) -> rx.Component:
+        """Create a navigation item button for the sidebar."""
+        return rx.el.div(
+            rx.el.button(
+                rx.el.div(
+                    rx.icon(section.icon, size=20, class_name="transition-colors duration-200"),
+                    rx.el.span(
+                        section.text,
+                        data_collapsed=collapsed,
+                        class_name="text-sm font-medium transition-all duration-200 data-[collapsed=true]:hidden",
+                    ),
+                    class_name="flex items-center gap-3",
+                ),
+                on_click=rx.redirect(section.href),
+                data_active=SideBarStateManager.current_path == section.href,
+                data_collapsed=collapsed,
+                class_name=(
+                    "flex items-start w-full px-3 py-2.5 rounded-lg data-[active=true]:bg-sky-100 "
+                    "data-[active=true]:text-sky-600 data-[active=true]:dark:bg-sky-900/50 "
+                    "data-[active=true]:dark:text-sky-300 data-[active=false]:text-gray-500 "
+                    "data-[active=false]:dark:text-gray-400 "
+                    "data-[active=false]:hover:bg-gray-100 data-[active=false]:dark:hover:bg-gray-800 "
+                    "data-[active=false]:hover:text-gray-800 data-[active=false]:dark:hover:text-gray-200 "
+                    "data-[collapsed=true]:justify-center"
+                ),
+            ),
+            rx.el.div(
+                *[
+                    cls.section_child(item=item, collapsed=collapsed)
+                    for item in section.children
+                ],
+                data_active=SideBarStateManager.primary_uri == section.href,
+                data_children=len(section.children) > 0,
+                class_name=(
+                    "flex flex-col gap-1 mt-1 py-2 rounded-lg "
+                    "bg-gray-100/60 dark:bg-white/[0.03] "
+                    "border-l border-gray-200 dark:border-white/[0.08] "
+                    "data-[active=false]:hidden data-[children=false]:hidden"
+                ),
+            ),
+        )
+        
+
+    def __new__(cls, *sections: SidebarSection) -> rx.Component:
         """Create a new sidebar component instance."""
         cls.sidebar_id = str(uuid.uuid4())
         collapsed = SideBarStateManager.registered.get(cls.sidebar_id, {}).to(dict).get("collapsed", False).to(bool)
@@ -307,7 +373,7 @@ class SideBarRoot:
                         rx.el.a(
                             OrbitLabLogo(),
                             rx.el.span(
-                                title,
+                                "OrbitLab",
                                 data_collapsed=collapsed,
                                 class_name=(
                                     "text-lg font-bold text-nowrap text-gray-800 dark:text-gray-100 "
@@ -335,12 +401,7 @@ class SideBarRoot:
                         class_name="flex items-center justify-between p-3 data-[collapsed=true]:flex-col",
                     ),
                     rx.el.nav(
-                        *[
-                            cls.__section_header__(header=item, collapsed=collapsed)
-                            if isinstance(item, SidebarSectionHeader)
-                            else cls.__nav_item__(nav_item=item, collapsed=collapsed)
-                            for item in nav_items
-                        ],
+                        *[cls.section(section=section, collapsed=collapsed) for section in sections],
                         class_name="flex flex-col gap-1 p-2",
                     ),
                 ),
@@ -412,9 +473,9 @@ class SideBarNamespace(SimpleNamespace):
     """A namespace for sidebar-related components and utilities."""
 
     __call__ = staticmethod(SideBarRoot)
-    SectionHeader = staticmethod(SidebarSectionHeader)
+    Section = staticmethod(SidebarSection)
+    Header = staticmethod(SidebarSectionHeader)
     NavItem = staticmethod(SidebarNavItem)
-    Manager = SideBarStateManager
 
 
 SideBar = SideBarNamespace()

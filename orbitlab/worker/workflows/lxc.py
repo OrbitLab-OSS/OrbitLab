@@ -1,54 +1,143 @@
-from orbitlab.clients.proxmox.compute.client import ProxmoxCompute
+"""LXC Workflows."""
+
+import asyncio
+
+from orbitlab.data_types import ComputeState, ComputeStatus
 from orbitlab.manifest.compute_instances.lxc import LXCManifest
+from orbitlab.web.pages.compute.lxc.instances.states import LXCInstancesTableState
+from orbitlab.worker.workflows.utilities import LXCUtils
+
 from .base import Workflow, WorkflowPayload
 
 
-class LXCCreateV1Payload(WorkflowPayload):
+class LXCPayload(WorkflowPayload):
+    """Payload for LXC workflows."""
+
     manifest: str
 
+    @property
+    def redis_name(self) -> str:
+        """Generate the Redis key name for the specified LXC manifest."""
+        return f"ol:lxc:{self.manifest}"
 
-class LXCCreateV1(Workflow):
-    TYPE = "lxc.create"
-    SCHEMA = "v1"
-    PAYLOAD: type[LXCCreateV1Payload] = LXCCreateV1Payload
 
-    async def pending(self, payload: LXCCreateV1Payload) -> LXCCreateV1Payload:
-        if payload.manifest in LXCManifest.get_existing():
-            return await self.progress(payload=payload)
-        return await self.failed(error=f"LXC Manifest {payload.manifest} does not exist", payload=payload)
-    
-    async def validate(self, payload: LXCCreateV1Payload) -> LXCCreateV1Payload:
-        manifest = LXCManifest.load(name=payload.manifest)
-        params = manifest.create_lxc_params(vmid=0)
-        if params:
-            return await self.progress(payload=payload)
-        return await self.failed(
-            error=f"Unable to validate LXC creation parameters for {payload.manifest}",
-            payload=payload,
-        )
+class LXCCreateV1(Workflow, LXCUtils):
+    """Workflow for creating an LXC container using a specified manifest."""
 
-    async def provision(self, payload: LXCCreateV1Payload) -> LXCCreateV1Payload:
-        manifest = LXCManifest.load(name=payload.manifest)
-        vmid = ProxmoxCompute().launch_lxc(lxc=manifest)
-        await self.redis.hset(name=f"ol:lxc:{manifest.name}", key="vmid", value=str(vmid)) # pyright: ignore[reportGeneralTypeIssues]
-        return await self.progress(payload=payload)
+    TYPE: str = "lxc.create"
+    SCHEMA: str = "v1"
+    PAYLOAD_TYPE: type[LXCPayload] = LXCPayload
+    payload: LXCPayload
 
-    async def configure(self, payload: LXCCreateV1Payload) -> LXCCreateV1Payload:
-        manifest = LXCManifest.load(name=payload.manifest)
-        vmid: str | None = await self.redis.hget(name=f"ol:lxc:{manifest.name}", key="vmid") # type: ignore
-        if not vmid:
-            return await self.failed(error=f"Unable to get VMID for {manifest.name}", payload=payload)
-        ip_address = ProxmoxCompute().get_lxc_private_ipv4(node=manifest.metadata.node, vmid=int(vmid))
-        if not ip_address:
-            return await self.failed(error=f"Unable to get default IPv4 address for VMID {vmid}", payload=payload)
-        await self.redis.hset(name=f"ol:lxc:{manifest.name}", key="ipv4", value=ip_address.with_prefixlen) # pyright: ignore[reportGeneralTypeIssues]
-        return await self.progress(payload=payload)
+    async def validate(self) -> None:
+        """Validate the LXC manifest and ensure it is not already assigned a VMID."""
+        if self.payload.manifest not in LXCManifest.get_existing():
+            await self.fail(f"LXC Manifest {self.payload.manifest} does not exist")
+            return
 
-    async def on_failure(self, payload: LXCCreateV1Payload) -> LXCCreateV1Payload:
-        if not payload.manifest in LXCManifest.get_existing():
-            return payload
-        manifest = LXCManifest.load(name=payload.manifest)
-        await self.redis.hdel(f"ol:lxc:{manifest.name}", "vmid") # pyright: ignore[reportGeneralTypeIssues]
-        await self.redis.hdel(f"ol:lxc:{manifest.name}", "ipv4") # pyright: ignore[reportGeneralTypeIssues]
-        manifest.delete()
-        return payload
+        manifest = LXCManifest.load(name=self.payload.manifest)
+        if manifest.metadata.vmid:
+            await self.succeed(f"LXC {self.payload.manifest} already assigned VMID {manifest.metadata.vmid}")
+
+    async def provision(self) -> None:
+        """Provision the LXC container."""
+        await self.redis.hset(name=self.payload.redis_name, key="state", value=ComputeState.STARTING.value)  # pyright: ignore[reportGeneralTypeIssues]
+        await self.emit_reflex_events(events=[LXCInstancesTableState.cache_clear("running")])
+
+        manifest = LXCManifest.load(name=self.payload.manifest)
+        vmid = self.proxmox_compute.get_next_vmid()
+        await self.create(params=manifest.create_lxc_params(vmid=vmid), node=manifest.metadata.node)
+        await self.start(vmid=vmid)
+
+    async def finalize(self) -> None:
+        """Finalize the LXC container creation by retrieving and storing its IPv4 address."""
+        manifest = LXCManifest.load(name=self.payload.manifest)
+
+        max_retries = 3
+        retries = 0
+        while retries < max_retries:
+            ip_address = await self.get_ipv4_address(vmid=manifest.metadata.vmid)
+            if ip_address:
+                await self.redis.hset(name=self.payload.redis_name, key="ipv4", value=ip_address.with_prefixlen)  # pyright: ignore[reportGeneralTypeIssues]
+                break
+            await self.log(message=f"Waiting on {self.payload.manifest} IPv4 address...")
+            await asyncio.sleep(2)
+            retries += 1
+
+        await self.update_state(name=self.payload.redis_name, status=ComputeStatus.START, vmid=manifest.metadata.vmid)
+        await self.emit_reflex_events(events=[LXCInstancesTableState.cache_clear("running")])
+
+    async def on_failure(self) -> None:
+        """Handle cleanup actions when the workflow fails."""
+        if self.payload.manifest in LXCManifest.get_existing():
+            manifest = LXCManifest.load(name=self.payload.manifest)
+            if manifest.metadata.vmid:
+                await self.terminate(vmid=manifest.metadata.vmid)
+            await self.redis.hdel(self.payload.redis_name, "state", "ipv4")  # pyright: ignore[reportGeneralTypeIssues]
+            await self.log(message=f"Deleting manifest {self.payload.manifest}")
+            manifest.delete()
+        await self.emit_reflex_events(events=[LXCInstancesTableState.cache_clear("running")])
+
+
+class LXCStateChangePayload(LXCPayload):
+    """Payload for LXC workflows."""
+
+    desired_status: ComputeStatus
+
+
+class LXCStateChangeV1(Workflow, LXCUtils):
+    """Workflow for changing the state of an LXC container."""
+
+    TYPE: str = "lxc.state-change"
+    SCHEMA: str = "v1"
+    PAYLOAD_TYPE: type[LXCStateChangePayload] = LXCStateChangePayload
+    payload: LXCStateChangePayload
+
+    async def validate(self) -> None:
+        """Validate the current state of the LXC container and ensure the desired state change is possible."""
+        if self.payload.manifest not in LXCManifest.get_existing():
+            await self.fail(f"LXC Manifest {self.payload.manifest} does not exist.")
+            return
+
+        manifest = LXCManifest.load(name=self.payload.manifest)
+
+        status = self.proxmox_compute.get_lxc_status(vmid=manifest.metadata.vmid)
+        if status == "stopped" and self.payload.desired_status not in (ComputeStatus.START, ComputeStatus.TERMINATE):
+            await self.fail(
+                f"VMID {manifest.metadata.vmid} is stopped and cannot be set to {self.payload.desired_status}",
+            )
+            return
+        if status == "running" and self.payload.desired_status == ComputeStatus.START:
+            await self.redis.hset(name=self.payload.redis_name, key="state", value=ComputeState.RUNNING.value)
+            await self.succeed(f"VMID {manifest.metadata.vmid} already running.")
+            return
+
+        await self.update_state(name=self.payload.redis_name, status=self.payload.desired_status)
+
+    async def provision(self) -> None:
+        """Change the state of the LXC container to the desired state."""
+        manifest = LXCManifest.load(name=self.payload.manifest)
+        match self.payload.desired_status:
+            case ComputeStatus.STOP:
+                await self.stop(vmid=manifest.metadata.vmid)
+            case ComputeStatus.SHUTDOWN:
+                await self.stop(vmid=manifest.metadata.vmid, shutdown=True)
+            case ComputeStatus.START:
+                await self.start(vmid=manifest.metadata.vmid)
+            case ComputeStatus.REBOOT:
+                await self.reboot(vmid=manifest.metadata.vmid)
+            case ComputeStatus.TERMINATE:
+                await self.terminate(vmid=manifest.metadata.vmid)
+
+    async def finalize(self) -> None:
+        """Finalize the state change of the LXC container and clean up if terminated."""
+        manifest = LXCManifest.load(name=self.payload.manifest)
+
+        if self.payload.desired_status == ComputeStatus.TERMINATE:
+            manifest.delete()
+            await self.redis.hdel(self.payload.redis_name, "state", "ipv4")  # pyright: ignore[reportGeneralTypeIssues]
+            await self.emit_reflex_events(events=[LXCInstancesTableState.cache_clear("running")])
+        else:
+            await self.update_state(
+                name=self.payload.redis_name, status=self.payload.desired_status, vmid=manifest.metadata.vmid,
+            )

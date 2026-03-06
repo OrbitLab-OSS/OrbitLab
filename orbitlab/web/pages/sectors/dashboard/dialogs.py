@@ -6,15 +6,15 @@ from typing import Final
 
 import reflex as rx
 
-from orbitlab.clients.proxmox import ProxmoxNetworks
-from orbitlab.data_types import FrontendEvents, SectorState
+from orbitlab.data_types import FrontendEvents
 from orbitlab.manifest.cluster import ClusterManifest
 from orbitlab.manifest.sector import SectorManifest
+from orbitlab.proxmox import ProxmoxNetworks
 from orbitlab.web import components
-from orbitlab.web.utilities import EventGroup
+from orbitlab.web.utilities import EventGroup, get_worker
 
 from .models import CreateSectorForm
-from .states import CreateSectorDialogState, DeleteSectorDialogState, SectorsState
+from .states import CreateSectorDialogState, DeleteSectorDialogState
 
 
 class CreateSectorDialog(EventGroup):
@@ -43,29 +43,18 @@ class CreateSectorDialog(EventGroup):
     async def submit(state: CreateSectorDialogState, form: dict) -> FrontendEvents:
         """Create a new sector (virtual network) with configured subnets and save to cluster manifest."""
         state.form_data.update(form)
-        sector = SectorManifest.create(form_data=CreateSectorForm.model_validate(state.form_data))
-        state.reset()
+        manifest = SectorManifest.create(form_data=CreateSectorForm.model_validate(state.form_data))
+        worker = get_worker()
+        error = await worker.create_workflow(
+            name="sector.create",
+            version="v1",
+            payload={"manifest": manifest.name},
+        )
+        if error:
+            return rx.toast.error(error)
         return [
             components.Dialog.close(CreateSectorDialog.dialog_id),
-            SectorsState.cache_clear("sectors"),
-            rx.toast.info(f"Creating '{sector.metadata.alias}' network sector..."),
-            CreateSectorDialog.start_create_sector(sector),
-        ]
-
-    @staticmethod
-    @rx.event(background=True)
-    async def start_create_sector(_: rx.State, sector: SectorManifest) -> FrontendEvents:
-        """Create the sector in Proxmox and update its state to available."""
-        networks = ProxmoxNetworks()
-        await rx.run_in_thread(func=lambda: networks.create_sector(sector=sector))
-        await rx.run_in_thread(func=lambda: networks.create_sector_gateway(sector=sector))
-        sector.metadata.state = SectorState.AVAILABLE
-        sector.save()
-        cluster_manifest = ClusterManifest.load(name=next(iter(ClusterManifest.get_existing())))
-        cluster_manifest.add_sector(tag=sector.metadata.tag, ref=sector.to_ref())
-        return [
-            SectorsState.cache_clear("sectors"),
-            rx.toast.success(f"Sector '{sector.metadata.alias}' Successfully created!"),
+            rx.toast.info(f"Creating '{manifest.spec.alias}' network sector..."),
         ]
 
     @staticmethod
@@ -129,8 +118,7 @@ class DeleteSectorDialog(EventGroup):
     async def check_can_delete(state: DeleteSectorDialogState, sector_id: str) -> FrontendEvents:
         """Check if a sector can be deleted by verifying no VMs are attached to it."""
         state.sector_id = sector_id
-        response = ProxmoxNetworks().list_attached(sector_id=sector_id)
-        state.attached_vms = response.attached
+        state.attached_vms = ProxmoxNetworks().list_attached(sector_id=sector_id)
         return components.Dialog.open(DeleteSectorDialog.dialog_id)
 
     @staticmethod
@@ -150,27 +138,18 @@ class DeleteSectorDialog(EventGroup):
     @rx.event
     async def submit(state: DeleteSectorDialogState) -> FrontendEvents:
         """Submit the sector deletion request and initiate the deletion process."""
-        sector = SectorManifest.load(name=state.sector_id)
-        sector.metadata.state = SectorState.DELETING
-        sector.save()
-        state.reset()
+        manifest = SectorManifest.load(name=state.sector_id)
+        worker = get_worker()
+        error = await worker.create_workflow(
+            name="sector.delete",
+            version="v1",
+            payload={"manifest": manifest.name},
+        )
+        if error:
+            return rx.toast.error(error)
         return [
             components.Dialog.close(DeleteSectorDialog.dialog_id),
-            SectorsState.cache_clear("sectors"),
-            rx.toast.info(f"Deleting '{sector.metadata.alias}' network sector..."),
-            DeleteSectorDialog.start_sector_delete(sector),
-        ]
-
-    @staticmethod
-    @rx.event(background=True)
-    async def start_sector_delete(_: rx.State, sector: SectorManifest) -> FrontendEvents:
-        """Delete a sector and clean up associated resources including IPAM, secrets, and cluster references."""
-        await rx.run_in_thread(lambda: ProxmoxNetworks().delete_sector(sector=sector))
-        ClusterManifest.load(name=next(iter(ClusterManifest.get_existing()))).remove_sector(tag=sector.metadata.tag)
-        sector.delete()
-        return [
-            rx.toast.success(f"Sector '{sector.metadata.alias}' Successfully deleted!"),
-            SectorsState.cache_clear("sectors"),
+            rx.toast.info(f"Deleting '{manifest.spec.alias}' network sector..."),
         ]
 
     dialog_id: Final = "delete-sector-dialog"
@@ -195,8 +174,7 @@ class DeleteSectorDialog(EventGroup):
                     rx.el.thead(
                         rx.el.tr(
                             rx.el.th("ID", class_name=header_class),
-                            rx.el.th("Name", class_name=header_class),
-                            rx.el.th("IP", class_name=header_class),
+                            rx.el.th("Type", class_name=header_class),
                         ),
                         class_name="bg-white/60 dark:bg-white/[0.03] backdrop-blur-sm",
                     ),
@@ -205,21 +183,14 @@ class DeleteSectorDialog(EventGroup):
                             DeleteSectorDialogState.attached_vms,
                             lambda vm: rx.el.tr(
                                 rx.el.td(
-                                    vm.vmid,  # Sector ID
+                                    vm.vmid,  # VM ID
                                     class_name=(
                                         "px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-800 "
                                         "dark:text-gray-200"
                                     ),
                                 ),
                                 rx.el.td(
-                                    vm.name,  # Sector Name
-                                    class_name=(
-                                        "px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-800 "
-                                        "dark:text-gray-200"
-                                    ),
-                                ),
-                                rx.el.td(
-                                    vm.ip,  # Sector Name
+                                    vm.compute_type,  # Compute Type
                                     class_name=(
                                         "px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-800 "
                                         "dark:text-gray-200"

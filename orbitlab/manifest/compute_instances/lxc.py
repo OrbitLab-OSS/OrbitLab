@@ -1,30 +1,28 @@
 """Schema definitions for LXC container manifests in OrbitLab."""
 
-from ipaddress import IPv4Interface
-from typing import Annotated, Self
+from typing import TYPE_CHECKING, Annotated, Self
 
-from orbitlab.data_types import ComputeState, ComputeStatus, ManifestKind
+from orbitlab.data_types import ManifestKind
 from orbitlab.manifest.base import BaseManifest, Metadata, Spec
 from orbitlab.manifest.compute_templates import CustomApplianceManifest
 from orbitlab.manifest.ref import Ref
 from orbitlab.manifest.secrets import SecretManifest
 from orbitlab.manifest.sector import SectorManifest
-from orbitlab.manifest.serialization import SerializeEnum, SerializeIP
+from orbitlab.manifest.serialization import SerializeEnum
 from orbitlab.services.discovery import BaseApplianceManifest
-from orbitlab.web.pages.compute.lxc.instances.models import CreateLXCForm
+
+if TYPE_CHECKING:
+    from orbitlab.web.pages.compute.lxc.instances.models import CreateLXCForm
 
 
 class LXCMetadata(Metadata):
     """Metadata schema for LXC containers."""
 
-    sector_id: str
     sector_name: str
     hostname: str
     on_boot: bool = True
-    status: Annotated[ComputeState, SerializeEnum] = ComputeState.STARTING
     node: str
-    vmid: int | None = None
-    address: Annotated[IPv4Interface, SerializeIP] | None = None
+    vmid: int = 0
 
 
 class LXCSpec(Spec):
@@ -34,7 +32,7 @@ class LXCSpec(Spec):
     disk_storage: str
     disk_size: int
     sector: str
-    password: Ref | None = None
+    password: Ref
     ssh_public_key: Ref | str = ""
     memory: int
     swap: int
@@ -58,7 +56,7 @@ class LXCManifest(BaseManifest[LXCMetadata, LXCSpec]):
             "cores": self.spec.cores,
             "memory": self.spec.memory * 1024,
             "swap": self.spec.memory * 1024,
-            "net0": f"name=eth0,bridge={self.spec.sector},ip=dhcp",
+            "net0": f"name=eth0,bridge={self.spec.sector},ip=dhcp,mtu=1450",
             "rootfs": f"{self.spec.disk_storage}:{self.spec.disk_size}",
             "unprivileged": "1",
             "vmid": vmid,
@@ -75,21 +73,6 @@ class LXCManifest(BaseManifest[LXCMetadata, LXCSpec]):
             return SecretManifest.load(name=self.spec.password.name).get_current_value()
         return ""
 
-    def set_status(self, status: ComputeStatus, *, completed: bool = False) -> None:
-        """Update the status in the manifest based on the provided ComputeStatus."""
-        match status:
-            case ComputeStatus.START:
-                self.metadata.status = ComputeState.RUNNING if completed else ComputeState.STARTING
-            case ComputeStatus.REBOOT:
-                self.metadata.status = ComputeState.RUNNING if completed else ComputeState.RESTARTING
-            case ComputeStatus.STOP:
-                self.metadata.status = ComputeState.STOPPED if completed else ComputeState.STOPPING
-            case ComputeStatus.SHUTDOWN:
-                self.metadata.status = ComputeState.STOPPED if completed else ComputeState.STOPPING
-            case ComputeStatus.TERMINATE:
-                self.metadata.status = ComputeState.TERMINATING
-        self.save()
-
     def delete(self) -> None:
         """Delete the VM manifest and remove its associated secret."""
         if self.spec.password:
@@ -97,31 +80,29 @@ class LXCManifest(BaseManifest[LXCMetadata, LXCSpec]):
         super().delete()
 
     @classmethod
-    def create(cls, form: CreateLXCForm) -> Self:
+    def create(cls, form_data: "CreateLXCForm") -> Self:
         """Create a new LXCManifest instance from the provided form data."""
-        if form.appliance in BaseApplianceManifest.get_existing():
-            appliance = BaseApplianceManifest.load(name=form.appliance)
+        if form_data.appliance in BaseApplianceManifest.get_existing():
+            appliance = BaseApplianceManifest.load(name=form_data.appliance)
         else:
-            appliance = CustomApplianceManifest.load(name=form.appliance)
-        sector = SectorManifest.load(name=form.sector)
+            appliance = CustomApplianceManifest.load(name=form_data.appliance)
         lxc_id = cls._generate_id(prefix="lxc")
-        password = SecretManifest.create_lxc_password(lxc_id=lxc_id, password=form.password)
+        password = SecretManifest.create_lxc_password(lxc_id=lxc_id, password=form_data.password)
         manifest = cls(
             name=lxc_id,
             metadata=LXCMetadata(
-                sector_id=form.sector,
-                sector_name=sector.metadata.alias,
-                hostname=form.name,
-                node=form.node,
+                sector_name=SectorManifest.load(name=form_data.sector).spec.alias,
+                hostname=form_data.name,
+                node=form_data.node,
             ),
             spec=LXCSpec(
-                os_template=appliance.ostemplate,
-                disk_storage=form.rootfs,
-                disk_size=form.disk_size,
-                sector=form.sector,
-                memory=form.memory,
-                swap=form.swap,
-                cores=form.cores,
+                os_template=appliance.volume_id,
+                disk_storage=form_data.rootfs,
+                disk_size=form_data.disk_size,
+                sector=form_data.sector,
+                memory=form_data.memory,
+                swap=form_data.swap,
+                cores=form_data.cores,
                 password=password.to_ref(),
             ),
         )

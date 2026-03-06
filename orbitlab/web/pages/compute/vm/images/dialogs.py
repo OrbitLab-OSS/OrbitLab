@@ -6,25 +6,33 @@ from typing import Final
 import reflex as rx
 from reflex.event import EventCallback, EventSpec
 
-from orbitlab.clients.proxmox.compute.client import ProxmoxCompute
-from orbitlab.clients.proxmox.compute.models import Asset
-from orbitlab.clients.proxmox.compute_templates import ProxmoxComputeTemplates
-from orbitlab.data_types import FrontendEvents, WorkflowStatus
+from orbitlab.data_types import FrontendEvents
 from orbitlab.manifest.compute_templates.images import BaseImageManifest, CustomImageManifest
+from orbitlab.proxmox.compute_templates import ProxmoxComputeTemplates
 from orbitlab.web import components
 from orbitlab.web.defaults import ClusterDefaults
-from orbitlab.web.utilities import EventGroup
+from orbitlab.web.utilities import EventGroup, get_worker
 
 from .models import CreateCustomImageForm
 from .progress_panels import GeneralConfigurationPanel, ReviewPanel, WorkflowConfigurationPanel
-from .states import BaseImagesTableState, CustomImageDialogState, CustomImagesTableState, DownloadImageDialogState
+from .states import (
+    CustomImageDialogState,
+    CustomImagesTableState,
+    DeleteImageDialogState,
+    DownloadImageDialogState,
+)
 
 
 class DownloadImageDialog(EventGroup):
     """Dialog group for downloading vendored images to a selected node and storage."""
 
-    dialog_id: Final = "download-vendored-image-dialog"
-    form_id: Final = "download-vendored-image-form"
+    @staticmethod
+    @rx.event
+    async def open(state: DownloadImageDialogState) -> None:
+        """Set the selected node in the dialog state."""
+        state.vendored_images = ProxmoxComputeTemplates().get_vendored_images().images
+        state.node = await state.get_var_value(ClusterDefaults.proxmox_node)
+        return components.Dialog.open(DownloadImageDialog.dialog_id)
 
     @staticmethod
     @rx.event
@@ -36,67 +44,71 @@ class DownloadImageDialog(EventGroup):
     @rx.event
     async def submit(state: DownloadImageDialogState, form: dict) -> FrontendEvents | None:
         """Handle the submission of the download image form."""
-        if state.asset:
-            default_storage = await state.get_var_value(ClusterDefaults.import_storage)
-            storage: str = form.get("storage", default_storage)
-            BaseImageManifest.create(storage=storage, node=state.node, asset=state.asset)
-            return [
-                components.Dialog.close(DownloadImageDialog.dialog_id),
-                DownloadImageDialog.download(storage, state.asset),
-                rx.toast.info(f"Downloading {state.os_name}"),
-            ]
-        return None
-
-    @staticmethod
-    @rx.event(background=True)
-    async def download(state: DownloadImageDialogState, storage: str, asset: Asset) -> FrontendEvents:
-        """Wait for image download task to complete and update state."""
-        await rx.run_in_thread(lambda: ProxmoxCompute().download_vendored_image(storage=storage, asset=asset))
-        async with state:
-            state.reset()
+        storage: str = form["storage"]
+        filename = form["image"]
+        image = next(iter(img for img in state.vendored_images if img.filename == filename))
+        manifest = BaseImageManifest.create(storage=storage, node=state.node, image=image)
+        worker = get_worker()
+        error = await worker.create_workflow(
+            name="image.download",
+            version="v1",
+            payload={"manifest": manifest.name},
+        )
+        if error:
+            return rx.toast.error(error)
         return [
-            BaseImagesTableState.cache_clear("available_images"),
-            rx.toast.success(f"Image {asset.formatted_name} download complete!"),
+            rx.toast.info(f"Downloading {manifest.spec.filename}..."),
+            DownloadImageDialog.close,
         ]
 
     @staticmethod
     @rx.event
-    async def cancel(state: DownloadImageDialogState) -> FrontendEvents:
+    async def close(state: DownloadImageDialogState) -> FrontendEvents:
         """Handle the cancellation of the download image dialog."""
         state.reset()
         return components.Dialog.close(DownloadImageDialog.dialog_id)
 
+    dialog_id: Final = "download-vendored-image-dialog"
+    form_id: Final = "download-vendored-image-form"
+
     def __new__(cls) -> rx.Component:
         """Create and return the dialog."""
         return components.Dialog(
-            f"Download {DownloadImageDialogState.os_name}",
+            "Download Vendored Image",
             rx.el.div(
-                rx.el.form(id=cls.form_id, on_submit=cls.submit),
-                components.Select(
-                    DownloadImageDialogState.nodes,
-                    default_value=ClusterDefaults.proxmox_node,
-                    placeholder="Select Node",
-                    name="node",
-                    required=True,
-                    on_change=lambda node: cls.set_node(node),
-                ),
-                components.Select(
-                    DownloadImageDialogState.import_storages,
-                    default_value=ClusterDefaults.import_storage,
-                    placeholder="Select Storage",
-                    name="storage",
-                    required=True,
+                rx.el.form(
+                    components.Select(
+                        DownloadImageDialogState.available_images,
+                        placeholder="Select Available Image",
+                        name="image",
+                        form=cls.form_id,
+                        required=True,
+                    ),
+                    components.Select(
+                        DownloadImageDialogState.nodes,
+                        default_value=ClusterDefaults.proxmox_node,
+                        placeholder="Select Node",
+                        required=True,
+                        on_change=lambda node: cls.set_node(node),
+                    ),
+                    components.Select(
+                        DownloadImageDialogState.import_storages,
+                        default_value=ClusterDefaults.import_storage,
+                        placeholder="Select Storage",
+                        name="storage",
+                        form=cls.form_id,
+                        required=True,
+                    ),
+                    class_name="w-full flex-col space-y-4",
+                    id=cls.form_id,
+                    on_submit=cls.submit,
                 ),
                 class_name="w-full flex-col space-y-2 items-center justify-center",
             ),
             rx.el.div(
-                rx.el.div(),
-                rx.el.div(
-                    components.Buttons.Secondary("Cancel", on_click=cls.cancel),
-                    components.Buttons.Primary("Download", form=cls.form_id),
-                    class_name="w-full flex space-x-2",
-                ),
-                class_name="w-full flex justify-between mt-10",
+                components.Buttons.Secondary("Cancel", on_click=cls.close),
+                components.Buttons.Primary("Download", form=cls.form_id),
+                class_name="w-full flex space-x-2 items-center, justify-end mt-8",
             ),
             dialog_id=cls.dialog_id,
             class_name="max-w-[25vw] w-fit max-h-[30vh] h-fit",
@@ -112,6 +124,8 @@ class CustomImageDialog(EventGroup):
         """Initialize image creation from a base image and open the dialog."""
         state.form_data["base_image"] = base_image
         state.form_data["node"] = await state.get_var_value(ClusterDefaults.proxmox_node)
+        state.form_data["image_store"] = await state.get_var_value(ClusterDefaults.import_storage)
+        state.form_data["disk_store"] = await state.get_var_value(ClusterDefaults.images_storage)
         return components.Dialog.open(CustomImageDialog.dialog_id)
 
     @staticmethod
@@ -156,31 +170,30 @@ class CustomImageDialog(EventGroup):
                 form_data=CreateCustomImageForm.model_validate(state.form_data),
             )
         return [
-            CustomImageDialog.reset,
+            CustomImageDialog.close,
             CustomImageDialog.run_workflow(manifest.name),
         ]
 
     @staticmethod
-    @rx.event(background=True)
+    @rx.event
     async def run_workflow(_: rx.State, name: str) -> AsyncGenerator[EventSpec | EventCallback]:
         """Run the workflow for the specified custom image by name."""
-        manifest = CustomImageManifest.load(name=name)
-        manifest.set_workflow_status(status=WorkflowStatus.PENDING)
-        yield CustomImagesTableState.cache_clear("custom_images")
-        yield rx.toast.info(f"Starting {manifest.metadata.name} workflow...")
-        status: WorkflowStatus = await rx.run_in_thread(
-            lambda: ProxmoxComputeTemplates().run_workflow(manifest=manifest),
+        worker = get_worker()
+        error = await worker.create_workflow(
+            name="image.custom",
+            version="v1",
+            payload={"manifest": name},
         )
-        manifest.set_workflow_status(status=status)
-        if status == WorkflowStatus.SUCCEEDED:
-            yield rx.toast.success(f"Image {name} workflow succeeded!")
-        else:
-            yield rx.toast.error(f"Image {name} workflow failed.")
-        yield CustomImagesTableState.cache_clear("custom_images")
+        if error:
+            return rx.toast.error(error)
+        return [
+            CustomImageDialog.close,
+            rx.toast.info(f"Running {name} worfklow..."),
+        ]
 
     @staticmethod
     @rx.event
-    async def reset(state: CustomImageDialogState) -> FrontendEvents:
+    async def close(state: CustomImageDialogState) -> FrontendEvents:
         """Cancel the image creation process and reset the dialog state."""
         state.reset()
         return [
@@ -211,9 +224,131 @@ class CustomImageDialog(EventGroup):
                     ReviewPanel(),
                     validate=cls.create_image,
                 ),
-                cancel_button=components.Buttons.Secondary("Cancel", on_click=cls.reset),
+                cancel_button=components.Buttons.Secondary("Cancel", on_click=cls.close),
                 progress_id=cls.progress_id,
             ),
             dialog_id=cls.dialog_id,
             class_name="max-w-[75vw] w-fit",
+        )
+
+
+class DeleteImageDialog(EventGroup):
+    """Delete a VM Image."""
+
+    @staticmethod
+    @rx.event
+    async def confirm(state: DeleteImageDialogState, name: str) -> FrontendEvents:
+        """Set image name to delete and open dialog."""
+        state.reset()
+        state.name = name
+        if name in CustomImageManifest.get_existing():
+            state.image_type = "custom"
+        else:
+            state.image_type = "base"
+        return components.Dialog.open(DeleteImageDialog.dialog_id)
+
+    @staticmethod
+    @rx.event
+    async def update_confirmation(state: DeleteImageDialogState, value: str) -> None:
+        """Update the confirmation input text value."""
+        state.confirmation = value
+
+    @staticmethod
+    @rx.event
+    async def delete(state: DeleteImageDialogState) -> FrontendEvents:
+        """Delete a custom appliance from Proxmox and remove its manifest."""
+        worker = get_worker()
+        error = await worker.create_workflow(
+            name="image.delete",
+            version="v1",
+            payload={"manifest": state.name, "image_type": state.image_type},
+        )
+        if error:
+            return rx.toast.error(error)
+        return [
+            DeleteImageDialog.close,
+            rx.toast.info(f"Deleting {state.name}..."),
+        ]
+
+    @staticmethod
+    @rx.event
+    async def close(state: DeleteImageDialogState) -> FrontendEvents:
+        """Cancel custom appliance deletion and close the dialog."""
+        state.reset()
+        return components.Dialog.close(DeleteImageDialog.dialog_id)
+
+    dialog_id: Final = "confirm-delete-image-dialog"
+
+    def __new__(cls) -> rx.Component:
+        """Create and return dialog component."""
+        return components.Dialog(
+            f"Delete {DeleteImageDialogState.name}",
+            rx.el.div(
+                rx.text(
+                    "You are about to delete custom LXC appliance '",
+                    rx.el.span(DeleteImageDialogState.name, class_name="font-bold"),
+                    rx.el.span(
+                        """'. This will delete the manifest and the appliance from Proxmox Storage. Any existing
+                        compute created from this appliance will not be affected.
+                        """,
+                    ),
+                ),
+                rx.text("If you are sure you want to delete this appliance, type its name below."),
+                class_name="w-full flex-col space-y-6 my-8",
+            ),
+            components.Input(
+                placeholder=DeleteImageDialogState.name,
+                on_change=cls.update_confirmation,
+            ),
+            rx.el.div(
+                components.Buttons.Secondary("Cancel", on_click=cls.close),
+                components.Buttons.Primary(
+                    "Delete",
+                    disabled=DeleteImageDialogState.delete_disabled,
+                    on_click=cls.delete,
+                ),
+                class_name="w-full flex justify-end space-x-4 my-8",
+            ),
+            dialog_id=cls.dialog_id,
+            class_name="max-w-[40vw] w-fit",
+        )
+
+
+class WorkflowLogsViewDialog(EventGroup):
+    """View custom appliance workflow logs."""
+
+    @staticmethod
+    @rx.event
+    async def view_workflow_logs(state: CustomImagesTableState, name: str) -> FrontendEvents:
+        """Set the workflow to view and open the dialog."""
+        state.workflow_to_view = name
+        return components.Dialog.open(WorkflowLogsViewDialog.dialog_id)
+
+    @staticmethod
+    @rx.event
+    async def close(state: CustomImagesTableState) -> FrontendEvents:
+        """Close the dialog."""
+        state.reset()
+        return components.Dialog.close(WorkflowLogsViewDialog.dialog_id)
+
+    dialog_id: Final = "image-workflow-logs-view-dialog"
+
+    def __new__(cls) -> rx.Component:
+        """Create and return dialog component."""
+        return components.Dialog(
+            f"{CustomImagesTableState.workflow_to_view} Workflow Logs",
+            rx.el.div(
+                rx.code_block(
+                    language="shell-session",
+                    code=CustomImagesTableState.logs,
+                    code_tag_props={"style": {"whiteSpace": "pre-wrap"}},
+                    show_line_numbers=True,
+                ),
+                class_name="w-full h-full overflow-auto",
+            ),
+            rx.el.div(
+                components.Buttons.Secondary("Close", on_click=cls.close),
+                class_name="w-full flex justify-end space-x-4 my-4",
+            ),
+            dialog_id=cls.dialog_id,
         )

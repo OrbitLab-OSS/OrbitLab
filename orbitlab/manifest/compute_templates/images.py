@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Annotated, Self
 
 from pydantic import Field
 
-from orbitlab.data_types import ManifestKind, WorkflowStatus
+from orbitlab.data_types import ManifestKind
 from orbitlab.manifest.base import BaseManifest, Metadata, Spec
 from orbitlab.manifest.sector import SectorManifest
 from orbitlab.manifest.serialization import SerializeEnum
@@ -13,7 +13,7 @@ from orbitlab.manifest.serialization import SerializeEnum
 from .base import ComputeTemplateSpec, WorkflowUtilities
 
 if TYPE_CHECKING:
-    from orbitlab.clients.proxmox.compute.models import Asset
+    from orbitlab.proxmox.compute.models import VendoredImage
     from orbitlab.web.pages.compute.vm.images.models import CreateCustomImageForm
 
 
@@ -32,6 +32,9 @@ class BaseImageSpec(Spec):
     node: str
     filename: str
     storage: str
+    volume_id: str = ""
+    checksum_algorithm: str
+    checksum: str
 
 
 class BaseImageManifest(BaseManifest[BaseImageMetadata, BaseImageSpec]):
@@ -39,35 +42,46 @@ class BaseImageManifest(BaseManifest[BaseImageMetadata, BaseImageSpec]):
 
     kind: Annotated[ManifestKind, SerializeEnum] = ManifestKind.BASE_IMAGE
 
-    @property
-    def volume_id(self) -> str:
-        """Return the volume ID for this image manifest."""
-        return f"{self.spec.storage}:import/{self.spec.filename}"
-
-    def update(self, asset: "Asset") -> None:
+    def update(self, volume_id: str, image: "VendoredImage") -> None:
         """Update the manifest metadata and spec fields using the provided asset."""
-        self.metadata.build_date = asset.build_date
-        self.metadata.download_url = asset.browser_download_url
-        self.spec.filename = asset.name
+        self.metadata.build_date = image.build_date
+        self.metadata.download_url = image.browser_download_url
+        self.spec.filename = image.filename
+        self.spec.volume_id = volume_id
+        self.spec.checksum_algorithm, self.spec.checksum = image.digest.split(":")
         self.save()
 
+    def download_params(self) -> dict[str, str]:
+        """Return the download parameters for this image."""
+        return {
+            "content": "import",
+            "url": self.metadata.download_url,
+            "filename": self.spec.filename,
+            "checksum": self.spec.checksum,
+            "checksum-algorithm": self.spec.checksum_algorithm,
+        }
+
     @classmethod
-    def create(cls, storage: str, node: str, asset: "Asset") -> None:
+    def create(cls, storage: str, node: str, image: "VendoredImage") -> Self:
         """Create and save a new BaseImageManifest instance from the given storage, node, and asset."""
+        checksum_algorithm, checksum = image.digest.split(":")
         manifest = cls(
-            name=asset.name,
+            name=cls._generate_id("vmi"),
             metadata=BaseImageMetadata(
-                os=asset.formatted_name,
-                build_date=asset.build_date,
-                download_url=asset.browser_download_url,
+                os=image.formatted_name,
+                build_date=image.build_date,
+                download_url=image.browser_download_url,
             ),
             spec=BaseImageSpec(
                 node=node,
-                filename=asset.name,
+                filename=image.filename,
                 storage=storage,
+                checksum=checksum,
+                checksum_algorithm=checksum_algorithm,
             ),
         )
         manifest.save()
+        return manifest
 
 
 class CustomImageMetadata(Metadata):
@@ -77,8 +91,6 @@ class CustomImageMetadata(Metadata):
     created_on: datetime = datetime.now(UTC)
     last_update: datetime | None = None
     last_execution: datetime | None = None
-    status: Annotated[WorkflowStatus, SerializeEnum] = Field(default=WorkflowStatus.PENDING)
-    logs: list[str] = Field(default_factory=list)
 
 
 class CustomImageSpec(ComputeTemplateSpec):
@@ -86,6 +98,7 @@ class CustomImageSpec(ComputeTemplateSpec):
 
     base_image: str
     node: str
+    volume_id: str = ""
     disk_storage: str
     disk_size: int
     image_storage: str
@@ -99,11 +112,6 @@ class CustomImageManifest(BaseManifest[CustomImageMetadata, CustomImageSpec], Wo
     """Custom VM Image Manifest."""
 
     kind: Annotated[ManifestKind, SerializeEnum] = ManifestKind.CUSTOM_IMAGE
-
-    @property
-    def volume_id(self) -> str:
-        """Return the volume ID for this image manifest."""
-        return f"{self.spec.image_storage}:import/{self.name}.qcow2"
 
     def workflow_params(self, vmid: int) -> dict[str, str | int]:
         """Generate workflow parameters for provisioning a VM from which to build a custom image."""
@@ -119,11 +127,11 @@ class CustomImageManifest(BaseManifest[CustomImageMetadata, CustomImageSpec], Wo
             "numa": 0,
             "agent": "enabled=1",
             "serial0": "socket",
-            "scsi0": f"{self.spec.disk_storage}:0,import-from={base_image.volume_id}",
+            "scsi0": f"{self.spec.disk_storage}:0,import-from={base_image.spec.volume_id}",
             "ide0": f"{self.spec.disk_storage}:cloudinit",
             "citype": "nocloud",
             "ciuser": "root",
-            "ciupgrade": "0",
+            "ciupgrade": "1",
             "cipassword": self.generate_random_password(),
             "net0": f"virtio,bridge={sector.name}",
             "ipconfig0": "ip=dhcp",

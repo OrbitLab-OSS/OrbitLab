@@ -1,16 +1,15 @@
 """Schema definitions for LXC container manifests in OrbitLab."""
 
-from ipaddress import IPv4Interface
 from typing import TYPE_CHECKING, Annotated, Self
 
 from pydantic import computed_field
 
-from orbitlab.data_types import ComputeState, ComputeStatus, ManifestKind
+from orbitlab.data_types import ManifestKind
 from orbitlab.manifest.base import BaseManifest, Metadata, Spec
 from orbitlab.manifest.ref import Ref
 from orbitlab.manifest.secrets import SecretManifest
 from orbitlab.manifest.sector import SectorManifest
-from orbitlab.manifest.serialization import SerializeEnum, SerializeIP
+from orbitlab.manifest.serialization import SerializeEnum
 from orbitlab.services.vault.client import SecretVault
 
 if TYPE_CHECKING:
@@ -20,12 +19,11 @@ if TYPE_CHECKING:
 class VMMetadata(Metadata):
     """Metadata schema for Proxmox VM resources in OrbitLab."""
 
+    sector_name: str
     name: str
     on_boot: bool = True
-    status: Annotated[ComputeState, SerializeEnum] = ComputeState.STARTING
     node: str
-    address: Annotated[IPv4Interface, SerializeIP] | None = None
-    vmid: int | None = None
+    vmid: int = 0
 
 
 class VMSpec(Spec):
@@ -73,7 +71,7 @@ class VMManifest(BaseManifest[VMMetadata, VMSpec]):
             "citype": "nocloud",
             "ciuser": self.spec.user,
             "cipassword": self.get_password(),
-            "net0": f"virtio,bridge={self.spec.sector}",
+            "net0": f"virtio,bridge={self.spec.sector},mtu=1450",
             "ipconfig0": "ip=dhcp",
             "searchdomain": "sector.internal",
             "nameserver": f"{dns_address.ip}",
@@ -88,27 +86,6 @@ class VMManifest(BaseManifest[VMMetadata, VMSpec]):
         if self.spec.password:
             return SecretManifest.load(name=self.spec.password.name).get_current_value()
         return ""
-
-    def launched(self, vmid: int) -> None:
-        """Update the manifest to reflect that the container has been launched."""
-        self.metadata.vmid = vmid
-        self.metadata.status = ComputeState.RUNNING
-        self.save()
-
-    def set_status(self, status: ComputeStatus, *, completed: bool = False) -> None:
-        """Update the status in the manifest based on the provided ComputeStatus."""
-        match status:
-            case ComputeStatus.START:
-                self.metadata.status = ComputeState.RUNNING if completed else ComputeState.STARTING
-            case ComputeStatus.REBOOT:
-                self.metadata.status = ComputeState.RUNNING if completed else ComputeState.RESTARTING
-            case ComputeStatus.STOP:
-                self.metadata.status = ComputeState.STOPPED if completed else ComputeState.STOPPING
-            case ComputeStatus.SHUTDOWN:
-                self.metadata.status = ComputeState.STOPPED if completed else ComputeState.STOPPING
-            case ComputeStatus.TERMINATE:
-                self.metadata.status = ComputeState.TERMINATING
-        self.save()
 
     def delete(self) -> None:
         """Delete the VM manifest, and remove its associated secret."""
@@ -125,6 +102,7 @@ class VMManifest(BaseManifest[VMMetadata, VMSpec]):
         manifest = cls(
             name=vm_id,
             metadata=VMMetadata(
+                sector_name=SectorManifest.load(name=form_data.sector).spec.alias,
                 name=form_data.name,
                 node=form_data.node,
             ),

@@ -11,7 +11,6 @@ from orbitlab.manifest.compute_templates.workflow_models import FileConfig, Work
 from orbitlab.web import components
 from orbitlab.web.defaults import ClusterDefaults
 from orbitlab.web.pages.nodes.states import ProxmoxState
-from orbitlab.web.pages.secrets_pki.pki.states import CertificateAuthoritiesState, CertificatesState
 from orbitlab.web.utilities import EventGroup
 
 from .states import CustomImageDialogState
@@ -63,6 +62,7 @@ class GeneralConfigurationPanel(EventGroup):
                         max="128",
                         name="name",
                         required=True,
+                        class_name="w-full",
                     ),
                 ),
                 components.FieldSet.Field(
@@ -73,6 +73,7 @@ class GeneralConfigurationPanel(EventGroup):
                         placeholder="Select Base Image",
                         name="base_image",
                         required=True,
+                        class_name="w-full",
                     ),
                 ),
                 components.FieldSet.Field(
@@ -84,6 +85,7 @@ class GeneralConfigurationPanel(EventGroup):
                         on_change=cls.set_node,
                         name="node",
                         required=True,
+                        class_name="w-full",
                     ),
                 ),
                 components.FieldSet.Field(
@@ -95,6 +97,7 @@ class GeneralConfigurationPanel(EventGroup):
                         placeholder="Select Storage",
                         name="image_store",
                         required=True,
+                        class_name="w-full",
                     ),
                 ),
                 components.FieldSet.Field(
@@ -106,6 +109,7 @@ class GeneralConfigurationPanel(EventGroup):
                         placeholder="Select Storage",
                         name="disk_store",
                         required=True,
+                        class_name="w-full",
                     ),
                 ),
                 components.FieldSet.Field(
@@ -148,22 +152,7 @@ class GeneralConfigurationPanel(EventGroup):
                         value=CustomImageDialogState.sector,
                         on_change=cls.set_sector,
                         required=True,
-                    ),
-                ),
-            ),
-            components.FieldSet(
-                "Certificates & Secrets",
-                components.FieldSet.Field(
-                    "Root CAs",
-                    components.MultiSelect(
-                        CertificateAuthoritiesState.names,
-                        placeholder="Select CAs",
-                        name="certificate_authorities",
-                        refresh_button=components.Buttons.Icon(
-                            "refresh-ccw",
-                            size=12,
-                            on_click=CertificatesState.cache_clear("certificates"),
-                        ),
+                        class_name="w-full",
                     ),
                 ),
             ),
@@ -539,19 +528,6 @@ class ReviewPanel:
                 components.DataList.Item(
                     components.DataList.Label("Sector"),
                     components.DataList.Value(CustomImageDialogState.sector),
-                ),
-                components.DataList.Item(
-                    components.DataList.Label("Root CAs"),
-                    components.DataList.Value(
-                        rx.cond(
-                            CustomImageDialogState.root_certs.length() > 0,
-                            rx.foreach(
-                                CustomImageDialogState.root_certs,
-                                lambda name: components.Badge(name, color_scheme="blue"),
-                            ),
-                            rx.text("N/A", class_name="font-light italic"),
-                        ),
-                    ),
                 ),
                 components.DataList.Item(
                     components.DataList.Label("Workflow Steps"),

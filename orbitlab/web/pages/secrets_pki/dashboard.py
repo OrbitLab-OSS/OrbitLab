@@ -4,11 +4,11 @@ import reflex as rx
 
 from orbitlab.web.components.page_header import PageHeader
 
-from .layout import secrets_pki_page
+from orbitlab.web.layout import orbitlab_page
 
 
 @rx.page("/secrets-pki")
-@secrets_pki_page
+@orbitlab_page
 def secrets_pki_dashboard() -> rx.Component:
     """Render the secrets and PKI management dashboard page."""
     return rx.el.div(
