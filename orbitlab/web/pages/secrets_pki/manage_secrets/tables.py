@@ -10,7 +10,8 @@ from orbitlab.services.vault.client import SecretVault
 from orbitlab.web import components
 from orbitlab.web.utilities import EventGroup
 
-from .states import SecretsState
+from .dialogs import DeleteSecretDialog
+from .states import DeleteSecretDialogState, SecretsState
 
 
 class SecretsTableState(rx.State):
@@ -35,6 +36,13 @@ class SecretsTable(EventGroup):
     async def hide_secret(state: SecretsTableState, secret_name: str) -> None:
         """Hide a secret by removing it from the viewable secrets dictionary."""
         del state.viewable_secrets[secret_name]
+
+    @staticmethod
+    @rx.event
+    async def open_delete_secret_dialog(state: DeleteSecretDialogState, secret: SecretManifest) -> FrontendEvents:
+        """Open the delete secret dialog for the specified secret."""
+        state.secret = secret
+        return components.Dialog.open(DeleteSecretDialog.dialog_id)
 
     @staticmethod
     @rx.event
@@ -83,11 +91,23 @@ class SecretsTable(EventGroup):
                             ),
                         ),
                     ),
-                    components.Buttons.Icon(
-                        icon="copy",
-                        on_click=cls.copy_to_clipboard(secret.spec.secret_name, secret.spec.version),
-                    ),
                     class_name="flex space-x-5 items-center",
+                ),
+                class_name="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-800 dark:text-gray-200",
+            ),
+            rx.el.td(
+                components.Menu(
+                    components.Buttons.Icon("ellipsis-vertical"),
+                    components.Menu.Item(
+                        "Copy to Clipboard",
+                        on_click=cls.copy_to_clipboard(secret.spec.secret_name, secret.spec.version)
+                    ),
+                    components.Menu.Separator(),
+                    components.Menu.Item(
+                        "Delete",
+                        on_click=cls.open_delete_secret_dialog(secret),
+                        danger=True,
+                    ),
                 ),
                 class_name="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-800 dark:text-gray-200",
             ),
@@ -105,6 +125,7 @@ class SecretsTable(EventGroup):
         )
         return components.Card(
             rx.el.div(
+                DeleteSecretDialog(),
                 rx.el.table(
                     rx.el.thead(
                         rx.el.tr(
@@ -112,6 +133,7 @@ class SecretsTable(EventGroup):
                             rx.el.th("Version", class_name=header_class),
                             rx.el.th("Description", class_name=header_class),
                             rx.el.th("Value", class_name=header_class),
+                            rx.el.th("", class_name=header_class),
                         ),
                         class_name="bg-white/60 dark:bg-white/[0.03] backdrop-blur-sm",
                     ),

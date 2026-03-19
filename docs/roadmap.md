@@ -3,7 +3,7 @@
 - [x] Backplane 
   - [x] EVPN Controller
   - [x] EVPN Zone
-  - [x] VNet (user-defined CIDR or 10.200.0.0/16)
+  - [x] VNet (user-defined CIDR or 100.96.0.0/16)
   - [x] IPAM (Track IP registration)
   - [x] DNS (CoreDNS)
 - [x] Sectors (VNets)
@@ -18,64 +18,59 @@
     - [x] Create Zone
     - [x] Add/Remove A Records
 - [x] Launch Base LXC in Sector
+- [x] Launch Base Image in Sector
 
 # Phase 2
 
-- [ ] Logging
-  - [ ] Clients
-  - [ ] Application
-  - [ ] Viewable in UI
-- [x] Custom LXC Appliances
+- [x] VM Images
+  - [x] Create pre-made cloud images containing qemu-agent
+    - [x] Debian 13
+    - [x] DockFS
+- [x] Custom Appliances and Images
   - [x] General Configuration
   - [x] Network Configuration
   - [x] Workflow Steps
     - [x] Uploaded Files
     - [x] Custom Bash Scripts
-  - [x] Edit Existing Custom Appliances  
+  - [x] Edit Existing Custom Appliances and Images 
+- [x] Orbital Relay (enable HTTP API calls from Backplane or Sectors to Control Plane)
+- [x] DockFS
+  - [x] Create custom NFS image
+- [x] ETCD (Opt-In): 3-node LXC cluster
+  - [x] Create Cluster and validate Health
+  - [x] Monitor Cluster Health: Replace each node as needed
+- [x] DataCores (RDS-like DB service)
+  - [x] Patroni/PostgreSQL
+
+# Phase 3
+
+- [ ] Check/Update infrastructure appliances
+- [ ] Autoscaling Pools
+  - [ ] Templates
+  - [ ] Health Checks
+- [ ] Logging
+  - [ ] Clients
+  - [ ] Application
+  - [ ] Viewable in UI
 - [ ] Deployable
   - [ ] DEB release for installation
   - [ ] Serves static HTML
   - [ ] Runs backend (minimize deps as much as possible)
   - [ ] Self updating mechanism (user-triggered)
 
-- [ ] VM Images
-  - [ ] Create pre-made cloud images containing qemu-agent
-  
-
-PROCESS:
-- launch VM from base image (using specified config)
-- Run workflow steps
-- Stop VM and run `qemu-img convert $DISK_PATH /var/tmp/pveupload-...`
-  - get `$DISK_PATH` from `pvesh get /nodes/pve-1-2/storage/local-zfs/content/local-zfs:vm-104-disk-0`
-- Upload to `import` storage
-- Clean up resources.
-
-# Phase 3
-
-- [ ] Autoscaling Pools
-  - [ ] Backend Watcher
-  - [ ] Health Checks
-- [ ] DataCores (RDS-like DB service)
-  - [ ] ETCD (Opt-In): 3-node LXC cluster
-    - [ ] Create Cluster and validate Health
-      - Add necessary Backplane IPs to Sector GWs (nftables)
-    - [ ] Monitor Cluster Health: Replace each node as needed:
-      - Remove Member (from healthy member)
-      - Rebuild LXC (control plane)
-      - Add Member (from healthy member)
-      - Boot New Member with required parameters
-  - [ ] Patroni/PostgreSQL
-    - [ ] Update DNS A record on role change
-    - [ ] Health checks for monitoring
-- [ ] HAproxy Ingress: vmbr0 and sector to provide external access (Home LAN)
-  - [ ] HTTP
-  - [ ] HTTPS
-  - [ ] TCP
-  - [ ] UDP 
-
-
 # Phase 4
 
+- [ ] EdgeGate(HAproxy Ingress)
+  - [ ] Private (Only accessible from within the Sector) (attached to Sector)
+  - [ ] Internal (Only accessible from within OrbitLab) (attached to Sector and Backplane)
+  - [ ] External (Accessible from LAN) (attached to Proxmox vmbr0 and Sector)
+- [ ] Implement HTTPS everywhere
+  - [ ] Generate `orbitlab.internal` Root/Intermediate CAs on initialization
+    - [ ] Track cert expiration
+  - [ ] DockFS
+  - [ ] DataCore
+  - [ ] ETCD
+  - [ ] Orbital Relay
 - [ ] Sector Public Access
   - [ ] Cloudflared
   - [ ] Tailscale

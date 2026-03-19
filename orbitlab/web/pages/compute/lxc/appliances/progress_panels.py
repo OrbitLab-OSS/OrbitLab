@@ -6,16 +6,14 @@ from typing import Final, cast
 import reflex as rx
 
 from orbitlab.constants import Directories
-from orbitlab.data_types import CustomApplianceStepType, FrontendEvents
-from orbitlab.manifest.sector import SectorManifest
+from orbitlab.data_types import FrontendEvents, WorkflowStepType
+from orbitlab.manifest.compute_templates.workflow_models import FileConfig, WorkflowStep
 from orbitlab.web import components
 from orbitlab.web.defaults import ClusterDefaults
 from orbitlab.web.pages.nodes.states import ProxmoxState
-from orbitlab.web.pages.secrets_pki.pki.states import CertificateAuthoritiesState, CertificatesState
 from orbitlab.web.utilities import EventGroup
 
-from .models import FileConfig, NetworkConfig, WorkflowStep
-from .states import AppliancesState, CustomApplianceState
+from .states import CustomApplianceState
 
 
 class GeneralConfigurationPanel(EventGroup):
@@ -41,36 +39,44 @@ class GeneralConfigurationPanel(EventGroup):
         """Set the storage selection in the form data."""
         state.form_data["rootdir"] = storage
 
+    @staticmethod
+    @rx.event
+    async def set_sector(state: CustomApplianceState, sector: str) -> None:
+        """Set the sector name."""
+        state.form_data["sector"] = sector
+
+    @staticmethod
+    @rx.event
+    async def set_subnet(state: CustomApplianceState, subnet: str) -> None:
+        """Set the subnet name."""
+        state.form_data["subnet"] = subnet
+
     def __new__(cls) -> rx.Component:
         """Create and return the Progress Panel components."""
         return rx.fragment(
             components.FieldSet(
                 "Proxmox",
-                rx.cond(
-                    CustomApplianceState.edit_mode,
-                    components.FieldSet.Field("Appliance Name: ", rx.text(CustomApplianceState.name)),
-                    components.FieldSet.Field(
-                        "Appliance Name: ",
-                        components.Input(
-                            placeholder="my_custom_appliance",
-                            default_value=CustomApplianceState.name,
-                            pattern=r"(\w+)",
-                            error="Names can be up to 64 alphanumeric characters and underscores.",
-                            min="1",
-                            max="64",
-                            name="name",
-                            required=True,
-                        ),
+                components.FieldSet.Field(
+                    "Appliance Name: ",
+                    components.Input(
+                        placeholder="My Appliance",
+                        default_value=CustomApplianceState.name,
+                        min="1",
+                        max="128",
+                        name="name",
+                        required=True,
+                        class_name="w-full",
                     ),
                 ),
                 components.FieldSet.Field(
                     "Base Appliance: ",
                     components.Select(
-                        AppliancesState.base_appliance_names,
+                        CustomApplianceState.available_appliances,
                         default_value=CustomApplianceState.base_appliance,
                         placeholder="Select Base Appliance",
                         name="base_appliance",
                         required=True,
+                        class_name="w-full",
                     ),
                 ),
                 components.FieldSet.Field(
@@ -82,6 +88,7 @@ class GeneralConfigurationPanel(EventGroup):
                         on_change=cls.set_node,
                         name="node",
                         required=True,
+                        class_name="w-full",
                     ),
                 ),
                 components.FieldSet.Field(
@@ -93,17 +100,19 @@ class GeneralConfigurationPanel(EventGroup):
                         placeholder="Select Storage",
                         name="storage",
                         required=True,
+                        class_name="w-full",
                     ),
                 ),
                 components.FieldSet.Field(
-                    "LXC Root: ",
+                    "Rootdir Storage: ",
                     components.Select(
                         CustomApplianceState.available_rootfs,
-                        default_value=CustomApplianceState.rootfs,
+                        default_value=ClusterDefaults.rootdir_storage,
                         on_change=cls.set_rootdir,
                         placeholder="Select Storage",
                         name="rootfs",
                         required=True,
+                        class_name="w-full",
                     ),
                 ),
                 components.FieldSet.Field(
@@ -128,156 +137,17 @@ class GeneralConfigurationPanel(EventGroup):
                 ),
             ),
             components.FieldSet(
-                "Certificates & Secrets",
+                "Network Configuration",
                 components.FieldSet.Field(
-                    "Root CAs",
-                    components.MultiSelect(
-                        CertificateAuthoritiesState.names,
-                        placeholder="Select CAs",
-                        name="certificate_authorities",
-                        refresh_button=components.Buttons.Icon(
-                            "refresh-ccw",
-                            size=12,
-                            on_click=CertificatesState.cache_clear("certificates"),
-                        ),
-                    ),
-                ),
-            ),
-        )
-
-
-class NetworkConfigurationPanel(EventGroup):
-    """Panel for configuring network settings in custom appliance creation."""
-
-    @staticmethod
-    @rx.event
-    async def add_network(state: CustomApplianceState) -> None:
-        """Add a new network configuration to the appliance."""
-        new_item_id = len(state.network_order)
-        while new_item_id in state.networks:
-            new_item_id += 1
-        state.network_order.append({"id": new_item_id})
-        state.networks[new_item_id] = NetworkConfig()
-
-    @staticmethod
-    @rx.event
-    async def update_network_order(state: CustomApplianceState, networks: list[components.SortableItem]) -> None:
-        """Update the order of workflow steps in the appliance configuration."""
-        state.network_order = networks
-
-    @staticmethod
-    @rx.event
-    async def set_network(state: CustomApplianceState, sort_id: int, sector: str) -> None:
-        """Set the network name for a specific network configuration."""
-        sector_manifest = SectorManifest.load(name=sector)
-        state.networks[sort_id].sector = sector
-        state.networks[sort_id].available_subnets = {
-            (
-                f"{subnet.name} ({subnet.cidr_block}, "
-                f"Available: {sector_manifest.get_available_ips(subnet_name=subnet.name)})"
-            ): subnet.name
-            for subnet in sector_manifest.spec.subnets
-        }
-
-    @staticmethod
-    @rx.event
-    async def set_subnet(state: CustomApplianceState, sort_id: int, subnet: str) -> None:
-        """Set the subnet name for a specific network configuration."""
-        state.networks[sort_id].subnet = subnet
-
-    @staticmethod
-    @rx.event
-    async def delete_network(state: CustomApplianceState, sort_id: int) -> None:
-        """Delete a network configuration from the appliance."""
-        del state.networks[sort_id]
-        item = next((net for net in state.network_order if net["id"] == sort_id), None)
-        if item:
-            state.network_order.remove(item)
-
-    @classmethod
-    def sortable_network(cls, item: components.SortableItem, index: int) -> rx.Component:
-        """Create a sortable network configuration component.
-
-        Args:
-            item: The sortable item containing the network ID.
-            index: The index position of the network in the list.
-
-        Returns:
-            A component representing a draggable network configuration item.
-        """
-        sort_id = rx.Var.create(item["id"]).to(int)
-        network: NetworkConfig = CustomApplianceState.networks.get(sort_id, {}).to(NetworkConfig)
-        return rx.el.div(
-            rx.icon(
-                "grip-vertical",
-                class_name=(
-                    "drag-handle ml-3 mr-4 cursor-grab text-gray-500 dark:text-gray-400 "
-                    "hover:text-[#1E63E9] dark:hover:text-[#36E2F4] "
-                    "active:cursor-grabbing transition-colors duration-200 ease-in-out"
-                ),
-            ),
-            rx.el.div(
-                rx.el.div(
-                    rx.text(f"net{index}"),
-                    class_name="flex space-x-4",
-                ),
-                rx.el.div(
-                    rx.text("Sector: "),
+                    "Sector",
                     components.Select(
-                        CustomApplianceState.sectors,
-                        value=network.sector,
-                        on_change=lambda name: cls.set_network(sort_id, name),
+                        ClusterDefaults.available_sectors,
+                        value=CustomApplianceState.sector,
+                        on_change=cls.set_sector,
                         required=True,
+                        class_name="w-full",
                     ),
-                    class_name="flex items-center space-x-4",
                 ),
-                rx.el.div(
-                    rx.text("Subnet: "),
-                    components.Select(
-                        rx.Var.create(network.available_subnets),
-                        value=network.subnet,
-                        on_change=lambda name: cls.set_subnet(sort_id, name),
-                        required=True,
-                    ),
-                    class_name="flex items-center space-x-4",
-                ),
-                components.Buttons.Icon(
-                    "trash",
-                    on_click=lambda: cls.delete_network(sort_id),
-                ),
-                class_name="w-full flex items-center justify-between mx-4 space-x-4",
-            ),
-            key=sort_id,
-            class_name=(
-                "flex items-center gap-2 px-4 py-2 rounded-lg select-none "
-                "border border-gray-200/60 dark:border-white/[0.08] "
-                "bg-gradient-to-b from-gray-50/90 to-gray-100/80 "
-                "dark:from-[#0E1015]/95 dark:to-[#181B22]/90 "
-                "shadow-sm hover:shadow-md hover:ring-1 hover:ring-[#36E2F4]/30 "
-                "transition-all duration-200 ease-in-out"
-            ),
-        )
-
-    def __new__(cls) -> rx.Component:
-        """Create and return the Progress Panel components."""
-        return rx.fragment(
-            rx.el.div(
-                components.Buttons.Primary(
-                    "Add Network",
-                    icon="plus",
-                    on_click=cls.add_network,
-                ),
-                rx.text("Drag networks to change order."),
-                class_name="w-full flex justify-between mb-4",
-            ),
-            components.Sortable(
-                rx.foreach(
-                    CustomApplianceState.network_order,
-                    lambda item, index: cls.sortable_network(item, index),
-                ),
-                data=CustomApplianceState.network_order,
-                on_change=cls.update_network_order,
-                class_name="mb-4 min-w-[50vw] space-y-2",
             ),
         )
 
@@ -291,7 +161,7 @@ class FilesWorkflowStep(EventGroup):
         """Handle file uploads for workflow steps."""
         selected_files = cast("list[rx.UploadFile]", files)
         for index, step in state.steps_config.items():
-            if step.type == CustomApplianceStepType.FILES and not step.files:
+            if step.type == WorkflowStepType.FILES and not step.files:
                 uploaded_files: list[FileConfig] = []
                 state.uploading = True
                 for file in selected_files:
@@ -527,7 +397,7 @@ class WorkflowConfigurationPanel(EventGroup):
         state.step_order.append({"id": new_item_id})
         state.steps_config[new_item_id] = WorkflowStep(
             name=f"{step_type.capitalize()} {new_item_id}",
-            type=CustomApplianceStepType(step_type),
+            type=WorkflowStepType(step_type),
         )
 
     @staticmethod
@@ -623,8 +493,8 @@ class WorkflowConfigurationPanel(EventGroup):
                         "Add Workflow Step",
                         icon="chevron-down",
                     ),
-                    components.Menu.Item("Script Step", on_click=cls.add_step(CustomApplianceStepType.SCRIPT)),
-                    components.Menu.Item("Files Step", on_click=cls.add_step(CustomApplianceStepType.FILES)),
+                    components.Menu.Item("Script Step", on_click=cls.add_step(WorkflowStepType.SCRIPT)),
+                    components.Menu.Item("Files Step", on_click=cls.add_step(WorkflowStepType.FILES)),
                 ),
                 rx.text("Drag steps to change execution order."),
                 class_name="w-full flex justify-between mb-4",
@@ -671,19 +541,19 @@ class ReviewPanel:
                     components.DataList.Label("Storage"),
                     components.DataList.Value(CustomApplianceState.storage),
                 ),
-                components.DataList.Item(
-                    components.DataList.Label("Root CAs"),
-                    components.DataList.Value(
-                        rx.cond(
-                            CustomApplianceState.root_certs.length() > 0,
-                            rx.foreach(
-                                CustomApplianceState.root_certs,
-                                lambda name: components.Badge(name, color_scheme="blue"),
-                            ),
-                            rx.text("N/A", class_name="font-light italic"),
-                        ),
-                    ),
-                ),
+                # components.DataList.Item(
+                #     components.DataList.Label("Root CAs"),
+                #     components.DataList.Value(
+                #         rx.cond(
+                #             CustomApplianceState.root_certs.length() > 0,
+                #             rx.foreach(
+                #                 CustomApplianceState.root_certs,
+                #                 lambda name: components.Badge(name, color_scheme="blue"),
+                #             ),
+                #             rx.text("N/A", class_name="font-light italic"),
+                #         ),
+                #     ),
+                # ),
                 components.DataList.Item(
                     components.DataList.Label("Workflow Steps"),
                     components.DataList.Value(

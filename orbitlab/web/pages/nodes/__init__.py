@@ -1,5 +1,5 @@
 """Proxmox Nodes Management Pages."""
 
-from .dashboard import nodes_page
+from .pages import nodes_dashboard
 
-__pages__ = (nodes_page,)
+__pages__ = (nodes_dashboard,)

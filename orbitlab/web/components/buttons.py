@@ -75,22 +75,27 @@ class IconButtonProps(TypedDict, total=False):
     form: str
     size: int
     class_name: str
+    danger: bool
 
 
 class IconButton:
     """A button component that displays only an icon."""
 
-    def __new__(cls, icon: str, **props: Unpack[IconButtonProps]) -> rx.Component:
+    def __new__(cls, icon: str | rx.Var[str], **props: Unpack[IconButtonProps]) -> rx.Component:
         """Create and return the icon button component."""
         class_name = props.pop("class_name", "")
+        danger = props.pop("danger", False)
         props["class_name"] = (
             "p-3 rounded-full text-[rgb(0,150,255)] transition-all duration-200 ease-in-out "
             "hover:border hover:scale-105 hover:text-[rgb(0,200,255)] hover:bg-[rgba(0,150,255,0.1)] "
             "hover:border-[rgba(0,200,255,0.5)] hover:shadow-[0_0_6px_rgba(0,150,255,0.25)] cursor-pointer "
+            "data-[danger=true]:text-[#DC2626] data-[danger=true]:hover:border-[#DC2626]/50 "
+            "data-[danger=true]:hover:bg-[#DC2626]/20 "
             f"{class_name}"
         )
         return rx.el.button(
             rx.icon(icon, size=props.pop("size", 16)),
+            data_danger=danger,
             **props,  # pyright: ignore[reportArgumentType]
         )
 

@@ -1,0 +1,24 @@
+#!/bin/bash
+
+set -eou pipefail
+
+OPERATION="$1"
+
+if [ -f /usr/lib/systemd/system/orbitlab-frontend.service ]; then
+    systemctl stop orbitlab-frontend.service
+    systemctl disable orbitlab-frontend.service
+    rm -f /usr/lib/systemd/system/orbitlab-frontend.service
+    journalctl -eau orbitlab-frontend --vacuum-time=1s
+fi
+if [ -f /usr/lib/systemd/system/orbitlab-backend.service ]; then
+    systemctl stop orbitlab-backend.service
+    systemctl disable orbitlab-backend.service
+    rm -f /usr/lib/systemd/system/orbitlab-backend.service
+    journalctl -eau orbitlab-backend --vacuum-time=1s
+fi
+systemctl daemon-reload
+rm -rf /opt/orbitlab/
+if [ "$OPERATION" == "remove" ]; then
+    rm -rf /etc/pve/orbitlab
+    redis-cli -n 10 flushdb
+fi

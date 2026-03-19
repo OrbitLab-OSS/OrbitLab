@@ -145,6 +145,7 @@ class SelectProps(TypedDict, total=False):
     form: str
     required: bool
     disabled: bool | rx.Var[bool]
+    class_name: str
 
 
 class Select:

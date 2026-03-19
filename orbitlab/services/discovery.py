@@ -1,59 +1,22 @@
 """Discovery Service base."""
 
-from orbitlab.clients.proxmox import ProxmoxCluster, ProxmoxNetworks
-from orbitlab.clients.proxmox.appliances import ProxmoxAppliances
 from orbitlab.data_types import SectorState
-from orbitlab.manifest.appliances import BaseApplianceManifest
 from orbitlab.manifest.cluster import ClusterManifest
-from orbitlab.manifest.ipam import IpamManifest
+from orbitlab.manifest.compute_templates.appliances import BaseApplianceManifest
 from orbitlab.manifest.nodes import NodeManifest
 from orbitlab.manifest.sector import SectorManifest
-
-
-class NodeManagement:
-    """Manage Proxmox Nodes for OrbitLab purposes."""
-
-    def __init__(self, node: str) -> None:
-        """Initialize the node manager."""
-        self.node = node
-
-    def configure_networking(self) -> None:
-        """Configure required network services on the Proxmox node."""
-        remote_node = ProxmoxCluster().create_connection(node=self.node)
-        remote_node.run_command("apt update -y")
-        remote_node.run_command("apt install -y frr frr-pythontools")
-        remote_node.run_command("sed -i 's|bgpd=no|bgpd=yes|' /etc/frr/daemons")
-        remote_node.run_command("systemctl enable frr && systemctl restart frr")
-
-    def configure_linstor(self) -> None:
-        """Configure Linstor DRBD on the Proxmox Node.
-
-        Linstor is favored over Ceph for a few reasons. The primary reason is that is has better performance
-        over Ceph when using it for 'home-lab' purposes and can work better on lower-throughput networks. Ceph
-        really should be used when the network is >=10GbE, which isn't common for most end-user home labs.
-        """
-        raise NotImplementedError
-        """apt install proxmox-headers-$(uname -r)
-        wget -O /tmp/linbit-keyring.deb https://packages.linbit.com/public/linbit-keyring.deb
-        dpkg -i /tmp/linbit-keyring.deb
-        PVERS=8 && echo "deb [signed-by=/etc/apt/trusted.gpg.d/linbit-keyring.gpg] http://packages.linbit.com/public/ \
-            proxmox-$PVERS drbd-9" > /etc/apt/sources.list.d/linbit.list
-        apt update
-        apt -y install drbd-dkms drbd-utils linstor-client linstor-controller linstor-satellite linstor-proxmox
-        linstor node create $NODE $NODE_IP --node-type combined"""
-        # TODO: Add other commands necessary for configuring LINSTOR on the node
+from orbitlab.proxmox import ProxmoxCluster, ProxmoxNetworks
+from orbitlab.proxmox.compute_templates import ProxmoxComputeTemplates
 
 
 class DiscoveryService:
     """Service for discovering and managing Proxmox resources."""
 
-    NodeManagement = NodeManagement
-
     def __init__(self) -> None:
         """Initialize the Discovery Service."""
         self.cluster = ProxmoxCluster()
         self.networks = ProxmoxNetworks()
-        self.appliances = ProxmoxAppliances()
+        self.appliances = ProxmoxComputeTemplates()
 
     def discover_cluster(self) -> ClusterManifest | None:
         """Discover and return cluster configuration."""
@@ -68,28 +31,21 @@ class DiscoveryService:
         cluster_manifest = ClusterManifest.create(
             cluster=status.get_cluster(),
             mtu=self.networks.get_mtu(),
-            reserved_tags=[vnet.tag for vnet in self.networks.list_vnets()],
+            reserved_tags=self.networks.list_vnets().get_all_tags(),
         )
+        return cluster_manifest
+
+    def discover_nodes(self, manifest: ClusterManifest) -> None:
         ha_status = self.cluster.get_ha_status()
         storage_resources = self.cluster.list_storage_resources()
-
-        for node in status.get_nodes():
+        for node in self.cluster.get_status().get_nodes():
             node.maintenance_mode = ha_status.in_maintenance_mode(node=node.name)
             node_manifest = NodeManifest.from_node_status(
                 node=node,
                 storage=storage_resources.get_storage_for_node(node=node.name),
             )
-            cluster_manifest.add_node(node=node_manifest)
-        return cluster_manifest
-
-    def discover_backplane(self, cluster: ClusterManifest) -> None:
-        """Run Backplane discovery."""
-        backplane_info = self.networks.describe_backplane()
-        cluster.spec.backplane.controller.asn = backplane_info.controller.asn
-        cluster.spec.backplane.controller.peers = backplane_info.controller.peers
-        cluster.spec.backplane.cidr_block = backplane_info.subnet.cidr
-        cluster.spec.backplane.gateway = backplane_info.subnet.gateway
-        cluster.save()
+            manifest.add_node(node=node_manifest)
+        manifest.save()
 
     def discover_sectors(self, cluster: ClusterManifest) -> None:
         """Run Sector discovery."""
@@ -97,25 +53,6 @@ class DiscoveryService:
         for sector in self.networks.list_sectors():
             if sector.vnet.name in existing:
                 continue
-            ipam = IpamManifest.model_validate(
-                {
-                    "name": f"ipam-{sector.vnet.name}",
-                    "metadata": {
-                        "sector_name": sector.vnet.alias,
-                        "sector_id": sector.vnet.name,
-                    },
-                    "spec": {
-                        "subnets": [
-                            {
-                                "cidr_block": subnet.cidr,
-                                "name": f"subnet-{index}",
-                            }
-                            for index, subnet in enumerate(sector.subnets.root)
-                        ],
-                    },
-                },
-            )
-            ipam.save()
             sector_manifest = SectorManifest.model_validate(
                 {
                     "name": sector.vnet.name,
@@ -133,28 +70,27 @@ class DiscoveryService:
                             }
                             for index, subnet in enumerate(sector.subnets.root)
                         ],
-                        "ipam": ipam.to_ref(),
                         "gateway_vmid": sector.gateway_vmid,
                     },
                 },
             )
             sector_manifest.save()
-            cluster.add_sector(tag=sector.vnet.tag, ref=sector_manifest.to_ref())
-            for vmid, address in sector.assignments.items():
-                if subnet := ipam.get_subnet_by_ip(address=address):
-                    subnet.add_assignment(vmid=vmid, address=address)
-            ipam.save()
+            # cluster.add_sector(tag=sector.vnet.tag, ref=sector_manifest.to_ref())
+            # for vmid, address in sector.assignments.items():
+            #     if subnet := ipam.get_subnet_by_ip(address=address):
+            #         subnet.add_assignment(vmid=vmid, address=address)
+            # ipam.save()
 
     def discover_appliances(self) -> None:
         """Discover and create manifests for stored appliances in the cluster."""
         cluster = ClusterManifest.load(name=next(iter(ClusterManifest.get_existing())))
         existing_appliances = BaseApplianceManifest.get_existing()
-        for node in cluster.get_nodes():
-            for storage in node.spec.storage:
-                for appliance in self.appliances.list_stored_appliances(node=node.name, storage=storage.name):
-                    manifest = BaseApplianceManifest.create_from_stored_appliance(
-                        node_ref=node.to_ref(),
-                        appliance=appliance,
-                    )
-                    if manifest.name not in existing_appliances:
-                        manifest.save()
+        # for node in cluster.get_nodes():
+        #     for storage in node.spec.storage:
+        #         for appliance in self.appliances.list_stored_appliances(node=node.name, storage=storage.name):
+                    # manifest = BaseApplianceManifest.create_from_stored_appliance(
+                    #     node_ref=node.to_ref(),
+                    #     appliance=appliance,
+                    # )
+                    # if manifest.name not in existing_appliances:
+                    #     manifest.save()

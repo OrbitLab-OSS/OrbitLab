@@ -9,16 +9,15 @@ if TYPE_CHECKING:
 class ManifestNotFoundError(Exception):
     """Exception raised when a manifest of a specified name and kind is not found."""
 
-    def __init__(self, name: str, kind: "ManifestKind") -> None:
+    def __init__(self, name: str) -> None:
         """Initialize ManifestNotFoundError with manifest name and kind.
 
         Args:
             name (str): The name of the manifest.
             kind (ManifestKind): The kind of the manifest.
         """
-        super().__init__(f"Manifest '{name}' of kind '{kind}' not found.")
+        super().__init__(f"Manifest '{name}' not found.")
         self.name = name
-        self.kind = kind
 
 
 class ManifestWriteError(Exception):

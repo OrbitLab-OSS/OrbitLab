@@ -1,55 +1,52 @@
 """OrbitLab Sector Manifest."""
 
-from datetime import UTC, datetime
-from ipaddress import IPv4Interface, IPv4Network
-from typing import Annotated
+from ipaddress import IPv4Address, IPv4Interface, IPv4Network
+from typing import TYPE_CHECKING, Annotated, Self
 
 from pydantic import BaseModel, Field
 
-from orbitlab.data_types import ManifestKind, SectorState
-from orbitlab.manifest.ipam import IpamManifest
+from orbitlab import constants
+from orbitlab.data_types import ManifestKind
+from orbitlab.manifest.cluster import ClusterManifest
+from orbitlab.services import SecretVault
 
 from .base import BaseManifest, Metadata, Spec
-from .ref import Ref
 from .serialization import SerializeEnum, SerializeIP
+
+if TYPE_CHECKING:
+    from orbitlab.web.pages.sectors.dashboard.models import CreateSectorForm
 
 
 class SectorMetadata(Metadata):
     """Metadata for a sector manifest."""
 
-    alias: str
-    tag: int
-    state: Annotated[SectorState, SerializeEnum]
+    gateway_vmid: int | None = None
+    gateway_appliance: str = ""
+    backplane_address: Annotated[IPv4Interface, SerializeIP] | None = None
 
 
-class IPAssignment(BaseModel):
-    """An IP address assignment to a virtual machine or LXC."""
+class SectorVIP(BaseModel):
+    """Sector VIP Assignment."""
 
+    virtual_router_id: int
     address: Annotated[IPv4Interface, SerializeIP]
-    vmid: str | int
-    allocated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
-
-
-class Subnet(BaseModel):
-    """A subnet configuration for IP address management."""
-
-    cidr_block: Annotated[IPv4Network, SerializeIP]
-    name: str
-
-    @property
-    def default_gateway(self) -> IPv4Interface:
-        """Get the gateway IP address for this subnet."""
-        return IPv4Interface(f"{next(iter(self.cidr_block.hosts()))}/{self.cidr_block.prefixlen}")
 
 
 class SectorSpec(Spec):
     """Spec for a sector manifest."""
 
     cidr_block: Annotated[IPv4Network, SerializeIP]
-    subnets: list[Subnet]
-    gateway_vmid: int | None = None
-    dns_vmid: int | None = None
-    ipam: Ref
+    alias: str
+    tag: int
+    vips: list[SectorVIP] = Field(default_factory=list)
+
+    def get_vip_by_vrid(self, vrid: int) -> SectorVIP | None:
+        """Get a VIP by its virtual router ID."""
+        return next(iter(vip for vip in self.vips if vip.virtual_router_id == vrid), None)
+
+    def get_vip_by_address(self, address: IPv4Address) -> SectorVIP | None:
+        """Get a VIP by its IP address."""
+        return next(iter(vip for vip in self.vips if vip.address.ip == address), None)
 
 
 class SectorManifest(BaseManifest[SectorMetadata, SectorSpec]):
@@ -63,38 +60,92 @@ class SectorManifest(BaseManifest[SectorMetadata, SectorSpec]):
         return f"{self.name}-gw"
 
     @property
-    def dns_name(self) -> str:
-        """Get the DNS name for this sector."""
-        return f"{self.name}-dns"
-
-    @property
-    def primary_gateway(self) -> IPv4Interface:
+    def default_gateway(self) -> IPv4Interface:
         """Get the primary gateway interface for this sector."""
         return IPv4Interface(f"{self.spec.cidr_block.network_address + 1}/{self.spec.cidr_block.prefixlen}")
 
     @property
     def dns_address(self) -> IPv4Interface:
         """Get the DNS IP address for this sector."""
-        return IPv4Interface(f"{self.primary_gateway.ip + 1}/{self.spec.cidr_block.prefixlen}")
+        return IPv4Interface(f"{self.spec.cidr_block.network_address + 2}/{self.spec.cidr_block.prefixlen}")
 
-    def get_subnet(self, name: str) -> Subnet:
-        """Get a subnet by name."""
-        return next(subnet for subnet in self.spec.subnets if subnet.name == name)
-
-    def get_available_ips(self, subnet_name: str) -> int:
-        """Return the number of available IP addresses in the specified subnet."""
-        return self.get_ipam().get_subnet(name=subnet_name).available_ips()
-
-    def set_gateway(self, vmid: int) -> None:
-        """Set the gateway configuration for this sector."""
-        self.spec.gateway_vmid = vmid
+    def generate_gateway_params(self, vmid: int, storage: str) -> dict[str, str]:
+        """Generate gateway parameters for container deployment."""
+        cluster_manifest = ClusterManifest.load(name=next(iter(ClusterManifest.get_existing())))
+        self.metadata.backplane_address = cluster_manifest.get_next_available_ip()
+        self.metadata.gateway_vmid = vmid
+        cluster_manifest.assign_ip(
+            address=self.metadata.backplane_address.ip,
+            description=f"Sector {self.name} gateway",
+        )
+        self.metadata.gateway_appliance = cluster_manifest.metadata.infrastructure_appliances["gateway"].volume_id
         self.save()
+        return {
+            "features": "nesting=1",
+            "ostemplate": self.metadata.gateway_appliance,
+            "hostname": self.gateway_name,
+            "cores": "1",
+            "memory": "512",
+            "swap": "512",
+            "net0": f"name=eth0,bridge={self.name},ip={self.default_gateway.with_prefixlen}",
+            "net1": (
+                "name=eth1,"
+                f"bridge={cluster_manifest.spec.backplane.vnet_id},"
+                f"ip={self.metadata.backplane_address},"
+                f"gw={cluster_manifest.spec.backplane.gateway_address.ip}"
+            ),
+            "net2": f"name=eth2,bridge={self.name},ip={self.dns_address.with_prefixlen}",
+            "rootfs": f"{storage}:8",
+            "unprivileged": "1",
+            "vmid": vmid,
+            "password": SecretVault.generate_random_password(),
+            "searchdomain": "sector.internal",
+            "nameserver": str(cluster_manifest.spec.backplane.dns_address.ip),
+            "onboot": "1",
+        }
 
-    def set_dns(self, vmid: int) -> None:
-        """Set the DNS VM ID for this sector and save the manifest."""
-        self.spec.dns_vmid = vmid
+    def assign_vip(self) -> SectorVIP:
+        """Assign the next available the VIP."""
+        used_vrids = [vip.virtual_router_id for vip in self.spec.vips]
+        used_vips = [vip.address.ip for vip in self.spec.vips]
+        vrid = next(iter(i for i in range(1,256) if i not in used_vrids))
+        # First two are Default GW and DNS, respectively
+        useable = list(self.spec.cidr_block.hosts())[2:constants.NetworkSettings.RESERVED_SECTOR_IPS]
+        address = next(iter(addr for addr in useable if addr not in used_vips))
+        assigned_vip = SectorVIP(
+            virtual_router_id=vrid,
+            address=IPv4Interface(f"{address}/{self.spec.cidr_block.prefixlen}"),
+        )
+        self.spec.vips.append(assigned_vip)
         self.save()
+        return assigned_vip
 
-    def get_ipam(self) -> IpamManifest:
-        """Load and return the IpamManifest associated with this sector."""
-        return IpamManifest.load(name=self.spec.ipam.name)
+    def release_vip(self, vrid: int) -> None:
+        """Release the VIP assigned to the specified Virtual Router ID."""
+        vip = self.spec.get_vip_by_vrid(vrid=vrid)
+        if vip:
+            self.spec.vips.remove(vip)
+            self.save()
+
+    @classmethod
+    def create(cls, form_data: "CreateSectorForm") -> Self:
+        """Create and save a new SectorManifest from form data."""
+        manifest = cls(
+            name=form_data.sector_id,
+            metadata=SectorMetadata(),
+            spec=SectorSpec(
+                cidr_block=IPv4Network(form_data.cidr_block),
+                alias=form_data.name,
+                tag=form_data.tag,
+            ),
+        )
+        manifest.save()
+        return manifest
+
+    def delete(self) -> None:
+        """Delete the sector manifest and release its backplane IP address."""
+        cluster_manifest = ClusterManifest.load(name=next(iter(ClusterManifest.get_existing())))
+        cluster_manifest.set_tag_as_unused(tag=self.spec.tag)
+        if self.metadata.backplane_address:
+            cluster_manifest.release_ip(address=self.metadata.backplane_address.ip)
+        return super().delete()

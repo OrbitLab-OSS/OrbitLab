@@ -2,12 +2,202 @@
 
 import uuid
 from types import SimpleNamespace
+from typing import Final
 
 import reflex as rx
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
+from orbitlab.proxmox import Proxmox
+from orbitlab.data_types import FrontendEvents, StorageContentType, StorageProfile
+from orbitlab.manifest.cluster import ClusterManifest, DefaultStorageSelections
+from orbitlab.web.components import Buttons, FieldSet, Select
+from orbitlab.web.components.dialog import Dialog
 from orbitlab.web.components.logo import OrbitLabLogo
 from orbitlab.web.components.menu import Menu
+from orbitlab.web.defaults import ClusterDefaults
+from orbitlab.web.utilities import EventGroup
+
+
+class ClusterSettingsDialogState(rx.State):
+    """State for the Cluster Settings Dialog."""
+
+    storage_profile: rx.Field[str] = rx.field(default="")
+
+    default_node: rx.Field[str] = rx.field(default="")
+    default_vztmpl: rx.Field[str] = rx.field(default="")
+    default_snippets: rx.Field[str] = rx.field(default="")
+    default_imports: rx.Field[str] = rx.field(default="")
+    default_iso: rx.Field[str] = rx.field(default="")
+    default_backup: rx.Field[str] = rx.field(default="")
+    default_rootdir: rx.Field[str] = rx.field(default="")
+    default_images: rx.Field[str] = rx.field(default="")
+
+    all_nodes: rx.Field[list[str]] = rx.field(default_factory=list)
+    all_storage_profiles: rx.Field[list[str]] = rx.field(default_factory=lambda: list(StorageProfile))
+
+    @rx.var
+    def all_vztmpl(self) -> list[str]:
+        """Return a list of VZ template storage names for the selected node."""
+        if self.default_node:
+            return Proxmox().list_storages_for_node(node=self.default_node, content_type=StorageContentType.VZTMPL)
+        return []
+
+    @rx.var
+    def all_imports(self) -> list[str]:
+        """Return a list of import storage names for the selected node."""
+        if self.default_node:
+            return Proxmox().list_storages_for_node(node=self.default_node, content_type=StorageContentType.IMPORT)
+        return []
+
+    @rx.var
+    def all_rootdir(self) -> list[str]:
+        """Return a list of rootdir storage names for the selected node."""
+        if self.default_node:
+            return Proxmox().list_storages_for_node(node=self.default_node, content_type=StorageContentType.ROOTDIR)
+        return []
+
+    @rx.var
+    def all_images(self) -> list[str]:
+        """Return a list of image storage names for the selected node."""
+        if self.default_node:
+            return Proxmox().list_storages_for_node(node=self.default_node, content_type=StorageContentType.IMAGES)
+        return []
+
+
+class ClusterSettingsDialog(EventGroup):
+    """Dialog component for managing cluster settings in the OrbitLab web application."""
+
+    @staticmethod
+    @rx.event
+    async def load(state: ClusterSettingsDialogState) -> FrontendEvents:
+        """Load the current cluster settings into the dialog state."""
+        cluster = ClusterManifest.load(name=next(iter(ClusterManifest.get_existing())))
+        state.storage_profile = cluster.spec.defaults.storage_profile
+        state.default_node = cluster.spec.defaults.node
+        state.default_vztmpl = cluster.spec.defaults.storage.vztmpl
+        state.default_snippets = cluster.spec.defaults.storage.snippets
+        state.default_imports = cluster.spec.defaults.storage.imports
+        state.default_iso = cluster.spec.defaults.storage.iso
+        state.default_backup = cluster.spec.defaults.storage.backup
+        state.default_rootdir = cluster.spec.defaults.storage.rootdir
+        state.default_images = cluster.spec.defaults.storage.images
+
+        state.all_nodes = [node.name for node in cluster.spec.nodes]
+        return Dialog.open(ClusterSettingsDialog.dialog_id)
+
+    @staticmethod
+    @rx.event
+    async def set_storage_default(
+        state: ClusterSettingsDialogState,
+        content_type: StorageContentType,
+        storage: str,
+    ) -> None:
+        """Set the default storage for a given content type in the cluster settings dialog state."""
+        match content_type:
+            case StorageContentType.VZTMPL:
+                state.default_vztmpl = storage
+            case StorageContentType.IMPORT:
+                state.default_imports = storage
+            case StorageContentType.ROOTDIR:
+                state.default_rootdir = storage
+            case StorageContentType.IMAGES:
+                state.default_images = storage
+
+    @staticmethod
+    @rx.event
+    async def save(state: ClusterSettingsDialogState) -> FrontendEvents:
+        """Save the updated cluster storage defaults and close the settings dialog."""
+        cluster = ClusterManifest.load(name=next(iter(ClusterManifest.get_existing())))
+        storage_defaults = DefaultStorageSelections(
+            vztmpl=state.default_vztmpl,
+            imports=state.default_imports,
+            rootdir=state.default_rootdir,
+            images=state.default_images,
+        )
+        cluster.spec.defaults.storage = storage_defaults
+        cluster.save()
+        return [
+            ClusterSettingsDialog.close,
+            ClusterDefaults.cache_clear("_cluster"),
+        ]
+
+    @staticmethod
+    @rx.event
+    async def close(state: ClusterSettingsDialogState) -> rx.event.EventCallback:
+        """Close the delete sector dialog and reset its state."""
+        state.reset()
+        return Dialog.close(ClusterSettingsDialog.dialog_id)
+
+    dialog_id: Final = "cluster-settings-dialog"
+
+    def __new__(cls) -> rx.Component:
+        """Create and return the dialog component."""
+        return Dialog(
+            "Cluster Settings",
+            FieldSet(
+                "Primary Defaults",
+                FieldSet.Field(
+                    "Proxmox Node: ",
+                    Select(
+                        ClusterSettingsDialogState.all_nodes,
+                        value=ClusterSettingsDialogState.default_node,
+                    ),
+                ),
+                FieldSet.Field(
+                    "Storage Profile: ",
+                    Select(
+                        ClusterSettingsDialogState.all_storage_profiles,
+                        value=ClusterSettingsDialogState.storage_profile,
+                    ),
+                ),
+            ),
+            FieldSet(
+                "Storage Defaults",
+                FieldSet.Field(
+                    "Vztmpl:",
+                    Select(
+                        ClusterSettingsDialogState.all_vztmpl,
+                        value=ClusterSettingsDialogState.default_vztmpl,
+                        on_change=lambda value: cls.set_storage_default(StorageContentType.VZTMPL, value),
+                    ),
+                    description="LXC Appliances",
+                ),
+                FieldSet.Field(
+                    "Imports:",
+                    Select(
+                        ClusterSettingsDialogState.all_imports,
+                        value=ClusterSettingsDialogState.default_imports,
+                        on_change=lambda value: cls.set_storage_default(StorageContentType.IMPORT, value),
+                    ),
+                    description="Importable Images",
+                ),
+                FieldSet.Field(
+                    "Rootdir:",
+                    Select(
+                        ClusterSettingsDialogState.all_rootdir,
+                        value=ClusterSettingsDialogState.default_rootdir,
+                        on_change=lambda value: cls.set_storage_default(StorageContentType.ROOTDIR, value),
+                    ),
+                    description="LXC Root Disks",
+                ),
+                FieldSet.Field(
+                    "Images:",
+                    Select(
+                        ClusterSettingsDialogState.all_images,
+                        value=ClusterSettingsDialogState.default_images,
+                        on_change=lambda value: cls.set_storage_default(StorageContentType.IMAGES, value),
+                    ),
+                    description="VM Disks",
+                ),
+            ),
+            rx.el.div(
+                Buttons.Secondary("Close", on_click=cls.close),
+                Buttons.Primary("Save", on_click=cls.save),
+                class_name="w-full flex justify-end space-x-3",
+            ),
+            dialog_id=cls.dialog_id,
+            class_name="min-w-[50vw] w-fit min-h-[75vh] h-fit",
+        )
 
 
 class SideBarStatus(BaseModel):
@@ -26,6 +216,11 @@ class SideBarStateManager(rx.State):
     def current_path(self) -> str:
         """Get the current URL path from the router."""
         return self.router.url.path
+
+    @rx.var
+    def primary_uri(self) -> str:
+        primary = next(iter([i for i in self.current_path.split("/") if i]), "")
+        return f"/{primary}"
 
     @rx.event
     async def register(self, sidebar_id: str) -> None:
@@ -57,6 +252,10 @@ class SidebarSectionHeader(BaseModel):
     title: str
 
 
+class SidebarSection(SidebarNavItem):
+    children: list[SidebarNavItem | SidebarSectionHeader] = Field(default_factory=list)
+
+
 class SideBarRoot:
     """A collapsible sidebar component with navigation items and settings menu."""
 
@@ -73,40 +272,97 @@ class SideBarRoot:
             ),
             data_collapsed=collapsed,
             class_name=(
-                "px-3 pt-4 pb-1 text-xs font-semibold tracking-wider uppercase "
-                "text-gray-500 dark:text-gray-400 "
-                "select-none opacity-80 data-[collapsed=true]:text-center"
+                "px-3 pt-8 pb-1 text-base font-semibold tracking-wider uppercase "
+                "text-[rgb(0,150,255)] dark:text-[rgb(0,200,255)] "
+                "select-none opacity-80 text-center"
             ),
         )
 
     @classmethod
-    def __nav_item__(cls, nav_item: SidebarNavItem, collapsed: rx.vars.BooleanVar) -> rx.Component:
-        """Create a navigation item button for the sidebar."""
-        return rx.el.button(
-            rx.el.div(
-                rx.icon(nav_item.icon, size=20, class_name="transition-colors duration-200"),
-                rx.el.span(
-                    nav_item.text,
-                    data_collapsed=collapsed,
-                    class_name="text-sm font-medium transition-all duration-200 data-[collapsed=true]:hidden",
+    def section_child(cls, item: SidebarNavItem | SidebarSectionHeader, collapsed: rx.vars.BooleanVar) -> rx.Component:
+        if isinstance(item, SidebarNavItem):
+            return rx.el.button(
+                rx.el.div(
+                    rx.icon(item.icon, size=20, class_name="transition-colors duration-200"),
+                    rx.el.span(
+                        item.text,
+                        data_collapsed=collapsed,
+                        class_name="text-sm font-medium transition-all duration-200 data-[collapsed=true]:hidden",
+                    ),
+                    class_name="flex items-center gap-3",
                 ),
-                class_name="flex items-center gap-3",
+                on_click=rx.redirect(item.href),
+                data_active=SideBarStateManager.current_path == item.href,
+                data_collapsed=collapsed,
+                class_name=(
+                    "flex items-start w-full px-3 py-2.5 rounded-lg data-[active=true]:bg-sky-100 "
+                    "data-[active=true]:text-sky-600 data-[active=true]:dark:bg-sky-900/50 "
+                    "data-[active=true]:dark:text-sky-300 data-[active=false]:text-gray-500 "
+                    "data-[active=false]:dark:text-gray-400 "
+                    "data-[active=false]:hover:bg-gray-100 data-[active=false]:dark:hover:bg-gray-800 "
+                    "data-[active=false]:hover:text-gray-800 data-[active=false]:dark:hover:text-gray-200 "
+                    "data-[collapsed=true]:justify-center"
+                ),
+            )
+        return rx.el.div(
+            rx.cond(
+                collapsed,
+                " •",
+                item.title.upper(),
             ),
-            on_click=rx.redirect(nav_item.href),
-            data_active=SideBarStateManager.current_path == nav_item.href,
             data_collapsed=collapsed,
             class_name=(
-                "flex items-start w-full px-3 py-2.5 rounded-lg data-[active=true]:bg-sky-100 "
-                "data-[active=true]:text-sky-600 data-[active=true]:dark:bg-sky-900/50 "
-                "data-[active=true]:dark:text-sky-300 data-[active=false]:text-gray-500 "
-                "data-[active=false]:dark:text-gray-400 "
-                "data-[active=false]:hover:bg-gray-100 data-[active=false]:dark:hover:bg-gray-800 "
-                "data-[active=false]:hover:text-gray-800 data-[active=false]:dark:hover:text-gray-200 "
-                "data-[collapsed=true]:justify-center"
+                "px-3 not-first:pt-8 pb-1 text-base font-semibold tracking-wider uppercase "
+                "text-[rgb(0,150,255)] dark:text-[rgb(0,200,255)] "
+                "select-none opacity-80 text-center"
             ),
         )
 
-    def __new__(cls, *nav_items: SidebarNavItem | SidebarSectionHeader, title: str = "OrbitLab") -> rx.Component:
+    @classmethod
+    def section(cls, section: SidebarSection, collapsed: rx.vars.BooleanVar) -> rx.Component:
+        """Create a navigation item button for the sidebar."""
+        return rx.el.div(
+            rx.el.button(
+                rx.el.div(
+                    rx.icon(section.icon, size=20, class_name="transition-colors duration-200"),
+                    rx.el.span(
+                        section.text,
+                        data_collapsed=collapsed,
+                        class_name="text-sm font-medium transition-all duration-200 data-[collapsed=true]:hidden",
+                    ),
+                    class_name="flex items-center gap-3",
+                ),
+                on_click=rx.redirect(section.href),
+                data_active=SideBarStateManager.current_path == section.href,
+                data_collapsed=collapsed,
+                class_name=(
+                    "flex items-start w-full px-3 py-2.5 rounded-lg data-[active=true]:bg-sky-100 "
+                    "data-[active=true]:text-sky-600 data-[active=true]:dark:bg-sky-900/50 "
+                    "data-[active=true]:dark:text-sky-300 data-[active=false]:text-gray-500 "
+                    "data-[active=false]:dark:text-gray-400 "
+                    "data-[active=false]:hover:bg-gray-100 data-[active=false]:dark:hover:bg-gray-800 "
+                    "data-[active=false]:hover:text-gray-800 data-[active=false]:dark:hover:text-gray-200 "
+                    "data-[collapsed=true]:justify-center"
+                ),
+            ),
+            rx.el.div(
+                *[
+                    cls.section_child(item=item, collapsed=collapsed)
+                    for item in section.children
+                ],
+                data_active=SideBarStateManager.primary_uri == section.href,
+                data_children=len(section.children) > 0,
+                class_name=(
+                    "flex flex-col gap-1 mt-1 py-2 rounded-lg "
+                    "bg-gray-100/60 dark:bg-white/[0.03] "
+                    "border-l border-gray-200 dark:border-white/[0.08] "
+                    "data-[active=false]:hidden data-[children=false]:hidden"
+                ),
+            ),
+        )
+        
+
+    def __new__(cls, *sections: SidebarSection) -> rx.Component:
         """Create a new sidebar component instance."""
         cls.sidebar_id = str(uuid.uuid4())
         collapsed = SideBarStateManager.registered.get(cls.sidebar_id, {}).to(dict).get("collapsed", False).to(bool)
@@ -117,7 +373,7 @@ class SideBarRoot:
                         rx.el.a(
                             OrbitLabLogo(),
                             rx.el.span(
-                                title,
+                                "OrbitLab",
                                 data_collapsed=collapsed,
                                 class_name=(
                                     "text-lg font-bold text-nowrap text-gray-800 dark:text-gray-100 "
@@ -145,12 +401,7 @@ class SideBarRoot:
                         class_name="flex items-center justify-between p-3 data-[collapsed=true]:flex-col",
                     ),
                     rx.el.nav(
-                        *[
-                            cls.__section_header__(header=item, collapsed=collapsed)
-                            if isinstance(item, SidebarSectionHeader)
-                            else cls.__nav_item__(nav_item=item, collapsed=collapsed)
-                            for item in nav_items
-                        ],
+                        *[cls.section(section=section, collapsed=collapsed) for section in sections],
                         class_name="flex flex-col gap-1 p-2",
                     ),
                 ),
@@ -175,13 +426,7 @@ class SideBarRoot:
                         ),
                         Menu.Item(
                             rx.text("Cluster Settings"),
-                            on_click=rx.console_log(
-                                "Cluster Settings",
-                            ),  # TODO: Add Cluster settings config dialog
-                        ),
-                        Menu.Item(
-                            "Administration",
-                            on_click=rx.console_log("Administration"),  # TODO: Add admin settings config dialog
+                            on_click=ClusterSettingsDialog.load,
                         ),
                         Menu.Separator(),
                         rx.color_mode_cond(
@@ -208,6 +453,7 @@ class SideBarRoot:
                 ),
                 class_name="flex flex-col justify-between h-full",
             ),
+            ClusterSettingsDialog(),
             data_collapsed=collapsed,
             on_mount=SideBarStateManager.register(cls.sidebar_id),
             class_name=(
@@ -227,9 +473,9 @@ class SideBarNamespace(SimpleNamespace):
     """A namespace for sidebar-related components and utilities."""
 
     __call__ = staticmethod(SideBarRoot)
-    SectionHeader = staticmethod(SidebarSectionHeader)
+    Section = staticmethod(SidebarSection)
+    Header = staticmethod(SidebarSectionHeader)
     NavItem = staticmethod(SidebarNavItem)
-    Manager = SideBarStateManager
 
 
 SideBar = SideBarNamespace()

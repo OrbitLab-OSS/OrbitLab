@@ -8,7 +8,7 @@ from orbitlab.web import components
 from orbitlab.web.utilities import EventGroup
 
 from .dialogs import DeleteSectorDialog
-from .states import SectorsState
+from .states import SectorsTableState
 
 
 class SectorsTable(EventGroup):
@@ -17,21 +17,22 @@ class SectorsTable(EventGroup):
     @classmethod
     def __table_row__(cls, sector: SectorManifest) -> rx.Component:
         """Create and return the table row component."""
+        state = SectorsTableState.state_mapping.get(sector.name, "Pending").to(str)
         return rx.el.tr(
             rx.el.td(
                 sector.name,  # Sector ID
                 class_name="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-800 dark:text-gray-200",
             ),
             rx.el.td(
-                sector.metadata.alias,  # Sector Name
+                sector.spec.alias,  # Sector Name
                 class_name="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-800 dark:text-gray-200",
             ),
             rx.el.td(
                 rx.match(
-                    sector.metadata.state,
-                    (SectorState.AVAILABLE, components.Badge("Available", color_scheme="green")),
-                    (SectorState.DELETING, components.Badge("Deleting...", color_scheme="red")),
-                    components.Badge("Pending", color_scheme="orange"),
+                    state,
+                    (SectorState.AVAILABLE, components.Badge(state.capitalize(), color_scheme="green")),
+                    (SectorState.DELETING, components.Badge(state.capitalize(), color_scheme="red")),
+                    components.Badge(state.capitalize(), color_scheme="orange"),
                 ),
                 class_name="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-800 dark:text-gray-200",
             ),
@@ -40,24 +41,7 @@ class SectorsTable(EventGroup):
                 class_name="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-800 dark:text-gray-200",
             ),
             rx.el.td(
-                sector.metadata.tag,
-                class_name="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-800 dark:text-gray-200",
-            ),
-            rx.el.td(
-                components.Popover(
-                    rx.text(f"{rx.Var.create(sector.spec.subnets).length()} Subnets", class_name="cursor-pointer"),
-                    rx.el.div(
-                        rx.foreach(
-                            sector.spec.subnets,
-                            lambda subnet: rx.el.div(
-                                rx.text(subnet.name),
-                                components.Badge(subnet.cidr_block, color_scheme="blue"),
-                                class_name="flex space-x-4",
-                            ),
-                        ),
-                        class_name="flex-col space-y-2",
-                    ),
-                ),
+                sector.spec.tag,
                 class_name="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-800 dark:text-gray-200",
             ),
             rx.el.td(
@@ -66,6 +50,7 @@ class SectorsTable(EventGroup):
                     components.Menu.Item(
                         "Delete Sector",
                         on_click=DeleteSectorDialog.check_can_delete(sector.name),
+                        danger=True,
                     ),
                 ),
                 class_name="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-800 dark:text-gray-200",
@@ -92,13 +77,12 @@ class SectorsTable(EventGroup):
                             rx.el.th("Status", class_name=header_class),
                             rx.el.th("CIDR Block", class_name=header_class),
                             rx.el.th("VLAN Tag", class_name=header_class),
-                            rx.el.th("Subnets", class_name=header_class),
                             rx.el.th("", class_name=header_class),  # Menu Column
                         ),
                         class_name="bg-white/60 dark:bg-white/[0.03] backdrop-blur-sm",
                     ),
                     rx.el.tbody(
-                        rx.foreach(SectorsState.sectors, lambda network: cls.__table_row__(network)),
+                        rx.foreach(SectorsTableState.sectors, lambda network: cls.__table_row__(network)),
                         class_name=(
                             "divide-y divide-gray-200 dark:divide-white/[0.08] bg-white/70 dark:bg-[#0E1015]/60 "
                             "backdrop-blur-sm"
@@ -123,7 +107,7 @@ class SectorsTable(EventGroup):
                 rx.el.div(
                     rx.el.h3("Sectors"),
                     rx.el.div(
-                        components.Buttons.Icon("refresh-ccw", on_click=SectorsState.cache_clear("sectors")),
+                        components.Buttons.Icon("refresh-ccw", on_click=SectorsTableState.cache_clear("sectors")),
                         class_name="flex space-x-4",
                     ),
                     class_name="w-full flex justify-between",

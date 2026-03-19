@@ -3,14 +3,14 @@
 import reflex as rx
 
 from orbitlab.web.components import Buttons, Dialog, PageHeader
-from orbitlab.web.pages.compute.layout import compute_page
+from orbitlab.web.layout import orbitlab_page
 
-from .dialogs import CustomApplianceDialog, DownloadApplianceDialog
+from .dialogs import CustomApplianceDialog, DeleteApplianceDialog, DownloadApplianceDialog
 from .tables import BaseApplianceTable, CustomApplianceTable
 
 
 @rx.page("/compute/lxc/appliances")
-@compute_page
+@orbitlab_page
 def appliances_page() -> rx.Component:
     """Render the LXC appliances management page."""
     return rx.el.div(
@@ -30,5 +30,6 @@ def appliances_page() -> rx.Component:
         BaseApplianceTable(),
         CustomApplianceTable(),
         DownloadApplianceDialog(),
+        DeleteApplianceDialog(),
         class_name="w-full h-full flex flex-col",
     )

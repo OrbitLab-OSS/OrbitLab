@@ -1,0 +1,10 @@
+Package: orbitlab
+Version: 0.0.23
+Section: admin
+Priority: optional
+Architecture: amd64
+Maintainer: OrbitLab-OSS
+Depends: python3, unzip, redis, redis-sentinel
+Description: OrbitLab cluster management platform
+ OrbitLab manages Proxmox clusters, networking sectors, and infrastructure
+ automation through declarative manifests.

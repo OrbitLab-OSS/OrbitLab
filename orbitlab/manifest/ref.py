@@ -36,7 +36,7 @@ class Ref(BaseModel):
         self.kind = ManifestKind(kind)
         self.name = filename.split(".yaml")[0]
         if not self._manifest_ref_path.exists():
-            raise ManifestNotFoundError(name=self.name, kind=self.kind)
+            raise ManifestNotFoundError(name=self.name)
         return self
 
     @classmethod

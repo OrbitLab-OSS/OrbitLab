@@ -9,7 +9,7 @@ from orbitlab.web.utilities import CacheBuster
 class ProxmoxState(CacheBuster, rx.State):
     """State class for managing Proxmox node manifests and related utilities."""
 
-    @rx.var
+    @rx.var(deps=["_cached_nodes"])
     def nodes(self) -> list[NodeManifest]:
         """Get all existing node manifests."""
         return [NodeManifest.load(name=name) for name in NodeManifest.get_existing()]

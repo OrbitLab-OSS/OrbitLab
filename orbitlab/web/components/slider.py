@@ -26,6 +26,7 @@ class SliderProps(TypedDict, total=False):
     default_value: float | rx.Var[float | list[float]]
     min: int
     max: int
+    step: int
     required: bool
     name: str
     form: str
