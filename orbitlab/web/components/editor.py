@@ -1,4 +1,5 @@
 """CodeMirror Editor."""
+
 from typing import Literal, NotRequired, Self, TypedDict, Unpack, overload
 
 import reflex as rx
@@ -23,8 +24,7 @@ class CodeMirror(rx.Component):
 
     lib_dependencies: list[str] = [  # noqa: RUF012
         "@codemirror/legacy-modes@6.5.2",
-        "@codemirror/language@6.11.3"
-        "@replit/codemirror-indentation-markers@6.5.3",
+        "@codemirror/language@6.11.3@replit/codemirror-indentation-markers@6.5.3",
     ]
 
     tag = "CodeMirror"
@@ -83,11 +83,13 @@ class CodeMirror(rx.Component):
 
     def render(self) -> dict:
         """Render the CodeMirror component with appropriate extensions and properties."""
-        tag = self._render({
-            "value": rx.vars.FunctionStringVar("value"),
-            "extensions": self.__handle_languages__(handle_for="extensions"),
-            "theme": self.theme,
-        })
+        tag = self._render(
+            props={
+                "value": rx.vars.FunctionStringVar("value"),
+                "extensions": self.__handle_languages__(handle_for="extensions"),
+                "theme": self.theme,
+            },
+        )
         rendered_dict = dict(
             tag.set(
                 children=[child.render() for child in self.children],

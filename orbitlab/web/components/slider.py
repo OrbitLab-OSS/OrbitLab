@@ -6,7 +6,7 @@ from typing import TypedDict, Unpack
 
 import reflex as rx
 
-from orbitlab.web.states.utilities import EventGroup
+from orbitlab.web.utilities import EventGroup
 
 
 class SliderStateManager(rx.State):
@@ -26,6 +26,7 @@ class SliderProps(TypedDict, total=False):
     default_value: float | rx.Var[float | list[float]]
     min: int
     max: int
+    step: int
     required: bool
     name: str
     form: str
@@ -34,11 +35,7 @@ class SliderProps(TypedDict, total=False):
 class Slider(EventGroup):
     """OrbitLab-themed slider component (Radix-based)."""
 
-    text_class = (
-        "min-w-[2.5rem] text-right "
-        "text-sm font-semibold "
-        "text-gray-800 dark:text-[#E8F1FF]"
-    )
+    text_class = "min-w-[2.5rem] text-right text-sm font-semibold text-gray-800 dark:text-[#E8F1FF]"
 
     @staticmethod
     @rx.event
@@ -64,7 +61,6 @@ class Slider(EventGroup):
                     "relative flex w-full items-center select-none "
                     # Smooth theme transitions
                     "transition-all duration-300 "
-
                     # 🟦 Track
                     "[&_.rt-SliderTrack]:h-2 "
                     "[&_.rt-SliderTrack]:w-full "
@@ -74,7 +70,6 @@ class Slider(EventGroup):
                     "dark:[&_.rt-SliderTrack]:bg-white/[0.07] "
                     "[&_.rt-SliderTrack]:backdrop-blur-sm "
                     "[&_.rt-SliderTrack]:shadow-[inset_0_0_1px_rgba(255,255,255,0.15)] "
-
                     # 🟦 Range fill
                     "[&_.rt-SliderRange]:h-full "
                     "[&_.rt-SliderRange]:rounded-full "
@@ -83,7 +78,6 @@ class Slider(EventGroup):
                     "dark:[&_.rt-SliderRange]:bg-[#36E2F4] "
                     "[&_.rt-SliderRange]:shadow-[0_0_10px_rgba(54,226,244,0.35)] "
                     "transition-all duration-300 "
-
                     # 🟦 Thumb
                     "[&_.rt-SliderThumb]:w-5 [&_.rt-SliderThumb]:h-5 "
                     "[&_.rt-SliderThumb]:rounded-full "
@@ -109,7 +103,7 @@ class Slider(EventGroup):
             rx.cond(
                 SliderStateManager.registered.get(slider_id, []).to(list).length() > 1,
                 rx.text(
-                    SliderStateManager.registered.get(slider_id, [0,1]).to(list)[1],
+                    SliderStateManager.registered.get(slider_id, [0, 1]).to(list)[1],
                     class_name=cls.text_class,
                 ),
             ),

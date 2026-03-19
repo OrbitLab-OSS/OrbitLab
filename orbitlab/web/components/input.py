@@ -24,20 +24,22 @@ class Props(TypedDict, total=False):
     required: bool
     disabled: bool
     error: str
+    auto_complete: str
     icon: str
-    wrapper_class_name: str
+    class_name: str
 
 
 class Input:
     """Input component for creating styled input fields with optional icons and descriptions."""
 
-    def __new__(cls, class_name: str = "w-full grow", **props: Unpack[Props]) -> rx.Component:
+    def __new__(cls, **props: Unpack[Props]) -> rx.Component:
         """Create and return the input component."""
         props.setdefault("type", "text")
         props.setdefault("error", "Invalid input")
         icon = props.pop("icon", None)
         error = props.pop("error", None)
         description = props.pop("description", None)
+        class_name = props.pop("class_name", "")
 
         icon_component = (
             rx.el.div(

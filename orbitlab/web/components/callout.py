@@ -8,6 +8,7 @@ import reflex as rx
 
 class Props(TypedDict, total=False):
     """Type definition for Callout component props."""
+
     type: Literal["info", "success", "warning", "error"]
     dismiss: bool
     class_name: str

@@ -5,6 +5,8 @@
 
 [Screenshots](/docs/orbitlab_screenshots.md)
 
+[Roadmap](/docs/roadmap.md)
+
 # OrbitLab
 
 OrbitLab is a **manifest-driven infrastructure orchestration layer for Proxmox VE**.  

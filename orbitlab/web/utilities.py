@@ -1,66 +1,99 @@
 """OrbitLab utilities."""
 
+import importlib
 import inspect
 import os
 from base64 import b64encode
-from collections.abc import Callable
-from typing import Any, TypeVar
+from types import FunctionType
+from typing import TYPE_CHECKING, Any, TypeVar, get_type_hints
 
 import reflex as rx
+from redis.asyncio import Redis
+from reflex.utils.exceptions import StateValueError
 
-from orbitlab.data_types import InitializationState
-from orbitlab.web.splash_page import SplashPageState
+if TYPE_CHECKING:
+    from orbitlab.worker import Worker
+
 
 T = TypeVar("T", bound=rx.state.BaseState)
 
 
-async def _get_user_state(client_token: str, state: type[T]) -> T:
-    manager = rx.state.get_state_manager()
-    base_state = await manager.get_state(client_token)
-    return await base_state.get_state(state)
+class CacheBuster(rx.State, mixin=True):
+    """Mixin class for managing cache invalidation of computed variables."""
+
+    def __init_subclass__(cls, **kwargs: bool) -> None:
+        """Initialize subclass and add cached tracking variables for computed vars."""
+        super().__init_subclass__(**kwargs)
+        for var in cls.computed_vars:
+            cls.add_var(f"_cached_{var}", bool, default_value=False)
+
+    @rx.event
+    async def cache_clear(self, var: str) -> None:
+        """Clear the cache for a specific computed variable."""
+        if var not in self.computed_vars:
+            msg = f"State '{self.get_name()}' has no computed var named '{var}'."
+            raise StateValueError(msg)
+
+        tracked_var = f"_cached_{var}"
+        if hasattr(self, tracked_var):
+            current = getattr(self, tracked_var)
+            setattr(self, tracked_var, not current)
 
 
-async def emit_state_event(client_token: str, state: type[T], event_name: str, params: dict | None = None) -> None:
-    """Emit an event on a specific state instance.
+class EventGroup:
+    """Base class for grouping event handlers."""
 
-    Args:
-        client_token: The client token to identify the session.
-        state: The state class to get the instance from.
-        event_name: The name of the event method to call.
-        params: Parameters to pass to the event method, by default None.
-    """
-    if not params:
-        params = {}
-    user_state = await _get_user_state(client_token, state)
-    await getattr(user_state, event_name)(**params)
+    def __init_subclass__(cls) -> None:
+        """Initialize subclass and register event handlers for static methods."""
+        events = {
+            name: func.__get__(None, object)
+            for name, func in vars(cls).items()
+            if not name.startswith("_") and isinstance(func, staticmethod)
+        }
+        for event, func in events.items():
+            if not isinstance(func, FunctionType):
+                continue
+            types = get_type_hints(func)
+            state_arg_name = next(iter(inspect.signature(func).parameters), "")
+            state_cls = types.get(state_arg_name, type[None])
+            if not issubclass(state_cls, rx.state.BaseState):
+                msg = f"Event {cls.__name__}.{event}'s first argument must be a state class."
+                raise TypeError(msg)
+            name = (
+                (func.__module__ + "." + func.__qualname__).replace(".", "_").replace("<locals>", "_").removeprefix("_")
+            )
+            object.__setattr__(func, "__name__", name)
+            object.__setattr__(func, "__qualname__", name)
+            state_cls._add_event_handler(name, func)  # noqa: SLF001
+            setattr(cls, event, getattr(state_cls, name))
 
 
-async def emit_decentralized_event(client_token: str, event: rx.EventHandler, params: dict | None = None) -> None:
-    """Emit a decentralized event by calling the event handler with the appropriate state instance.
+def get_worker() -> "Worker":
+    """Get the Worker module instance."""
+    worker_module = importlib.import_module(name="orbitlab.worker.worker")
+    return worker_module.Worker
 
-    Args:
-        client_token: The client token to identify the session.
-        event: The event handler to call.
-        params: Parameters to pass to the event handler, by default None.
 
-    Raises:
-        TypeError: If the event is not a decentralized event or the first argument is not a subclass of rx.State.
-    """
-    if not params:
-        params = {}
+def get_redis() -> Redis:
+    """Get the Reflex Redis client."""
+    # manager: StateManagerRedis = rx.state.get_state_manager()
+    return Redis()
+
+
+async def get_redis_value(name: str, key: str, default: str = "") -> str:
+    """Retrieve a value from Redis for a given manifest and key."""
+    redis = get_redis()
     try:
-        signature = inspect.signature(event.fn)
-        param = next(iter(signature.parameters.values()))
-    except StopIteration as err:
-        msg = f"Event {event} is not a decentralized event."
-        raise TypeError(msg) from err
+        value = await redis.hget(name=name, key=key)
+    except Exception as err:  # noqa: BLE001
+        print(err)
+        return ""
     else:
-        state = param.annotation
-        if not issubclass(state, rx.state.BaseState):
-            msg = f"The first argument to event {event} is not a subclass of rx.State."
-            raise TypeError(msg)
-    user_state = await _get_user_state(client_token, state)
-    await event.fn(user_state, **params)
+        if value and isinstance(value, bytes):
+            value = value.decode()
+        if not value:
+            value = default
+        return value
 
 
 def custom_download(  # noqa: C901, PLR0912
@@ -121,7 +154,7 @@ def custom_download(  # noqa: C901, PLR0912
                 is_data_url,
                 data.to(str),
                 (
-                    CREATE_OBJECT_URL.call(create_new_blob(data, mime_type)) # pyright: ignore[reportArgumentType]
+                    CREATE_OBJECT_URL.call(create_new_blob(data, mime_type))  # pyright: ignore[reportArgumentType]
                     if isinstance(data, rx.vars.ArrayVar)
                     else f"data:{mime_type};base64,"
                     + BASE64_ENCODE.call(
@@ -162,17 +195,6 @@ def create_new_blob(data: rx.vars.ArrayVar, mime_type: str):  # noqa: ANN201, D1
     return rx.vars.var_operation_return(
         js_expression=f"new Blob([new Uint8Array({data})], {{ type: '{mime_type}' }})",
     )
-
-
-def require_configuration(page: Callable[[], rx.Component]) -> Callable[[], rx.Component]:
-    """Decorator to require that the configuration is complete before rendering the page."""
-    def wrapped() -> rx.Component:
-        return rx.cond(
-            SplashPageState.initialization_state == InitializationState.COMPLETE,
-            page(),
-            rx.el.div(on_mount=rx.redirect("/")),
-        )
-    return wrapped
 
 
 def is_production() -> bool:

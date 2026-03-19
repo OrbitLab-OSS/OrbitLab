@@ -6,12 +6,13 @@ import reflex as rx
 class FieldItem:
     """A field component that combines a label with another component."""
 
-    def __new__(cls, label: str, component: rx.Component) -> rx.Component:
+    def __new__(cls, label: str, component: rx.Component, description: str = "") -> rx.Component:
         """Create a field with a label and component."""
         return rx.el.div(
-            rx.el.p(
-                label,
-                class_name="w-1/4 mr-4 text-base font-semibold text-gray-900 dark:text-[#E8F1FF]",
+            rx.el.div(
+                rx.el.p(label),
+                rx.el.p(description, class_name="text-sm opacity-50"),
+                class_name="w-1/3 mr-4 text-base font-semibold text-gray-900 dark:text-[#E8F1FF]",
             ),
             component,
             class_name="w-full flex items-center",
@@ -33,7 +34,6 @@ class FieldSet:
                     "text-gray-800 dark:text-[#E8F1FF] "
                     "px-3 -ml-1 "
                     "rounded-md "
-                    "relative "
                     "top-[-0.6rem] "
                     "bg-gradient-to-r from-white/90 to-gray-100/70 "
                     "dark:from-[#0E1015]/90 dark:to-[#181B22]/90 "
@@ -46,7 +46,7 @@ class FieldSet:
             ),
             *children,
             class_name=(
-                "relative p-4 mt-4 mb-6 "
+                "w-full p-4 mt-4 mb-6 flex justify-evenly "
                 "rounded-xl flex flex-col space-y-2 "
                 "border border-gray-200 dark:border-white/[0.08] "
                 "bg-gradient-to-b from-white/90 to-gray-100/70 "

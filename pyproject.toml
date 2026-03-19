@@ -6,12 +6,17 @@ build-backend = "setuptools.build_meta"
 name = "orbitlab"
 version = "0.0.1"
 dependencies = [
+    "backoff==2.2.1",
     "cryptography==46.0.3",
     "httpx==0.28.1",
     "pydantic==2.12.3",
     "pydantic-settings==2.11.0",
     "PyYAML==6.0.3",
-    "reflex==0.8.21",
+    "reflex==0.8.28",
+    "reflex-vite-config-plugin==0.0.4",
+    "redis", # Let reflex set the version
+    "starlette", # Let reflex set the version
+    "uvicorn==0.40.0",
     "websocket-client==1.9.0"
 ]
 
@@ -40,7 +45,7 @@ convention = "google"
 
 [tool.pytest.ini_options]
 pythonpath = "."
-addopts = "--capture=no --cov=pws --cov-report=term-missing"
+addopts = "--capture=no --cov=orbitlab --cov-report=term-missing"
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_functions = ["test_*"]

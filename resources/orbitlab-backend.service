@@ -1,0 +1,13 @@
+[Unit]
+Description=OrbitLab Backend
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/orbitlab
+EnvironmentFile=/etc/default/orbitlab
+ExecStart=/opt/orbitlab/orbitlab-backend
+Restart=always
+
+[Install]
+WantedBy=multi-user.target

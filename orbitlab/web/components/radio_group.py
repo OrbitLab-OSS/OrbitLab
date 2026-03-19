@@ -29,7 +29,7 @@ class RadioItem:
                 id=item,
                 class_name="peer sr-only",
                 checked=value == item,
-                **props, # pyright: ignore[reportCallIssue]
+                **props,  # pyright: ignore[reportCallIssue]
             ),
             rx.el.span(
                 rx.el.span(label or item.title(), class_name="truncate"),
@@ -75,5 +75,5 @@ class RadioGroup:
             *children,
             class_name=f"flex flex-row items-center gap-3 p-2 {class_name}",
             role="radiogroup",
-            **props, # pyright: ignore[reportCallIssue]
+            **props,  # pyright: ignore[reportCallIssue]
         )

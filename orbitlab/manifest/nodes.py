@@ -1,15 +1,17 @@
 """Schema definitions for Proxmox cluster node manifests in OrbitLab."""
 
 from ipaddress import IPv4Address
-from typing import Annotated
+from typing import TYPE_CHECKING, Annotated
 
 from pydantic import BaseModel, Field
 
-from orbitlab.clients.proxmox.cluster.models import NodeStatus
 from orbitlab.data_types import ManifestKind, StorageContentType
 
 from .base import BaseManifest, Metadata, Spec
 from .serialization import SerializeEnum, SerializeEnumList, SerializeIP
+
+if TYPE_CHECKING:
+    from orbitlab.proxmox.base.models import NodeStatus
 
 
 class NodeMetadata(Metadata):
@@ -23,6 +25,7 @@ class NodeMetadata(Metadata):
     ip: Annotated[IPv4Address, SerializeIP]
     online: bool
     maintenance_mode: bool
+    networking_configured: bool = False
 
 
 class Storage(BaseModel):
@@ -53,18 +56,20 @@ class NodeManifest(BaseManifest[NodeMetadata, NodeSpec]):
         return next(iter(self.list_storages(content_type=content_type)))
 
     @classmethod
-    def from_node_status(cls, node: NodeStatus, storage: list[dict]) -> "NodeManifest":
+    def from_node_status(cls, node: "NodeStatus", storage: list[dict]) -> "NodeManifest":
         """Create a NodeManifest instance from a NodeStatus object and storage list."""
-        manifest = cls.model_validate({
-            "name": node.name,
-            "metadata": {
-                "ip": node.ip,
-                "online": node.online,
-                "maintenance_mode": node.maintenance_mode,
+        manifest = cls.model_validate(
+            {
+                "name": node.name,
+                "metadata": {
+                    "ip": node.ip,
+                    "online": node.online,
+                    "maintenance_mode": node.maintenance_mode,
+                },
+                "spec": {
+                    "storage": storage,
+                },
             },
-            "spec": {
-                "storage": storage,
-            },
-        })
+        )
         manifest.save()
         return manifest

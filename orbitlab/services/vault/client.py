@@ -110,9 +110,9 @@ class SecretVault:
         while True:
             password = "".join(secrets.choice(alphabet) for _ in range(length))
             if (
-                sum(c.islower() for c in password) >= min_lower and
-                sum(c.isupper() for c in password) >= min_upper and
-                sum(c.isdigit() for c in password) >= min_digits
+                sum(c.islower() for c in password) >= min_lower
+                and sum(c.isupper() for c in password) >= min_upper
+                and sum(c.isdigit() for c in password) >= min_digits
             ):
                 break
         return password
@@ -129,7 +129,7 @@ class SecretVault:
 
         secret = Secret(
             name=str(secret_name),
-            secret_string=value, # pyright: ignore[reportArgumentType]
+            secret_string=value,  # pyright: ignore[reportArgumentType]
             created_at=datetime.now(UTC),
             version=version,
             checksum="",  # Checksum is computed and updated on __save__()
