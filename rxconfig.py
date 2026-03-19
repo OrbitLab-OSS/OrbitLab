@@ -1,11 +1,17 @@
 """Reflex Config."""
 
 import reflex as rx
+from vite_config_plugin import ViteConfigPlugin
+
 
 config = rx.Config(
     app_name="orbitlab",
-    app_module_import="orbitlab.web.main",
-    redis_url="redis://192.168.87.230:6379",
+    app_module_import="orbitlab.web",
+    backend_port=8081,
+    frontend_port=8080,
+    redis_url="redis://127.0.0.1:6379/10", # Set to a non-default DB
+    redis_lock_warning_threshold=2500,
+    show_built_with_reflex=False,
     plugins=[
         rx.plugins.TailwindV4Plugin(
             {
@@ -21,5 +27,9 @@ config = rx.Config(
             },
         ),
         rx.plugins.sitemap.SitemapPlugin(),
+        ViteConfigPlugin({
+            "optimizeDeps": {"include": ["react-sortablejs", "@xterm/xterm"]},
+            "ssr": {"noExternal": ["react-sortablejs", "@xterm/xterm"]},
+        }),
     ],
 )

@@ -52,14 +52,14 @@ class ClusterDefaults(CacheBuster, rx.State):
             return self._cluster.spec.defaults.storage.vztmpl
         return ""
 
-    @rx.var
+    @rx.var(cache=False)
     def available_nodes(self) -> list[str]:
         """Get the list of available Proxmox nodes from the cluster manifest, or an empty list if not set."""
         if self._cluster:
-            return self._cluster.spec.nodes
+            return list(self._cluster.spec.nodes.keys())
         return []
 
-    @rx.var
+    @rx.var(cache=False)
     def available_sectors(self) -> dict[str, str]:
         """Get the available sectors as a dictionary mapping display names to sector names."""
         return {
@@ -69,4 +69,6 @@ class ClusterDefaults(CacheBuster, rx.State):
 
     @rx.var
     def etcd_enabled(self) -> bool:
-        return bool(self._cluster.spec.etcd)
+        if self._cluster:
+            return bool(self._cluster.spec.etcd)
+        return False

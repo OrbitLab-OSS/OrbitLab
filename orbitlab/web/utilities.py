@@ -12,8 +12,6 @@ from redis.asyncio import Redis
 from reflex.utils.exceptions import StateValueError
 
 if TYPE_CHECKING:
-    from reflex.istate.manager.redis import StateManagerRedis
-
     from orbitlab.worker import Worker
 
 
@@ -78,15 +76,15 @@ def get_worker() -> "Worker":
 
 def get_redis() -> Redis:
     """Get the Reflex Redis client."""
-    manager: StateManagerRedis = rx.state.get_state_manager()
-    return manager.redis
+    # manager: StateManagerRedis = rx.state.get_state_manager()
+    return Redis()
 
 
 async def get_redis_value(name: str, key: str, default: str = "") -> str:
     """Retrieve a value from Redis for a given manifest and key."""
-    manager: StateManagerRedis = rx.state.get_state_manager()
+    redis = get_redis()
     try:
-        value = await manager.redis.hget(name=name, key=key)
+        value = await redis.hget(name=name, key=key)
     except Exception as err:  # noqa: BLE001
         print(err)
         return ""

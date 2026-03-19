@@ -1,7 +1,7 @@
 """Proxmox Client Base Models."""
 
 import ipaddress
-from typing import Annotated, Literal
+from typing import Annotated, Literal, Self
 
 from pydantic import BaseModel, Field, RootModel
 
@@ -102,6 +102,10 @@ class ProxmoxAuth(BaseModel):
     """Represents Proxmox authentication response."""
 
     data: AuthData
+    
+    @classmethod
+    def from_pvesh(cls, data: str) -> Self:
+        return cls(data=AuthData.model_validate_json(data))
 
 
 class VMClusterResource(BaseModel):

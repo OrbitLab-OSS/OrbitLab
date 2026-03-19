@@ -229,7 +229,7 @@ class CreateDataCoreCluster(Workflow, DataCoreUtils):
         await self.create_datacore_node(
             params=manifest.generate_node_params(
                 vmid=vmid,
-                volume_id=cluster_manifest.metadata.datacore_appliance.volume_id,
+                volume_id=cluster_manifest.metadata.infrastructure_appliances["datacore"].volume_id,
             ),
         )
 
@@ -239,7 +239,7 @@ class CreateDataCoreCluster(Workflow, DataCoreUtils):
             await self.create_datacore_node(
                 params=manifest.generate_node_params(
                     vmid=vmid,
-                    volume_id=cluster_manifest.metadata.datacore_appliance.volume_id,
+                    volume_id=cluster_manifest.metadata.infrastructure_appliances["datacore"].volume_id,
                 ),
             )
 

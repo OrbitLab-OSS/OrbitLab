@@ -3,7 +3,7 @@
 import reflex as rx
 
 from orbitlab.manifest.nodes import NodeManifest
-from orbitlab.web.components import Card
+from orbitlab.web import components
 from orbitlab.web.utilities import EventGroup
 from orbitlab.web.layout import orbitlab_page
 
@@ -53,7 +53,7 @@ class NodeRow(EventGroup):
 def nodes_dashboard() -> rx.Component:
     """Proxmox Nodes Page."""
     return rx.el.div(
-        Card(
+        components.Card(
             rx.el.div(
                 rx.el.table(
                     # === Table Header ===
@@ -111,7 +111,17 @@ def nodes_dashboard() -> rx.Component:
                     "transition-all duration-200"
                 ),
             ),
-            header=Card.Header(rx.el.h3("Proxmox Nodes")),
+            header=components.Card.Header(
+                rx.el.div(
+                    rx.el.h3("Proxmox Nodes"),
+                    rx.el.div(
+                        components.Buttons.Icon("refresh-ccw", on_click=ProxmoxState.cache_clear("nodes")),
+                        class_name="flex space-x-4",
+                    ),
+                    class_name="w-full flex justify-between",
+                )
+                
+            ),
             class_name="w-full",
         ),
         class_name="w-full flex",

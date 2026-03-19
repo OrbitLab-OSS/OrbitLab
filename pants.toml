@@ -5,6 +5,8 @@ backend_packages = [
     "pants.backend.experimental.python",
     "pants.backend.experimental.python.lint.ruff.check",
     "pants.backend.experimental.python.lint.ruff.format",
+    "pants.backend.shell",
+    "pants.backend.experimental.adhoc",
 ]
 
 [anonymous-telemetry]

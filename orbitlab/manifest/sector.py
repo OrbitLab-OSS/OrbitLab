@@ -78,7 +78,7 @@ class SectorManifest(BaseManifest[SectorMetadata, SectorSpec]):
             address=self.metadata.backplane_address.ip,
             description=f"Sector {self.name} gateway",
         )
-        self.metadata.gateway_appliance = cluster_manifest.metadata.sector_gateway_appliance.volume_id
+        self.metadata.gateway_appliance = cluster_manifest.metadata.infrastructure_appliances["gateway"].volume_id
         self.save()
         return {
             "features": "nesting=1",

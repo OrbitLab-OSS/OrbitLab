@@ -26,12 +26,10 @@ class Directories(SimpleNamespace):
 
     def make_dirs(self) -> None:
         """Create all directories defined in this class."""
-        for attr in self.__annotations__:
-            directory: Path = getattr(self, attr)
-            directory.mkdir(parents=True, exist_ok=True)
-
-
-Directories().make_dirs()
+        if os.environ.get("__REFLEX_COMPILE_CONTEXT") == "run": 
+            for attr in self.__annotations__:
+                directory: Path = getattr(self, attr)
+                directory.mkdir(parents=True, exist_ok=True)
 
 
 class PKI(SimpleNamespace):
@@ -48,14 +46,13 @@ class PKI(SimpleNamespace):
 class Backplane(SimpleNamespace):
     """Constants for the OrbitLab backplane network configuration."""
 
-    IPAM: Final = "backplane"
     NAME: Final = "bckplane"
     ALIAS: Final = "OrbitLab Backplane"
     ASN: Final = 65001
     ZONE_TAG: Final = 10
     VNET_TAG: Final = 100
-    DEFAULT_CIDR: Final = "10.200.0.0/16"
-    DEFAULT_GATEWAY: Final = "10.200.0.1"
+    DEFAULT_CIDR: Final = "100.96.0.0/16"
+    DEFAULT_GATEWAY: Final = "100.96.0.1"
     NETWORK_REGEX_PATTERN: Final = (
         r"^(?:(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\.){3}(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\/(?:[89]|1\d|2[0-4])$"
     )

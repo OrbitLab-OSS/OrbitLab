@@ -82,6 +82,11 @@ class Backplane(BaseModel):
         """Get the DNS IP address for the backplane."""
         return IPv4Interface(f"{self.cidr_block.network_address + 2}/{self.cidr_block.prefixlen}")
 
+    @property
+    def orbital_relay_address(self) -> IPv4Interface:
+        """Get the DNS IP address for the backplane."""
+        return IPv4Interface(f"{self.cidr_block.network_address + 3}/{self.cidr_block.prefixlen}")
+
 
 class DefaultStorageSelections(BaseModel):
     """Default storage selections for various content types in the cluster."""
@@ -129,10 +134,15 @@ class ETCD(BaseModel):
         return random.choice([member for member in self.members if member.name != failing_member])  # noqa: S311
 
 
+class ProxmoxNode(BaseModel):
+    name: str
+    configured: bool = False
+
+
 class ClusterSpec(Spec):
     """Specification for an OrbitLab cluster."""
 
-    nodes: list[str] = Field(default_factory=list)
+    nodes: dict[str, ProxmoxNode] = Field(default_factory=dict)
     backplane: Backplane
     defaults: Defaults = Defaults()
     used_vlan_tags: list[int] = Field(default_factory=list)
@@ -147,7 +157,7 @@ class ClusterManifest(BaseManifest[ClusterMetadata, ClusterSpec]):
     @property
     def exit_nodes(self) -> str:
         """Return a comma-separated string of all cluster node names."""
-        return ",".join(self.spec.nodes)
+        return ",".join([node for node in self.spec.nodes])
 
     def assign_ip(self, address: IPv4Address, description: str, *, is_vip: bool = False) -> None:
         """Add an IP assignment."""
@@ -197,17 +207,8 @@ class ClusterManifest(BaseManifest[ClusterMetadata, ClusterSpec]):
 
     def add_node(self, node: NodeManifest) -> None:
         """Add a node to the cluster and update the backplane controller peers."""
-        self.spec.nodes.append(node.name)
+        self.spec.nodes[node.name] = ProxmoxNode(name=node.name)
         self.spec.backplane.controller.peers.append(node.metadata.ip)
-        self.save()
-
-    def get_nodes(self) -> list[NodeManifest]:
-        """Return a list of all NodeManifest objects for nodes in this cluster."""
-        return [NodeManifest.load(name=node) for node in self.spec.nodes]
-
-    def default_node(self) -> NodeManifest:
-        """Get the default node for the cluster."""
-        return NodeManifest.load(name=self.spec.defaults.node)
 
     def set_tag_as_unused(self, tag: int) -> None:
         """Remove a specified VLAN tag so it may be used again."""
@@ -276,13 +277,60 @@ class ClusterManifest(BaseManifest[ClusterMetadata, ClusterSpec]):
         """Generate parameters for creating an ETCD member LXC container."""
         return {
             "features": "nesting=1",
-            "ostemplate": self.metadata.etcd_appliance.volume_id,
+            "ostemplate": self.metadata.infrastructure_appliances["etcd"].volume_id,
             "hostname": name,
             "cores": 2,
             "memory": 1024,
             "swap": 1024,
             "net0": (
                 f"name=eth0,bridge={self.spec.backplane.vnet_id},ip={address},gw={self.spec.backplane.gateway_address.ip}"
+            ),
+            "rootfs": f"{self.spec.defaults.storage.rootdir}:8",
+            "unprivileged": "1",
+            "vmid": vmid,
+            "ssh-public-keys": "",
+            "password": SecretVault.generate_random_password(),
+            "searchdomain": "orbitlab.internal",
+            "nameserver": f"{self.spec.backplane.dns_address.ip}",
+            "onboot": "1",
+        }
+
+    def generate_backplane_dns_params(self, vmid: int) -> dict:
+        return {
+            "features": "nesting=1",
+            "ostemplate": self.metadata.infrastructure_appliances["backplane-dns"].volume_id,
+            "hostname": "backplane-dns",
+            "cores": 1,
+            "memory": 512,
+            "swap": 512,
+            "net0": (
+                f"name=eth0,"
+                f"bridge={self.spec.backplane.vnet_id},"
+                f"ip={self.spec.backplane.dns_address},"
+                f"gw={self.spec.backplane.gateway_address.ip}"
+            ),
+            "rootfs": f"{self.spec.defaults.storage.rootdir}:8",
+            "unprivileged": "1",
+            "vmid": vmid,
+            "ssh-public-keys": "",
+            "password": SecretVault.generate_random_password(),
+            "searchdomain": "orbitlab.internal",
+            "onboot": "1",
+        }
+
+    def generate_orbital_relay_params(self, vmid: int) -> dict:
+        return {
+            "features": "nesting=1",
+            "ostemplate": self.metadata.infrastructure_appliances["relay"].volume_id,
+            "hostname": "orbital-relay",
+            "cores": 1,
+            "memory": 512,
+            "swap": 512,
+            "net0": (
+                f"name=eth0,"
+                f"bridge={self.spec.backplane.vnet_id},"
+                f"ip={self.spec.backplane.orbital_relay_address},"
+                f"gw={self.spec.backplane.gateway_address.ip}"
             ),
             "rootfs": f"{self.spec.defaults.storage.rootdir}:8",
             "unprivileged": "1",

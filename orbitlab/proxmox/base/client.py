@@ -1,7 +1,9 @@
 """Proxmox Base Client."""
 
 import base64
+import functools
 import json
+import os
 import re
 import ssl
 import subprocess
@@ -15,17 +17,16 @@ from urllib.parse import quote
 
 import httpx
 import websocket
-from pydantic import BaseModel, model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import BaseModel
+from pydantic_settings import BaseSettings
 
 from orbitlab.constants import ProxmoxRE
 from orbitlab.data_types import StorageContentType, TaskStatus
-from orbitlab.proxmox.exceptions import HTTPConfigError, PctExecError, PVECommandError
+from orbitlab.proxmox.exceptions import PctExecError
 
 from .models import (
     VMID,
     ProxmoxAuth,
-    ProxmoxClusterStatus,
     ProxmoxStorages,
     ProxmoxTaskStatus,
     ProxmoxTermProxy,
@@ -36,30 +37,28 @@ from .models import (
 T = TypeVar("T", bound=BaseModel)
 
 
-def _proxmox_auth(url: str, user: str, password: str) -> ProxmoxAuth:
-    with httpx.Client(verify=False) as client:  # noqa: S501
-        resp = client.post(f"{url}/api2/json/access/ticket", data={"username": user, "password": password})
-    resp.raise_for_status()
-    return ProxmoxAuth.model_validate(resp.json())
+@functools.lru_cache(maxsize=3)
+def _get_node_ip(node: str) -> str:
+    output = subprocess.check_output(
+        args=f"pvesh get /nodes/{node}/network -type=bridge -output-format=json",
+        text=True,
+        shell=True,
+    )
+    bridges: list[dict] = json.loads(output)
+    return next(iter(bridge["address"] for bridge in bridges if bridge["iface"] == "vmbr0"))
 
 
 class HTTPConfig(BaseSettings):
     """Configuration for HTTP API access to Proxmox."""
 
-    model_config = SettingsConfigDict(
-        env_nested_delimiter="_",
-        env_nested_max_split=1,
-        env_prefix="PROXMOX_",
-    )
-
-    api_url: str = ""
-    token_id: str | None = None
-    token_secret: str | None = None
-    user: str | None = None
-    password: str | None = None
-    verify_ssl: bool = True
+    node: str
+    verify_ssl: bool = False
     timeout: int = 10
-    configured: bool = False
+
+    @cached_property
+    def api_url(self) -> str:
+        address = _get_node_ip(node=self.node)
+        return f"https://{address}:8006"
 
     @property
     def websocket_base(self) -> str:
@@ -68,38 +67,24 @@ class HTTPConfig(BaseSettings):
 
     def get_session_params(self) -> dict:
         """Generate and return HTTP session parameters for connecting to the Proxmox API."""
-        headers = {}
-        cookies = {}
+        with httpx.Client(verify=False) as client:  # noqa: S501
+            resp = client.post(
+                url=f"{self.api_url}/api2/json/access/ticket",
+                data={"username": "orbitlab@pve", "password": os.environ["ORBITLAB_VAULT_KEY"]},
+            )
+        resp.raise_for_status()
+        auth = ProxmoxAuth.model_validate(resp.json())
+        headers = {"CSRFPreventionToken": auth.data.csrf_prevention_token}
+        cookies = {"PVEAuthCookie": auth.data.cookie}
 
-        if self.user and self.password:
-            auth = _proxmox_auth(url=self.api_url, user=self.user, password=self.password)
-            headers["CSRFPreventionToken"] = auth.data.csrf_prevention_token
-            cookies = {"PVEAuthCookie": auth.data.cookie}
-        else:
-            headers["Authorization"] = f"PVEAPIToken={self.token_id}={self.token_secret}"
         params = {
             "base_url": self.api_url,
             "headers": headers,
             "verify": self.verify_ssl,
             "timeout": self.timeout,
+            "cookies": cookies
         }
-        if cookies:
-            params["cookies"] = cookies
         return params
-
-    @model_validator(mode="after")
-    def _ensure_credentials(self) -> Self:
-        http = [self.token_id, self.token_secret]
-        if any(http) and not all(http):
-            msg = "Both `token_id`, and `token_secret` must be configured."
-            raise HTTPConfigError(msg)
-        basic = [self.user, self.password]
-        if any(basic) and not all(basic):
-            msg = "Both `user` and  `password` must be configured."
-            raise HTTPConfigError(msg)
-        if any(http + basic):
-            self.configured = True
-        return self
 
 
 class RemoteConfig(BaseModel):
@@ -234,7 +219,7 @@ class RemoteExecution:
             self.ws.send(payload="0:1:\n")
             output = self.__recv__(command=command, capture=True)
         else:
-            output = subprocess.check_output(args=command)
+            output = subprocess.check_output(args=command, shell=True)
         if check_output:
             return output
         return None
@@ -280,9 +265,9 @@ class RemoteExecution:
 class Proxmox:
     """Proxmox client for interacting with Proxmox endpoints via HTTP API or local CLI."""
 
-    def __init__(self, *, http_config: HTTPConfig | None = None) -> None:
+    def __init__(self) -> None:
         """Initialize the Proxmox client."""
-        self.http_config = http_config or HTTPConfig()
+        self.http_config = HTTPConfig(node=self.__node__)
 
     @cached_property
     def __session__(self) -> httpx.Client:
@@ -292,8 +277,7 @@ class Proxmox:
     @cached_property
     def __node__(self) -> str:
         """Get the local node name from the Proxmox cluster status."""
-        cluster = self.get("/cluster/status", model=ProxmoxClusterStatus)
-        return cluster.get_local_node()
+        return subprocess.check_output("hostname", text=True, shell=True).strip()
 
     def __enter__(self) -> Self:
         """Enter the runtime context related to this object."""
@@ -309,29 +293,6 @@ class Proxmox:
         if self.__session__:
             self.__session__.close()
 
-    def __local_request__(self, method: str, path: str, **kwargs: int | str | list[str]) -> dict[str, Any]:
-        """Perform a local request to the Proxmox API using the pvesh CLI."""
-        cmd = ["pvesh", method.lower(), path]
-        if kwargs:
-            for k, v in kwargs.items():
-                cmd += [f"-{k}", str(v)]
-        cmd.append("--output-format=json")
-
-        result = subprocess.run(args=cmd, capture_output=True, text=True, check=False)
-        if result.returncode != 0:
-            raise PVECommandError(cmd=cmd, stderr=result.stderr)
-        return json.loads(result.stdout)
-
-    def __remote_request__(self, method: str, path: str, **kwargs: str | int | list[str]) -> dict[str, Any]:
-        """Perform a remote HTTP request to the Proxmox API."""
-        if not self.__session__:
-            msg = "HTTP session not initialized"
-            raise RuntimeError(msg)
-
-        response = self.__session__.request(method=method.upper(), url=f"/api2/json{path}", params=kwargs)
-        response.raise_for_status()
-        return response.json()["data"]
-
     def __request__(self, method: str, path: str, **kwargs: int | str | list[str]) -> str | dict[str, Any]:
         """Internal method to perform a request to the Proxmox API using either HTTP or local CLI."""
         remote_method_map = {
@@ -341,9 +302,9 @@ class Proxmox:
             "delete": "delete",
         }
         kwargs = {k.replace("_", "-"):v for k,v in kwargs.items()}
-        if self.http_config.configured:
-            return self.__remote_request__(remote_method_map[method], path, **kwargs)
-        return self.__local_request__(method, path, **kwargs)
+        response = self.__session__.request(method=remote_method_map[method].upper(), url=f"/api2/json{path}", params=kwargs)
+        response.raise_for_status()
+        return response.json()["data"]
 
     @overload
     def get(self, path: str, model: type[T], **params: int | str) -> T: ...
@@ -441,22 +402,20 @@ class Proxmox:
         """Create a remote execution connection to a Proxmox node."""
         if not node:
             node = self.__node__
-        if self.http_config.configured:
-            proxy = self.create(f"/nodes/{node}/termproxy", model=ProxmoxTermProxy)
-            websocket_url = (
-                f"{self.http_config.websocket_base}/api2/json/nodes/{node}/vncwebsocket"
-                f"?port={proxy.port}&vncticket={quote(proxy.ticket)}"
-            )
-            return RemoteExecution(
-                node=node,
-                remote_config=RemoteConfig(
-                    websocket_url=websocket_url,
-                    user=proxy.user,
-                    ticket=proxy.ticket,
-                    cookie=self.__session__.cookies["PVEAuthCookie"],
-                ),
-            )
-        return RemoteExecution(node=node)
+        proxy = self.create(f"/nodes/{node}/termproxy", model=ProxmoxTermProxy)
+        websocket_url = (
+            f"{self.http_config.websocket_base}/api2/json/nodes/{node}/vncwebsocket"
+            f"?port={proxy.port}&vncticket={quote(proxy.ticket)}"
+        )
+        return RemoteExecution(
+            node=node,
+            remote_config=RemoteConfig(
+                websocket_url=websocket_url,
+                user=proxy.user,
+                ticket=proxy.ticket,
+                cookie=self.__session__.cookies["PVEAuthCookie"],
+            ),
+        )
 
     def get_terminal_websocket(self, compute_type: Literal["qemu", "lxc"], vmid: int) -> websocket.WebSocket:
         """Create and return a WebSocket connection to the terminal of a specified VM or LXC container."""

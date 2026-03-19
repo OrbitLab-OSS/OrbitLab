@@ -96,7 +96,7 @@ class LXCManifest(BaseManifest[LXCMetadata, LXCSpec]):
                 node=form_data.node,
             ),
             spec=LXCSpec(
-                os_template=appliance.volume_id,
+                os_template=appliance.spec.volume_id,
                 disk_storage=form_data.rootfs,
                 disk_size=form_data.disk_size,
                 sector=form_data.sector,

@@ -4,8 +4,22 @@ from collections.abc import Callable
 
 import reflex as rx
 
+from orbitlab.data_types import InitializationStatus
+from orbitlab.web.components.initializer import InitializationState
 from orbitlab.web.components.sidebar import SideBar
-from orbitlab.web.splash_page import require_configuration
+
+
+def require_configuration(page: Callable[[], rx.Component]) -> Callable[[], rx.Component]:
+    """Decorator to require that the configuration is complete before rendering the page."""
+
+    def wrapped() -> rx.Component:
+        return rx.cond(
+            InitializationState.status == InitializationStatus.COMPLETE,
+            page(),
+            rx.el.div(on_mount=rx.redirect("/")),
+        )
+
+    return wrapped
 
 
 def orbitlab_page(page: Callable[[], rx.Component]) -> Callable[[], rx.Component]:

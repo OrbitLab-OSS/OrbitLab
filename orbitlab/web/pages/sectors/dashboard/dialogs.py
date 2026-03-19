@@ -14,7 +14,7 @@ from orbitlab.web import components
 from orbitlab.web.utilities import EventGroup, get_worker
 
 from .models import CreateSectorForm
-from .states import CreateSectorDialogState, DeleteSectorDialogState
+from .states import CreateSectorDialogState, DeleteSectorDialogState, SectorsTableState
 
 
 class CreateSectorDialog(EventGroup):
@@ -53,8 +53,9 @@ class CreateSectorDialog(EventGroup):
         if error:
             return rx.toast.error(error)
         return [
-            components.Dialog.close(CreateSectorDialog.dialog_id),
+            CreateSectorDialog.close,
             rx.toast.info(f"Creating '{manifest.spec.alias}' network sector..."),
+            SectorsTableState.cache_clear("sectors"),
         ]
 
     @staticmethod

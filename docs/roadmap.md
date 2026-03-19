@@ -3,7 +3,7 @@
 - [x] Backplane 
   - [x] EVPN Controller
   - [x] EVPN Zone
-  - [x] VNet (user-defined CIDR or 10.200.0.0/16)
+  - [x] VNet (user-defined CIDR or 100.96.0.0/16)
   - [x] IPAM (Track IP registration)
   - [x] DNS (CoreDNS)
 - [x] Sectors (VNets)
@@ -44,10 +44,7 @@
 
 # Phase 3
 
-- [ ] EdgeGate(HAproxy Ingress)
-  - [ ] Private (Only accessible from within the Sector) (attached to Sector)
-  - [ ] Internal (Only accessible from within OrbitLab) (attached to Sector and Backplane)
-  - [ ] External (Accessible from LAN) (attached to Proxmox vmbr0 and Sector)
+- [ ] Check/Update infrastructure appliances
 - [ ] Autoscaling Pools
   - [ ] Templates
   - [ ] Health Checks
@@ -63,6 +60,10 @@
 
 # Phase 4
 
+- [ ] EdgeGate(HAproxy Ingress)
+  - [ ] Private (Only accessible from within the Sector) (attached to Sector)
+  - [ ] Internal (Only accessible from within OrbitLab) (attached to Sector and Backplane)
+  - [ ] External (Accessible from LAN) (attached to Proxmox vmbr0 and Sector)
 - [ ] Implement HTTPS everywhere
   - [ ] Generate `orbitlab.internal` Root/Intermediate CAs on initialization
     - [ ] Track cert expiration

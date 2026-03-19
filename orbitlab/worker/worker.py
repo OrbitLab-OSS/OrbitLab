@@ -11,6 +11,7 @@ from pathlib import Path
 
 import uvicorn
 from pydantic import ValidationError
+from redis.exceptions import ResponseError
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import Response
@@ -83,10 +84,14 @@ class Worker:
             print("ERROR", event)
 
     async def _ensure_group(self, group: str, stream: str) -> None:
-        stream_groups = await self.redis.xinfo_groups(name=stream)
-        for stream_group in stream_groups:
-            if stream_group["name"].decode() == group:
-                return
+        try:
+            stream_groups = await self.redis.xinfo_groups(name=stream)
+            for stream_group in stream_groups:
+                if stream_group["name"].decode() == group:
+                    return
+        except ResponseError as err:
+            if "no such key" not in str(err):
+                raise
         await self.redis.xgroup_create(name=stream, groupname=group, mkstream=True)
 
     async def _process_workflows(self) -> None:

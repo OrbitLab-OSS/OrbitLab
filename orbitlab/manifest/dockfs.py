@@ -106,7 +106,7 @@ class DockFsManifest(BaseManifest[DockFsMetadata, DockFsSpec]):
             "numa": 0,
             "agent": "enabled=1",
             "serial0": "socket",
-            "scsi0": f"{self.spec.storage}:0,import-from={cluster_manifest.metadata.dockfs_image.volume_id}",
+            "scsi0": f"{self.spec.storage}:0,import-from={cluster_manifest.metadata.infrastructure_appliances['dockfs'].volume_id}",
             "ide0": f"{self.spec.storage}:cloudinit",
             "citype": "nocloud",
             "ciuser": "dockfs-admin",

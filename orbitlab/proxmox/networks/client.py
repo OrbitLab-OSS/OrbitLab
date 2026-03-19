@@ -115,10 +115,9 @@ class ProxmoxNetworks(Proxmox):
             "subnet": cluster.spec.backplane.cidr_block.with_prefixlen,
             "gateway": str(cluster.spec.backplane.gateway_address),
             "type": "subnet",
-            "vnet": cluster.spec.backplane.vnet_id,
             "snat": 1,
         }
-        self.create(f"/cluster/sdn/vnets/{NetworkSettings.BACKPLANE.NAME}/subnets", model=None, **subnet_params)
+        self.create(f"/cluster/sdn/vnets/{cluster.spec.backplane.vnet_id}/subnets", model=None, **subnet_params)
         self.__apply_changes__()
 
     def list_vnets(self) -> VNetList:
@@ -147,7 +146,6 @@ class ProxmoxNetworks(Proxmox):
             "subnet": manifest.spec.cidr_block.with_prefixlen,
             "gateway": str(manifest.default_gateway.ip),
             "type": "subnet",
-            "vnet": manifest.name,
         }
         self.create(f"/cluster/sdn/vnets/{manifest.name}/subnets", model=None, **subnet_params)
         self.__apply_changes__()

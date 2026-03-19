@@ -1,0 +1,12 @@
+[Unit]
+Description=OrbitLab Frontend
+Requires=orbitlab-backend.service
+After=orbitlab-backend.service
+
+[Service]
+Type=simple
+ExecStart=/opt/orbitlab/orbitlab-frontend
+Restart=always
+
+[Install]
+WantedBy=multi-user.target

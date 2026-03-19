@@ -1,5 +1,6 @@
 """OrbitLab Compute Management Dashboard."""
 
+import os
 from typing import ClassVar, Literal
 
 import reflex as rx
@@ -42,20 +43,35 @@ class TerminalState(rx.State):
     def socket_url(self) -> str:
         """Return the websocket URL for the terminal based on compute type and VMID."""
         if self.term_compute_type and self.term_vmid:
-            host = self.router.url.origin.replace("3000", "8000").replace("http", "ws")
+            frontend_port = os.environ["REFLEX_FRONTEND_PORT"]
+            backend_port = os.environ["REFLEX_BACKEND_PORT"]
+            host = self.router.url.origin.replace(frontend_port, backend_port).replace("http", "ws")
             return f"{host}/ws/terminal/{self.term_compute_type}/{self.term_vmid}"
         return ""
+
+    @rx.var
+    def ready(self) -> bool:
+        return all([self.term_vmid, self.node, self.socket_url])
 
 
 @rx.page("/terminal/[term_compute_type]/[term_vmid]")
 def terminal() -> rx.Component:
     """Render the terminal page."""
     return rx.el.div(
-        rx.el.div(
-            rx.text(f"VMID: {TerminalState.term_vmid}"),
-            rx.text(f"Node: {TerminalState.node}"),
-            class_name="w-full flex space-x-4 p-6",
+        rx.cond(
+            TerminalState.ready,
+            rx.fragment(
+                rx.el.div(
+                    rx.text(f"VMID: {TerminalState.term_vmid}"),
+                    rx.text(f"Node: {TerminalState.node}"),
+                    class_name="w-full flex space-x-4 p-6",
+                ),
+                components.Terminal(socket_url=TerminalState.socket_url),
+            ),
+            rx.el.div(
+                components.OrbitLabLogo(animated=True),
+                class_name="w-full h-screen flex items-center justify-center"
+            ),
         ),
-        components.Terminal(socket_url=TerminalState.socket_url),
         class_name="min-h-screen h-full w-full flex-col",
     )

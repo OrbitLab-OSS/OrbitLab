@@ -189,13 +189,11 @@ class ClusterMode(StrEnum):
     CLUSTER = auto()
 
 
-class InitializationState(StrEnum):
+class InitializationStatus(StrEnum):
     """Enumeration of possible initialization states in OrbitLab."""
 
     NOT_STARTED = auto()
     RUNNING = auto()
-    BACKPLANE = auto()
-    FINALIZE = auto()
     ABORTED = auto()
     COMPLETE = auto()
 

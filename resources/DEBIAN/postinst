@@ -1,0 +1,39 @@
+#!/bin/bash
+
+set -eou pipefail
+
+ROOT="/opt/orbitlab"
+WEBROOT="$ROOT/web"
+DEFAULTS="/etc/default/orbitlab"
+
+createVaultKey() {
+    echo "Creating Orbitlab Vault Key..."
+    VAULT_KEY="$(openssl rand -base64 32)"
+    cat > "$DEFAULTS" <<EOF
+    # OrbitLab generated environment variables
+    # DO NOT CHANGE, unless you know what you're doing.
+    # Changing/rotating the vault key can result in the loss of important credentials/secrets.
+    ORBITLAB_VAULT_KEY="$VAULT_KEY"
+EOF
+    chown root:root "$DEFAULTS"
+    chmod 600 "$DEFAULTS"
+    pvesh create /access/users -userid=orbitlab@pve "-password=$VAULT_KEY"
+    pvesh set /access/acl -path=/ -roles=Administrator -users=orbitlab@pve
+}
+
+mkdir -p "$WEBROOT"
+unzip -q "$ROOT/frontend.zip" -d "$WEBROOT"
+chown -R root:root "$WEBROOT"
+chmod -R 755 "$WEBROOT"
+
+cp "$ROOT/orbitlab-backend.service" "/usr/lib/systemd/system"
+cp "$ROOT/orbitlab-frontend.service" "/usr/lib/systemd/system"
+
+if [ ! -f "$DEFAULTS" ]; then
+    createVaultKey
+fi
+
+systemctl daemon-reload
+systemctl enable --now orbitlab-backend.service
+systemctl enable --now orbitlab-frontend.service
+rm -f "$ROOT/frontend.zip"

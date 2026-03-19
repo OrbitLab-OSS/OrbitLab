@@ -11,7 +11,7 @@ from .base import BaseManifest, Metadata, Spec
 from .serialization import SerializeEnum, SerializeEnumList, SerializeIP
 
 if TYPE_CHECKING:
-    from orbitlab.clients.proxmox.base.models import NodeStatus
+    from orbitlab.proxmox.base.models import NodeStatus
 
 
 class NodeMetadata(Metadata):
