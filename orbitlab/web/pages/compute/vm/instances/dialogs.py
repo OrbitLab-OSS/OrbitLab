@@ -4,13 +4,12 @@ from typing import Final
 
 import reflex as rx
 
-from orbitlab.data_types import ComputeStatus, FrontendEvents
-from orbitlab.manifest.compute_instances.vm import VMManifest
-from orbitlab.web import components
-from orbitlab.web.defaults import ClusterDefaults
-from orbitlab.web.utilities import EventGroup, get_worker
+from orbitlab.data_types import ProxmoxComputeStatus, FrontendEvents
+from orbitlab.redis.clients import ImagesClient, SecretsClient, SectorClient, VMClient
+from orbitlab.redis.models import VMInstanceConfig
+from orbitlab.web import tailwind
+from orbitlab.web.utilities import EventGroup, create_workflow
 
-from .models import CreateVMForm
 from .progress_panels import GeneralConfigurationPanel, ReviewPanel
 from .states import LaunchVMDialogState, VMInstancesTableState
 
@@ -20,38 +19,42 @@ class LaunchVMDialog(EventGroup):
 
     @staticmethod
     @rx.event
-    async def validate_general(state: LaunchVMDialogState, form: dict) -> FrontendEvents:
+    async def update_form_data(state: LaunchVMDialogState, form: dict) -> FrontendEvents:
         """Update the form data with new values and proceed to the next step in the progress panel."""
-        form["memory"] = int(form["memory"])
-        form["sockets"] = int(form["sockets"])
-        form["cores"] = int(form["cores"])
-        form["disk_size"] = int(form["disk_size"])
         state.form_data.update(form)
-        return components.ProgressPanels.next(LaunchVMDialog.progress_id)
-
-    @staticmethod
-    @rx.event
-    async def validate_network(state: LaunchVMDialogState, form: dict) -> FrontendEvents:
-        """Validate network configuration and proceed to the next step in the progress panel."""
-        state.form_data.update(form)
-        return components.ProgressPanels.next(LaunchVMDialog.progress_id)
+        return tailwind.ProgressPanels.next(LaunchVMDialog.progress_id)
 
     @staticmethod
     @rx.event
     async def create_vm(state: LaunchVMDialogState, form: dict) -> FrontendEvents:
         """Validate the form, create a VM manifest, reset the state, and trigger VM creation in the background."""
         state.form_data.update(form)
-        manifest = VMManifest.create(form_data=CreateVMForm.model_validate(state.form_data))
-        worker = get_worker()
-        error = await worker.create_workflow(
-            name="vm.create",
-            version="v1",
-            payload={"manifest": manifest.name},
+        client = VMClient()
+        
+        instance_id = await client.generate_instance_id()
+        sector = await SectorClient().get(id=state.form_data["sector"])
+        volume_id = await ImagesClient().get_volume_id(id=state.form_data["image"])
+        
+        await SecretsClient().create_vm_password(vm_id=instance_id, password=state.form_data.get("password", ""))
+        await client.set_instance(
+            config=VMInstanceConfig(
+                id=instance_id,
+                image_id=state.form_data["image"],
+                volume_id=volume_id,
+                storage=state.form_data["storage"],
+                sector=sector.config.id,
+                sector_name=sector.config.alias,
+                disk_size=int(state.form_data["disk_size"]),
+                memory=int(state.form_data["memory"]),
+                cores=int(state.form_data["cores"]),
+                sockets=int(state.form_data["sockets"]),
+                node=state.form_data["node"],
+            ),
         )
-        if error:
+        if error := await create_workflow(name="vm.create", version="v1", payload={"id": instance_id}):
             return rx.toast.error(error)
         return [
-            rx.toast.info(f"Launching {manifest.name}..."),
+            rx.toast.info(f"Launching {instance_id}..."),
             LaunchVMDialog.close,
         ]
 
@@ -61,39 +64,32 @@ class LaunchVMDialog(EventGroup):
         """Cancel the VM creation process and reset the dialog state."""
         state.reset()
         return [
-            components.Dialog.close(LaunchVMDialog.dialog_id),
-            components.ProgressPanels.reset(LaunchVMDialog.progress_id),
+            tailwind.Dialog.close(LaunchVMDialog.dialog_id),
+            tailwind.ProgressPanels.reset(LaunchVMDialog.progress_id),
         ]
-
-    @staticmethod
-    @rx.event
-    async def set_defaults(state: LaunchVMDialogState) -> None:
-        """Set default values in the form data when the dialog is opened."""
-        state.form_data["node"] = await state.get_var_value(ClusterDefaults.proxmox_node)
 
     dialog_id: Final = "launch-vm-instance-dialog"
     progress_id: Final = "launch-vm-instance-progress-panels"
 
     def __new__(cls) -> rx.Component:
         """Create and return the dialog."""
-        return components.Dialog(
+        return tailwind.Dialog(
             "Launch VM",
-            components.ProgressPanels(
-                components.ProgressPanels.Step(
+            tailwind.ProgressPanels(
+                tailwind.ProgressPanels.Step(
                     "General Configuration",
                     GeneralConfigurationPanel(),
-                    validate=cls.validate_general,
+                    validate=cls.update_form_data,
                 ),
-                components.ProgressPanels.Step(
+                tailwind.ProgressPanels.Step(
                     "Review & Verify",
                     ReviewPanel(),
                     validate=cls.create_vm,
                 ),
-                cancel_button=components.Buttons.Secondary("Cancel", on_click=cls.close),
+                cancel_button=tailwind.Buttons.Secondary("Cancel", on_click=cls.close),
                 progress_id=cls.progress_id,
             ),
             dialog_id=cls.dialog_id,
-            on_open=cls.set_defaults,
             class_name="max-w-[75vw] w-fit",
         )
 
@@ -106,19 +102,14 @@ class TerminateVMInstanceDialog(EventGroup):
     async def confirm(state: VMInstancesTableState, instance_id: str) -> FrontendEvents:
         """Set the instance ID to terminate and open the dialog."""
         state.instance_to_terminate = instance_id
-        return components.Dialog.open(TerminateVMInstanceDialog.dialog_id)
+        return tailwind.Dialog.open(TerminateVMInstanceDialog.dialog_id)
 
     @staticmethod
     @rx.event
     async def terminate(state: VMInstancesTableState) -> None:
         """Update the status of an LXC container and trigger backend and frontend updates."""
-        worker = get_worker()
-        error = await worker.create_workflow(
-            name="vm.state-change",
-            version="v1",
-            payload={"manifest": state.instance_to_terminate, "desired_status": ComputeStatus.TERMINATE},
-        )
-        if error:
+        payload = {"id": state.instance_to_terminate, "desired_status": ProxmoxComputeStatus.TERMINATE}
+        if error := await create_workflow(name="vm.state-change", version="v1", payload=payload):
             return rx.toast.error(error)
         return [
             rx.toast.info(f"Terminating {state.instance_to_terminate}..."),
@@ -130,13 +121,13 @@ class TerminateVMInstanceDialog(EventGroup):
     async def close(state: VMInstancesTableState) -> FrontendEvents:
         """Cancel terminating the instance."""
         state.instance_to_terminate = ""
-        return components.Dialog.close(TerminateVMInstanceDialog.dialog_id)
+        return tailwind.Dialog.close(TerminateVMInstanceDialog.dialog_id)
 
     dialog_id: Final = "terminate-lxc-instance-dialog"
 
     def __new__(cls) -> rx.Component:
         """Create and return the dialog."""
-        return components.Dialog(
+        return tailwind.Dialog(
             "Terminate LXC Instance",
             rx.el.div(
                 rx.text(
@@ -147,8 +138,8 @@ class TerminateVMInstanceDialog(EventGroup):
                 class_name="w-full flex-col space-y-6 my-8",
             ),
             rx.el.div(
-                components.Buttons.Secondary("Cancel", on_click=cls.close),
-                components.Buttons.Primary("Confirm", on_click=cls.terminate),
+                tailwind.Buttons.Secondary("Cancel", on_click=cls.close),
+                tailwind.Buttons.Primary("Confirm", on_click=cls.terminate),
                 class_name="w-full flex justify-end space-x-4 my-8",
             ),
             dialog_id=cls.dialog_id,

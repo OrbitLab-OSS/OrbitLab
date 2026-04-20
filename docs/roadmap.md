@@ -50,12 +50,12 @@
   - [ ] Health Checks
 - [ ] Logging
   - [ ] Clients
-  - [ ] Application
-  - [ ] Viewable in UI
+  - [X] Application
+  - [X] Viewable in UI
 - [ ] Deployable
-  - [ ] DEB release for installation
-  - [ ] Serves static HTML
-  - [ ] Runs backend (minimize deps as much as possible)
+  - [x] DEB release for installation
+  - [x] Serves static HTML
+  - [x] Runs backend (minimize deps as much as possible)
   - [ ] Self updating mechanism (user-triggered)
 
 # Phase 4

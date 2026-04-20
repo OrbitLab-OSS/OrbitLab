@@ -1,20 +1,19 @@
 """OrbitLab Networks Dashboard Dialogs."""
 
-import contextlib
-import ipaddress
+from ipaddress import IPv4Network
 from typing import Final
 
 import reflex as rx
 
 from orbitlab.data_types import FrontendEvents
-from orbitlab.manifest.cluster import ClusterManifest
-from orbitlab.manifest.sector import SectorManifest
 from orbitlab.proxmox import ProxmoxNetworks
-from orbitlab.web import components
-from orbitlab.web.utilities import EventGroup, get_worker
+from orbitlab.redis.clients import SectorClient, BackplaneClient
+from orbitlab.redis.models import SectorConfiguration
+from orbitlab.web import tailwind
+from orbitlab.web.global_state import SelectionDefaults
+from orbitlab.web.utilities import EventGroup, create_workflow
 
-from .models import CreateSectorForm
-from .states import CreateSectorDialogState, DeleteSectorDialogState, SectorsTableState
+from .states import DeleteSectorDialogState
 
 
 class CreateSectorDialog(EventGroup):
@@ -22,91 +21,72 @@ class CreateSectorDialog(EventGroup):
 
     @staticmethod
     @rx.event
-    async def preload(state: CreateSectorDialogState) -> None:
-        """Preload the dialog with initial form data including the next available network tag."""
-        manifest = ClusterManifest.load(name=next(iter(ClusterManifest.get_existing())))
-        state.form_data = {"tag": manifest.get_next_available_tag()}
-
-    @staticmethod
-    @rx.event
-    async def set_sector_cidr(state: CreateSectorDialogState, cidr_block: str) -> None:
-        """Set and validate the CIDR block for the network."""
-        if cidr_block:
-            with contextlib.suppress(ipaddress.AddressValueError, ValueError):
-                ipaddress.IPv4Network(cidr_block)
-                state.cidr_block = cidr_block
-        else:
-            state.cidr_block = ""
-
-    @staticmethod
-    @rx.event
-    async def submit(state: CreateSectorDialogState, form: dict) -> FrontendEvents:
-        """Create a new sector (virtual network) with configured subnets and save to cluster manifest."""
-        state.form_data.update(form)
-        manifest = SectorManifest.create(form_data=CreateSectorForm.model_validate(state.form_data))
-        worker = get_worker()
-        error = await worker.create_workflow(
-            name="sector.create",
-            version="v1",
-            payload={"manifest": manifest.name},
+    async def submit(state: rx.State, form: dict) -> FrontendEvents:
+        """Create a new sector (virtual network)."""
+        tag = await BackplaneClient().get_next_vlan_tag()
+        if not tag:
+            return rx.toast.error("No available VLAN tag to assign to new sector.")
+        
+        backplane_address = await BackplaneClient().get_next_available_ip()
+        
+        config = SectorConfiguration(
+            id=f"olvn{tag}",
+            cidr_block=IPv4Network(form["cidr_block"]),
+            alias=form["alias"],
+            tag=tag,
+            backplane_address=backplane_address,
+            storage=await state.get_var_value(SelectionDefaults.default_rootdir_storage),
         )
-        if error:
+        await SectorClient().set(config=config)
+        if error := await create_workflow(name="sector.create", version="v1", payload={"id": config.id}):
             return rx.toast.error(error)
         return [
-            CreateSectorDialog.close,
-            rx.toast.info(f"Creating '{manifest.spec.alias}' network sector..."),
-            SectorsTableState.cache_clear("sectors"),
+            tailwind.Dialog.close(CreateSectorDialog.dialog_id),
+            rx.toast.info(f"Creating '{config.id}' network sector..."),
         ]
-
-    @staticmethod
-    @rx.event
-    async def close(state: CreateSectorDialogState) -> FrontendEvents:
-        """Reset the create network dialog state to its initial values."""
-        state.reset()
-        return components.Dialog.close(CreateSectorDialog.dialog_id)
 
     dialog_id: Final = "create-virtual-network-dialog"
     form_id: Final = "create-virtual-network-form"
 
     def __new__(cls) -> rx.Component:
         """Create and return the dialog component."""
-        return components.Dialog(
+        return tailwind.Dialog(
             "Create Sector (Virtual Network)",
             rx.el.div(
                 rx.el.form(id=cls.form_id, on_submit=cls.submit),
-                components.FieldSet(
+                tailwind.FieldSet(
                     "Network",
-                    components.FieldSet.Field(
+                    tailwind.FieldSet.Field(
                         "Sector Name: ",
-                        components.Input(
+                        tailwind.Input(
                             placeholder="My Network",
                             pattern=r"^(?^i:[\(\)-_.\w\d\s]{0,256})$",
                             form=cls.form_id,
-                            name="name",
+                            name="alias",
                             required=True,
                             error="Network names must 1-32 alphanumeric characters",
                         ),
                     ),
-                    components.FieldSet.Field(
+                    tailwind.FieldSet.Field(
                         "CIDR Block: ",
-                        components.Input(
+                        tailwind.Input(
                             placeholder="192.168.0.0/16",
                             pattern=r"^((25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\.){2}(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\.0\/(8|9|1[0-9]|2[0-4])$",
                             form=cls.form_id,
                             name="cidr_block",
                             required=True,
+                            error="Must be a valid network CIDR block",
                         ),
                     ),
                 ),
                 rx.el.div(
-                    components.Buttons.Secondary("Cancel", on_click=cls.close),
-                    components.Buttons.Primary("Submit", form=cls.form_id),
+                    tailwind.Buttons.Secondary("Cancel", on_click=tailwind.Dialog.close(CreateSectorDialog.dialog_id)),
+                    tailwind.Buttons.Primary("Submit", form=cls.form_id),
                     class_name="w-full flex space-x-4 justify-end",
                 ),
                 class_name="w-full flex-col space-y-10",
             ),
             dialog_id=cls.dialog_id,
-            on_open=cls.preload,
             class_name="max-w-[50vw] w-[50vw] max-h-[75vh] h-fit",
         )
 
@@ -119,15 +99,15 @@ class DeleteSectorDialog(EventGroup):
     async def check_can_delete(state: DeleteSectorDialogState, sector_id: str) -> FrontendEvents:
         """Check if a sector can be deleted by verifying no VMs are attached to it."""
         state.sector_id = sector_id
-        state.attached_vms = ProxmoxNetworks().list_attached(sector_id=sector_id)
-        return components.Dialog.open(DeleteSectorDialog.dialog_id)
+        state.attached_vms = await ProxmoxNetworks().list_attached(sector_id=sector_id)
+        return tailwind.Dialog.open(DeleteSectorDialog.dialog_id)
 
     @staticmethod
     @rx.event
     async def close(state: DeleteSectorDialogState) -> FrontendEvents:
         """Close the delete sector dialog and reset its state."""
         state.reset()
-        return components.Dialog.close(DeleteSectorDialog.dialog_id)
+        return tailwind.Dialog.close(DeleteSectorDialog.dialog_id)
 
     @staticmethod
     @rx.event
@@ -139,18 +119,11 @@ class DeleteSectorDialog(EventGroup):
     @rx.event
     async def submit(state: DeleteSectorDialogState) -> FrontendEvents:
         """Submit the sector deletion request and initiate the deletion process."""
-        manifest = SectorManifest.load(name=state.sector_id)
-        worker = get_worker()
-        error = await worker.create_workflow(
-            name="sector.delete",
-            version="v1",
-            payload={"manifest": manifest.name},
-        )
-        if error:
+        if error := await create_workflow(name="sector.delete", version="v1", payload={"id": state.sector_id}):
             return rx.toast.error(error)
         return [
-            components.Dialog.close(DeleteSectorDialog.dialog_id),
-            rx.toast.info(f"Deleting '{manifest.spec.alias}' network sector..."),
+            tailwind.Dialog.close(DeleteSectorDialog.dialog_id),
+            rx.toast.info(f"Deleting '{state.sector_id}' network sector..."),
         ]
 
     dialog_id: Final = "delete-sector-dialog"
@@ -225,7 +198,7 @@ class DeleteSectorDialog(EventGroup):
             ),
             rx.el.div(
                 rx.el.div(
-                    components.Buttons.Secondary("Close", on_click=cls.close),
+                    tailwind.Buttons.Secondary("Close", on_click=cls.close),
                     class_name="w-full flex justify-end",
                 ),
                 class_name="w-full flex-col grow place-content-end",
@@ -245,7 +218,7 @@ class DeleteSectorDialog(EventGroup):
                 class_name="w-full my-5",
             ),
             rx.el.div(
-                components.Input(
+                tailwind.Input(
                     placeholder=DeleteSectorDialogState.sector_id,
                     on_change=cls.set_confirmation,
                 ),
@@ -253,12 +226,12 @@ class DeleteSectorDialog(EventGroup):
             ),
             rx.el.div(
                 rx.el.div(
-                    components.Buttons.Primary(
+                    tailwind.Buttons.Primary(
                         "Delete",
                         disabled=DeleteSectorDialogState.delete_disabled,
                         on_click=cls.submit,
                     ),
-                    components.Buttons.Secondary("Close", on_click=cls.close),
+                    tailwind.Buttons.Secondary("Close", on_click=cls.close),
                     class_name="w-full flex justify-end space-x-4",
                 ),
                 class_name="w-full flex-col grow place-content-end",
@@ -267,7 +240,7 @@ class DeleteSectorDialog(EventGroup):
 
     def __new__(cls) -> rx.Component:
         """Create and return the dialog component."""
-        return components.Dialog(
+        return tailwind.Dialog(
             "Delete Sector",
             rx.cond(
                 DeleteSectorDialogState.has_attached_compute,

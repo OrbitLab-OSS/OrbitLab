@@ -2,7 +2,7 @@
 
 import reflex as rx
 
-from orbitlab.web.components.page_header import PageHeader
+from orbitlab.web.tailwind.page_header import PageHeader
 
 from orbitlab.web.layout import orbitlab_page
 

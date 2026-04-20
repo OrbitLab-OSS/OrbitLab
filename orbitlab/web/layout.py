@@ -5,8 +5,8 @@ from collections.abc import Callable
 import reflex as rx
 
 from orbitlab.data_types import InitializationStatus
-from orbitlab.web.components.initializer import InitializationState
-from orbitlab.web.components.sidebar import SideBar
+# from orbitlab.web.tailwind.initializer import InitializationState
+from orbitlab.web.tailwind.sidebar import SideBar
 
 
 def require_configuration(page: Callable[[], rx.Component]) -> Callable[[], rx.Component]:
@@ -14,7 +14,8 @@ def require_configuration(page: Callable[[], rx.Component]) -> Callable[[], rx.C
 
     def wrapped() -> rx.Component:
         return rx.cond(
-            InitializationState.status == InitializationStatus.COMPLETE,
+            # InitializationState.status == InitializationStatus.COMPLETE,
+            True,
             page(),
             rx.el.div(on_mount=rx.redirect("/")),
         )
@@ -73,6 +74,7 @@ def orbitlab_page(page: Callable[[], rx.Component]) -> Callable[[], rx.Component
                 SideBar.Section(icon="network", text="Sectors", href="/sectors"),
                 SideBar.Section(icon="warehouse", text="DockFS", href="/dock-fs"),
                 SideBar.Section(icon="database", text="DataCore", href="/datacore"),
+                SideBar.Section(icon="logs", text="Logs", href="/logs"),
             ),
             rx.el.div(
                 page(),

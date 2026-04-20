@@ -9,6 +9,7 @@ from .dockfs import __pages__ as dockfs_pages
 from .nodes import __pages__ as node_pages
 from .secrets_pki import __pages__ as secret_pki_pages
 from .sectors import __pages__ as network_pages
+from .logs import __pages__ as logs_pages
 
 pages = (
     *compute_pages,
@@ -17,4 +18,5 @@ pages = (
     *network_pages,
     *dockfs_pages,
     *datacore_pages,
+    *logs_pages,
 )

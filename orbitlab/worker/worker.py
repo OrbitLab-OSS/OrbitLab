@@ -1,25 +1,19 @@
 """OrbitLab Event Worker."""
 
 import asyncio
-import json
-import os
-import socket
+from functools import cached_property
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
-from pathlib import Path
+import sys
 
-import uvicorn
 from pydantic import ValidationError
 from redis.exceptions import ResponseError
-from starlette.applications import Starlette
-from starlette.requests import Request
-from starlette.responses import Response
-from starlette.routing import Route
 
 from orbitlab.constants import EventStreams
 from orbitlab.data_types import EventStatus, RedisStreamEvent
-from orbitlab.web.utilities import get_redis, is_production
+from orbitlab.proxmox import Proxmox
+from orbitlab.web.utilities import get_redis
 from orbitlab.worker import workflows
 from orbitlab.worker.events import OrbitLabEvent, WorkflowEvent
 
@@ -67,6 +61,10 @@ class Worker:
         self._workflows = set()
         self.redis = get_redis()
 
+    @cached_property
+    def node(self) -> str:
+        return Proxmox().__node__
+
     async def _parse_workflow_event(self, stream_event: RedisStreamEvent) -> WorkflowEvent:
         _, event_data = stream_event
         _event_data = event_data[0]
@@ -81,7 +79,17 @@ class Worker:
             self._workflows.add(workflow)
             workflow.add_done_callback(self._workflows.discard)
         else:
-            print("ERROR", event)
+            await self.redis.xadd(
+                name=EventStreams.SYSTEM_LOGS,
+                fields={
+                    "timestamp": datetime.now(UTC).isoformat(),
+                    "level": "Error",
+                    "trace": "worker.worker.Worker._handle_workflow_event",
+                    "message": str(event),
+                },
+                maxlen=5000,
+                approximate=True,
+            )
 
     async def _ensure_group(self, group: str, stream: str) -> None:
         try:
@@ -108,11 +116,21 @@ class Worker:
                     event = await self._parse_workflow_event(stream_event=stream_events[0])
                     await self._handle_workflow_event(event=event)
                 if self._event.is_set():
-                    print("Exiting Workflow Stream...")
+                    sys.stdout.write("Exiting Workflow Stream...\n")
                     break
                 await asyncio.sleep(1)
             except Exception as err:  # noqa: BLE001
-                print(err)
+                await self.redis.xadd(
+                    name=EventStreams.SYSTEM_LOGS,
+                    fields={
+                        "timestamp": datetime.now(UTC).isoformat(),
+                        "level": "Error",
+                        "trace": "worker.worker.Worker._process_workflows",
+                        "message": str(err),
+                    },
+                    maxlen=5000,
+                    approximate=True,
+                )
 
     async def _process_events(self) -> None:
         await self._ensure_group(group="ol:workers", stream=EventStreams.EVENTS)
@@ -120,7 +138,7 @@ class Worker:
             try:
                 stream_events = await self.redis.xreadgroup(
                     groupname="ol:workers",
-                    consumername="pve-1-2",
+                    consumername=self.node,
                     streams={EventStreams.EVENTS: ">"},
                     count=1,
                 )
@@ -129,13 +147,33 @@ class Worker:
                     if error := await self.create_workflow(
                         name=event.event, version=event.version, payload=event.payload,
                     ):
-                        print(error)
+                        await self.redis.xadd(
+                            name=EventStreams.SYSTEM_LOGS,
+                            fields={
+                                "timestamp": datetime.now(UTC).isoformat(),
+                                "level": "Error",
+                                "trace": "worker.worker.Worker._process_events",
+                                "message": error,
+                            },
+                            maxlen=5000,
+                            approximate=True,
+                        )
                 if self._event.is_set():
-                    print("Exiting Event Stream...")
+                    sys.stdout.write("Exiting Event Stream...\n")
                     break
                 await asyncio.sleep(1)
             except Exception as err:  # noqa: BLE001
-                print(err)
+                await self.redis.xadd(
+                    name=EventStreams.SYSTEM_LOGS,
+                    fields={
+                        "timestamp": datetime.now(UTC).isoformat(),
+                        "level": "Error",
+                        "trace": "worker.worker.Worker._process_workflows",
+                        "message": str(err),
+                    },
+                    maxlen=5000,
+                    approximate=True,
+                )
 
     @classmethod
     async def create_workflow(cls, name: str, version: str, payload: dict) -> str:
@@ -156,13 +194,16 @@ class Worker:
                 maxlen=5000,
                 approximate=True,
             )  # pyright: ignore[reportArgumentType]
-            print(
-                {
+            await redis.xadd(
+                name=EventStreams.SYSTEM_LOGS,
+                fields={
                     "timestamp": datetime.now(UTC).isoformat(),
                     "level": "Info",
-                    "node": "pve-1-2",
+                    "trace": "web.utilities.get_redis_value",
                     "message": f"Creating workflow {event.redis_key}",
                 },
+                maxlen=5000,
+                approximate=True,
             )
             return ""
         return f"Workflow {event.name}@{event.version} does not exist"
@@ -175,42 +216,4 @@ class Worker:
         yield
         self._event.set()
         await asyncio.gather(workflows, events)
-        print("Worker Exited.")
-
-
-class ControlPlaneReciever:
-    """Receiver for relaying requests from the OrbitLab Orbital Relay."""
-
-    def __init__(self) -> None:
-        """Initialize control plane reciever."""
-        self._socket_file = Path("/run/orbitlab/proxy.sock")
-        self.redis = get_redis()
-
-    def __create_unix_socket__(self) -> socket.socket:
-        """Create the Unix socket file for the reciever."""
-        if self._socket_file.exists():
-            self._socket_file.unlink()
-        self._socket_file.parent.mkdir(parents=True, exist_ok=True)
-        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        sock.bind(str(self._socket_file))
-        os.chown(self._socket_file, uid=100000, gid=100000)
-        return sock
-
-    async def relay(self, request: Request) -> Response:
-        """Handle requests from the orbital relay."""
-        if request.headers.get("host", "") != "orbital-relay":
-            return Response(status_code=401)
-
-        payload = await request.json()
-        await self.redis.xadd(name=EventStreams.EVENTS, fields=payload, maxlen=5000, approximate=True)
-        return Response()
-
-    @asynccontextmanager
-    async def run(self) -> AsyncGenerator[None, None]:
-        """Run the ControlPlaneReciever to listen for requests from the orbital relay."""
-        if is_production():
-            app = Starlette(debug=False, routes=[Route("/orbital-relay", self.relay, methods=["POST"])])
-            config = uvicorn.Config(app, uds=str(self._socket_file))
-            server = uvicorn.Server(config)
-            await server.serve(sockets=[self.__create_unix_socket__()])
-        yield
+        sys.stdout.write("Worker Exited.\n")

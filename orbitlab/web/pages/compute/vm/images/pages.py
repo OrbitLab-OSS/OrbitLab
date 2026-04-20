@@ -2,7 +2,7 @@
 
 import reflex as rx
 
-from orbitlab.web.components import Buttons, PageHeader
+from orbitlab.web.tailwind import Buttons, PageHeader
 from orbitlab.web.layout import orbitlab_page
 
 from .dialogs import CustomImageDialog, DeleteImageDialog, DownloadImageDialog

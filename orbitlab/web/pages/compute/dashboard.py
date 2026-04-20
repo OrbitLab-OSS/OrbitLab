@@ -6,10 +6,10 @@ from typing import ClassVar, Literal
 import reflex as rx
 
 from orbitlab.proxmox import ProxmoxCompute
-from orbitlab.web import components
+from orbitlab.web import tailwind
 
 from orbitlab.web.layout import orbitlab_page
-from .lxc.instances.dialogs import LaunchApplianceDialog
+from .lxc.instances.dialogs import LaunchLXCInstanceDialog
 
 
 @rx.page("/compute")
@@ -17,11 +17,11 @@ from .lxc.instances.dialogs import LaunchApplianceDialog
 def compute_dashboard() -> rx.Component:
     """Proxmox Nodes Page."""
     return rx.el.div(
-        components.PageHeader(
+        tailwind.PageHeader(
             "Compute Management",
-            components.Buttons.Primary("Create LXC", on_click=components.Dialog.open(LaunchApplianceDialog.dialog_id)),
+            tailwind.Buttons.Primary("Create LXC", on_click=tailwind.Dialog.open(LaunchLXCInstanceDialog.dialog_id)),
         ),
-        LaunchApplianceDialog(),
+        LaunchLXCInstanceDialog(),
         class_name="w-full h-full",
     )
 
@@ -33,10 +33,10 @@ class TerminalState(rx.State):
     term_compute_type: ClassVar[Literal["qemu", "lxc"]]
 
     @rx.var
-    def node(self) -> str:
+    async def node(self) -> str:
         """Return the Proxmox node name for the current VMID, or an empty string if unavailable."""
         if self.term_vmid:
-            return ProxmoxCompute().get_node_for_vmid(vmid=int(self.term_vmid))
+            return await ProxmoxCompute().get_node_for_vmid(vmid=int(self.term_vmid))
         return ""
 
     @rx.var
@@ -50,8 +50,8 @@ class TerminalState(rx.State):
         return ""
 
     @rx.var
-    def ready(self) -> bool:
-        return all([self.term_vmid, self.node, self.socket_url])
+    async def ready(self) -> bool:
+        return all([self.term_vmid, await self.node, self.socket_url])
 
 
 @rx.page("/terminal/[term_compute_type]/[term_vmid]")
@@ -66,10 +66,10 @@ def terminal() -> rx.Component:
                     rx.text(f"Node: {TerminalState.node}"),
                     class_name="w-full flex space-x-4 p-6",
                 ),
-                components.Terminal(socket_url=TerminalState.socket_url),
+                tailwind.Terminal(socket_url=TerminalState.socket_url),
             ),
             rx.el.div(
-                components.OrbitLabLogo(animated=True),
+                tailwind.OrbitLabLogo(animated=True),
                 class_name="w-full h-screen flex items-center justify-center"
             ),
         ),

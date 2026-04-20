@@ -5,9 +5,9 @@ from pathlib import Path
 import reflex as rx
 
 from orbitlab.data_types import FrontendEvents
-from orbitlab.manifest.secrets import SecretManifest
-from orbitlab.services.vault.client import SecretVault
-from orbitlab.web import components
+from orbitlab.redis.clients import SecretsClient
+from orbitlab.redis.models import Secret
+from orbitlab.web import tailwind
 from orbitlab.web.utilities import EventGroup
 
 from .dialogs import DeleteSecretDialog
@@ -27,9 +27,9 @@ class SecretsTable(EventGroup):
     @rx.event
     async def view_secret(state: SecretsTableState, secret_name: str, version: int) -> None:
         """View a secret by retrieving and storing its value in the viewable secrets dictionary."""
-        state.viewable_secrets[secret_name] = SecretVault().get(
+        state.viewable_secrets[secret_name] = (await SecretsClient().get(
             secret_name=Path(secret_name), version=version,
-        ).secret_string.get_secret_value()
+        )).secret_string.get_secret_value()
 
     @staticmethod
     @rx.event
@@ -39,55 +39,55 @@ class SecretsTable(EventGroup):
 
     @staticmethod
     @rx.event
-    async def open_delete_secret_dialog(state: DeleteSecretDialogState, secret: SecretManifest) -> FrontendEvents:
+    async def open_delete_secret_dialog(state: DeleteSecretDialogState, secret: Secret) -> FrontendEvents:
         """Open the delete secret dialog for the specified secret."""
         state.secret = secret
-        return components.Dialog.open(DeleteSecretDialog.dialog_id)
+        return tailwind.Dialog.open(DeleteSecretDialog.dialog_id)
 
     @staticmethod
     @rx.event
     async def copy_to_clipboard(_: SecretsTableState, secret_name: str, version: int) -> FrontendEvents:
         """Copy a secret value to the clipboard and show a success toast."""
-        secret_value = SecretVault().get(
+        secret_value = (await SecretsClient().get(
             secret_name=Path(secret_name), version=version,
-        ).secret_string.get_secret_value()
+        )).secret_string.get_secret_value()
         return [
             rx.set_clipboard(secret_value),
             rx.toast.success(f"Copied {secret_name} to clipboard"),
         ]
 
     @classmethod
-    def __table_row__(cls, secret: SecretManifest) -> rx.Component:
+    def __table_row__(cls, secret: Secret) -> rx.Component:
         """Create and return the table row component."""
         return rx.el.tr(
             rx.el.td(
-                secret.spec.secret_name,
+                secret.name,
                 class_name="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-800 dark:text-gray-200",
             ),
             rx.el.td(
-                secret.spec.version,
+                secret.secret_version,
                 class_name="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-800 dark:text-gray-200",
             ),
             rx.el.td(
-                secret.metadata.description,
+                secret.description,
                 class_name="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-800 dark:text-gray-200",
             ),
             rx.el.td(
                 rx.el.div(
                     rx.cond(
-                        SecretsTableState.viewable_secrets.get(secret.spec.secret_name, None).to(bool),
+                        SecretsTableState.viewable_secrets.get(secret.name, None).to(bool),
                         rx.fragment(
-                            rx.text(SecretsTableState.viewable_secrets[secret.spec.secret_name]),
-                            components.Buttons.Icon(
+                            rx.text(SecretsTableState.viewable_secrets[secret.name]),
+                            tailwind.Buttons.Icon(
                                 icon="eye-off",
-                                on_click=cls.hide_secret(secret.spec.secret_name),
+                                on_click=cls.hide_secret(secret.name),
                             ),
                         ),
                         rx.fragment(
                             rx.text("********************"),
-                            components.Buttons.Icon(
+                            tailwind.Buttons.Icon(
                                 icon="eye",
-                                on_click=cls.view_secret(secret.spec.secret_name, secret.spec.version),
+                                on_click=cls.view_secret(secret.name, secret.name),
                             ),
                         ),
                     ),
@@ -96,14 +96,14 @@ class SecretsTable(EventGroup):
                 class_name="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-800 dark:text-gray-200",
             ),
             rx.el.td(
-                components.Menu(
-                    components.Buttons.Icon("ellipsis-vertical"),
-                    components.Menu.Item(
+                tailwind.Menu(
+                    tailwind.Buttons.Icon("ellipsis-vertical"),
+                    tailwind.Menu.Item(
                         "Copy to Clipboard",
-                        on_click=cls.copy_to_clipboard(secret.spec.secret_name, secret.spec.version)
+                        on_click=cls.copy_to_clipboard(secret.name, secret.secret_version)
                     ),
-                    components.Menu.Separator(),
-                    components.Menu.Item(
+                    tailwind.Menu.Separator(),
+                    tailwind.Menu.Item(
                         "Delete",
                         on_click=cls.open_delete_secret_dialog(secret),
                         danger=True,
@@ -123,7 +123,7 @@ class SecretsTable(EventGroup):
         header_class = (
             "px-6 py-3 text-left text-xs font-semibold tracking-wider uppercase text-gray-600 dark:text-[#AEB9CC]"
         )
-        return components.Card(
+        return tailwind.Card(
             rx.el.div(
                 DeleteSecretDialog(),
                 rx.el.table(
@@ -158,11 +158,11 @@ class SecretsTable(EventGroup):
                     "transition-all duration-200"
                 ),
             ),
-            header=components.Card.Header(
+            header=tailwind.Card.Header(
                 rx.el.div(
                     rx.el.h3("Secrets"),
                     rx.el.div(
-                        components.Buttons.Icon("refresh-ccw", on_click=SecretsState.cache_clear("secrets")),
+                        tailwind.Buttons.Icon("refresh-ccw", on_click=SecretsState.cache_clear("secrets")),
                         class_name="flex space-x-4",
                     ),
                     class_name="w-full flex justify-between",

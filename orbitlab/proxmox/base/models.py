@@ -6,7 +6,6 @@ from typing import Annotated, Literal, Self
 from pydantic import BaseModel, Field, RootModel
 
 from orbitlab import data_types
-from orbitlab.manifest.serialization import PveBool, PveContentList, PveStorageType
 
 
 class Task(RootModel[str]):
@@ -30,11 +29,11 @@ class VMID(RootModel[int]):
 class Storage(BaseModel):
     """Represents a storage resource in Proxmox."""
 
-    type: PveStorageType
-    active: PveBool
-    content: PveContentList
-    enabled: PveBool
-    shared: PveBool
+    type: data_types.PveStorageType
+    active: data_types.PveBool
+    content: data_types.PveContentList
+    enabled: data_types.PveBool
+    shared: data_types.PveBool
     name: str = Field(alias="storage")
     available_bytes: int = Field(alias="avail")
     total_bytes: int = Field(alias="total")
@@ -50,6 +49,10 @@ class ProxmoxStorages(RootModel[list[Storage]]):
         return [store.name for store in self.root]
 
 
+class ProxmoxTaskError(Exception):
+    """"""
+
+
 class ProxmoxTaskStatus(BaseModel):
     """Represents the status of a Proxmox task."""
 
@@ -63,6 +66,10 @@ class ProxmoxTaskStatus(BaseModel):
     id: str
     user: str
     exit_status: Annotated[str | None, Field(alias="exitstatus", default=None)]
+    
+    def raise_for_status(self) -> None:
+        if self.exit_status != "OK":
+            raise ProxmoxTaskError(self.exit_status)
 
 
 class ContentItem(BaseModel):
@@ -127,8 +134,8 @@ class NodeStatus(BaseModel):
     """Represents the status of a Proxmox cluster node."""
 
     node_id: Annotated[int, Field(alias="nodeid")]
-    local: PveBool
-    online: PveBool
+    local: data_types.PveBool
+    online: data_types.PveBool
     type: Literal["node"]
     ip: ipaddress.IPv4Address | None = None
     name: str
@@ -139,7 +146,7 @@ class ClusterStatus(BaseModel):
     """Represents the status of a Proxmox cluster."""
 
     name: str
-    quorate: PveBool
+    quorate: data_types.PveBool
     type: Literal["cluster"]
     quorate: bool
     version: int
@@ -153,6 +160,9 @@ class ProxmoxClusterStatus(RootModel[list[Annotated[ClusterStatus | NodeStatus, 
         """Get all nodes from the cluster status."""
         return [item for item in self.root if isinstance(item, NodeStatus)]
 
+    def get_node(self, name: str) -> NodeStatus:
+        return next(iter([item for item in self.root if isinstance(item, NodeStatus) and item.name == name]))
+
     def get_local_node(self) -> str:
         """Get the name of the local node from the cluster status."""
         return next(iter(node.name for node in self.get_nodes() if node.local))
@@ -160,3 +170,43 @@ class ProxmoxClusterStatus(RootModel[list[Annotated[ClusterStatus | NodeStatus, 
     def get_cluster(self) -> ClusterStatus | None:
         """Get the cluster status from the cluster status list."""
         return next(iter(item for item in self.root if isinstance(item, ClusterStatus)), None)
+
+
+class QemuConfig(BaseModel):
+    """Represents QEMU configuration for a compute instance."""
+
+    agent: str
+    scsi0: str
+
+    @property
+    def agent_enabled(self) -> bool:
+        """If the Qemu Guest Agent is enabled on the VM."""
+        return self.agent == "enabled=1"
+
+    @property
+    def root_volume_id(self) -> str:
+        volume_id, _ = self.scsi0.split(",")
+        return volume_id
+
+
+class AgentExecStatus(BaseModel):
+    """Represents the execution status of an agent command in Proxmox."""
+
+    exited: data_types.PveBool
+    stderr: str = Field(alias="err-data", default="")
+    stdout: str = Field(alias="out-data", default="")
+    exitcode: int | None = None
+    signal: int | None = None
+
+    @property
+    def logs(self) -> list[str]:
+        """Return combined non-empty lines from stdout and stderr as a list of log entries."""
+        formatted_logs = [line for line in self.stdout.split("\n") if line]
+        formatted_logs.extend([line for line in self.stderr.split("\n") if line])
+        return formatted_logs
+
+
+class AgentExecPid(BaseModel):
+    """Represents the process ID of an agent execution in Proxmox."""
+
+    pid: int

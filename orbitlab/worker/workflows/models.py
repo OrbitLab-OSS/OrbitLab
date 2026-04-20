@@ -1,0 +1,48 @@
+"""OrbitLab Workflow Models."""
+
+from pathlib import Path
+from typing import Literal
+
+from pydantic import BaseModel, Field
+
+from orbitlab.data_types import WorkflowStepType
+
+
+class FileConfig(BaseModel):
+    """File Configuration Model."""
+
+    source: Path
+    destination: Path | str = ""
+
+    def configured(self) -> bool:
+        """Check if the file push operation is properly configured."""
+        return bool(self.destination)
+
+
+class WorkflowStep(BaseModel):
+    """Workflow Step Model."""
+
+    type: WorkflowStepType | Literal[""] = Field(default="")
+    name: str = Field(default="")
+    script: str | None = Field(default=None)
+    files: list[FileConfig] | None = Field(default=None)
+
+    @property
+    def valid(self) -> bool:
+        """Check if the step has valid configuration."""
+        files = [file.configured() for file in self.files] if self.files else [False]
+        return any([self.script, *files])
+
+    def validate(self) -> str:
+        """Validate the step configuration and return any error messages."""
+        if not self.name:
+            return "Step name is not provided."
+        if self.type == WorkflowStepType.FILES:
+            if not self.files:
+                return "No files uploaded for files step."
+            for file in self.files:
+                if not file.destination:
+                    return f"File {file.source} as no specified destination."
+        if self.type == WorkflowStepType.SCRIPT and not self.script:
+            return "Script step has no configured shell script."
+        return ""

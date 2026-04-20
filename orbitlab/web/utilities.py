@@ -1,5 +1,7 @@
 """OrbitLab utilities."""
 
+from datetime import UTC, datetime
+import functools
 import importlib
 import inspect
 import os
@@ -10,6 +12,8 @@ from typing import TYPE_CHECKING, Any, TypeVar, get_type_hints
 import reflex as rx
 from redis.asyncio import Redis
 from reflex.utils.exceptions import StateValueError
+
+from orbitlab.constants import EventStreams
 
 if TYPE_CHECKING:
     from orbitlab.worker import Worker
@@ -68,16 +72,23 @@ class EventGroup:
             setattr(cls, event, getattr(state_cls, name))
 
 
-def get_worker() -> "Worker":
+@functools.lru_cache(maxsize=1)
+def _get_worker() -> "Worker":
     """Get the Worker module instance."""
     worker_module = importlib.import_module(name="orbitlab.worker.worker")
     return worker_module.Worker
 
 
+async def create_workflow(name: str, version: str, payload: dict) -> str:
+    worker = _get_worker()
+    return await worker.create_workflow(name=name, version=version, payload=payload)
+
+
 def get_redis() -> Redis:
     """Get the Reflex Redis client."""
-    # manager: StateManagerRedis = rx.state.get_state_manager()
-    return Redis()
+    if os.environ.get("ORBITLAB_DEV"):
+        return Redis.from_url(os.environ["ORBITLAB_REDIS_URL"])
+    return Redis(db=10)
 
 
 async def get_redis_value(name: str, key: str, default: str = "") -> str:
@@ -86,7 +97,17 @@ async def get_redis_value(name: str, key: str, default: str = "") -> str:
     try:
         value = await redis.hget(name=name, key=key)
     except Exception as err:  # noqa: BLE001
-        print(err)
+        await redis.xadd(
+            name=EventStreams.SYSTEM_LOGS,
+            fields={
+                "timestamp": datetime.now(UTC).isoformat(),
+                "level": "Error",
+                "trace": "web.utilities.get_redis_value",
+                "message": str(err),
+            },
+            maxlen=5000,
+            approximate=True,
+        )
         return ""
     else:
         if value and isinstance(value, bytes):

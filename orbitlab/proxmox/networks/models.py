@@ -7,8 +7,7 @@ from typing import Literal
 from pydantic import BaseModel, Field, RootModel
 
 from orbitlab.constants import NetworkSettings
-from orbitlab.manifest.sector import SectorManifest
-from orbitlab.manifest.serialization import PeerList, PveBool
+from orbitlab.data_types import PeerList, PveBool
 
 
 class AttachedInstances(BaseModel):
@@ -49,21 +48,21 @@ class SectorAttachedInstances(BaseModel):
     tag: int
     attached: list[AttachedInstances]
 
-    @classmethod
-    def create(cls, sector: SectorManifest, instances: dict[int, ComputeConfig]) -> "SectorAttachedInstances":
-        """Create a SectorAttachedInstances object from sector and instance data."""
-        return cls.model_validate({
-            "sector_id": sector.name,
-            "sector_name": sector.metadata.alias,
-            "tag": sector.metadata.tag,
-            "attached": [
-                {
-                    "name": instance.hostname,
-                    "vmid": vmid,
-                }
-                for vmid, instance in instances.items()
-            ],
-        })
+    # @classmethod
+    # def create(cls, sector: SectorManifest, instances: dict[int, ComputeConfig]) -> "SectorAttachedInstances":
+    #     """Create a SectorAttachedInstances object from sector and instance data."""
+    #     return cls.model_validate({
+    #         "sector_id": sector.name,
+    #         "sector_name": sector.metadata.alias,
+    #         "tag": sector.metadata.tag,
+    #         "attached": [
+    #             {
+    #                 "name": instance.hostname,
+    #                 "vmid": vmid,
+    #             }
+    #             for vmid, instance in instances.items()
+    #         ],
+    #     })
 
 
 class EVPNController(BaseModel):

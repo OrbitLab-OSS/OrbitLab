@@ -2,10 +2,10 @@
 
 import reflex as rx
 
-from orbitlab.web import components
+from orbitlab.web import tailwind
 from orbitlab.web.layout import orbitlab_page
 
-from .dialogs import LaunchApplianceDialog
+from .dialogs import LaunchLXCInstanceDialog
 from .tables import LXCInstancesTable
 
 
@@ -14,11 +14,11 @@ from .tables import LXCInstancesTable
 def lxc_instances() -> rx.Component:
     """Render the Running LXCs Management page."""
     return rx.el.div(
-        components.PageHeader(
+        tailwind.PageHeader(
             "LXC Instances",
-            components.Buttons.Primary("Create LXC", on_click=LaunchApplianceDialog.open),
+            tailwind.Buttons.Primary("Create LXC", on_click=tailwind.Dialog.open(LaunchLXCInstanceDialog.dialog_id)),
         ),
-        LaunchApplianceDialog(),
+        LaunchLXCInstanceDialog(),
         LXCInstancesTable(),
         class_name="w-full h-full",
     )

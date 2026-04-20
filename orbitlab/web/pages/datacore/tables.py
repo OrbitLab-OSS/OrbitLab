@@ -2,14 +2,14 @@
 
 import reflex as rx
 
-from orbitlab.data_types import DockFSState, FrontendEvents
-from orbitlab.manifest.datacore import DataCoreManifest, Ref
-from orbitlab.manifest.secrets import SecretManifest
-from orbitlab.web import components
+from orbitlab.data_types import DockFSStatus, FrontendEvents
+from orbitlab.redis.clients import SecretsClient
+from orbitlab.redis.models import DataCore
+from orbitlab.web import tailwind
+from orbitlab.web.global_state import OrbitLabState
 from orbitlab.web.utilities import EventGroup
 
 from .dialogs import DeleteDataCoreDialog
-from .states import DataCoreServiceState
 
 
 class DataCoreClustersTable(EventGroup):
@@ -17,81 +17,81 @@ class DataCoreClustersTable(EventGroup):
 
     @staticmethod
     @rx.event
-    def copy_password_to_clipboard(_: rx.State, ref: Ref) -> FrontendEvents:
+    async def copy_password_to_clipboard(_: rx.State, id: str, user: str) -> FrontendEvents:
         """Copy a secret password to the clipboard."""
+        secret = await SecretsClient().get_service_secret(service_name="datacore", service_id=id, subservice_name=user)
         return [
-            rx.set_clipboard(SecretManifest.load(name=ref.name).get_current_value()),
+            rx.set_clipboard(secret),
             rx.toast.success("Copied to clipboard"),
         ]
 
     @classmethod
-    def __table_row__(cls, manifest: DataCoreManifest) -> rx.Component:
+    def __table_row__(cls, datacore: DataCore) -> rx.Component:
         """Create and return the table row component."""
-        state = DataCoreServiceState.state_map.get(manifest.name).to(str)
         return rx.el.tr(
             rx.el.td(
                 rx.el.div(
-                    rx.text(manifest.metadata.name),
-                    rx.text(manifest.name, class_name="text-sm text-gray-500"),
+                    rx.text(datacore.config.name),
+                    rx.text(datacore.config.id, class_name="text-sm text-gray-500"),
                     class_name="flex-col space-y-1 items-center",
                 ),
                 class_name="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-800 dark:text-gray-200",
             ),
             rx.el.td(
-                rx.text(manifest.spec.replicas),
+                rx.text(datacore.config.replicas),
                 class_name="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-800 dark:text-gray-200",
             ),
             rx.el.td(
-                rx.text(manifest.spec.application_database),
+                rx.text(datacore.config.application_database),
                 class_name="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-800 dark:text-gray-200",
             ),
             rx.el.td(
-                rx.text(manifest.spec.application_user),
+                rx.text(datacore.config.application_user),
                 class_name="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-800 dark:text-gray-200",
             ),
             rx.el.td(
                 rx.match(
-                    state,
-                    (DockFSState.AVAILABLE, components.Badge(state.capitalize(), color_scheme="green")),
-                    (DockFSState.DEGRADED, components.Badge(state.capitalize(), color_scheme="orange")),
-                    (DockFSState.DELETING, components.Badge(state.capitalize(), color_scheme="red")),
-                    components.Badge(state.capitalize(), color_scheme="blue"),
+                    datacore.state.status,
+                    (DockFSStatus.AVAILABLE, tailwind.Badge(datacore.state.status.capitalize(), color_scheme="green")),
+                    (DockFSStatus.DEGRADED, tailwind.Badge(datacore.state.status.capitalize(), color_scheme="orange")),
+                    (DockFSStatus.DELETING, tailwind.Badge(datacore.state.status.capitalize(), color_scheme="red")),
+                    tailwind.Badge(datacore.state.status.capitalize(), color_scheme="blue"),
                 ),
                 class_name="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-800 dark:text-gray-200",
             ),
             rx.el.td(
-                rx.text(f"{manifest.spec.capacity_gb}GB"),
+                rx.text(f"{datacore.config.capacity_gb}GB"),
                 class_name="px-6 py-4 whitespace-nowrap text-sm text-gray-700 dark:text-gray-300",
             ),
             rx.el.td(
-                rx.text(manifest.spec.cores),
+                rx.text(datacore.config.cores),
                 class_name="px-6 py-4 whitespace-nowrap text-sm text-gray-700 dark:text-gray-300",
             ),
             rx.el.td(
-                rx.text(f"{manifest.spec.memory_gb}G"),
+                rx.text(f"{datacore.config.memory_gb}G"),
                 class_name="px-6 py-4 whitespace-nowrap text-sm text-gray-700 dark:text-gray-300",
             ),
             rx.el.td(
-                components.Menu(
-                    components.Buttons.Icon("ellipsis-vertical"),
-                    components.Menu.Item(
+                tailwind.Menu(
+                    tailwind.Buttons.Icon("ellipsis-vertical"),
+                    tailwind.Menu.Item(
                         "Copy App User Password to Clipboard",
-                        on_click=cls.copy_password_to_clipboard(manifest.spec.application_password),
+                        on_click=cls.copy_password_to_clipboard(datacore.config.id, datacore.config.application_user),
                     ),
-                    components.Menu.Item(
+                    tailwind.Menu.Item(
                         "Copy Superuser Password to Clipboard",
-                        on_click=cls.copy_password_to_clipboard(manifest.spec.superuser_password),
+                        on_click=cls.copy_password_to_clipboard(datacore.config.id, "superuser"),
                     ),
-                    components.Menu.Separator(),
-                    components.Menu.Item(
+                    tailwind.Menu.Separator(),
+                    tailwind.Menu.Item(
                         "Expand Storage",
                         disabled=True,
                         # TODO: Allow for increasing NFS data disk size
                     ),
-                    components.Menu.Separator(),
-                    components.Menu.Item(
+                    tailwind.Menu.Separator(),
+                    tailwind.Menu.Item(
                         "Delete",
-                        on_click=DeleteDataCoreDialog.confirm(manifest.name),
+                        on_click=DeleteDataCoreDialog.confirm(datacore.config.id),
                         danger=True,
                     ),
                 ),
@@ -109,7 +109,7 @@ class DataCoreClustersTable(EventGroup):
         header_class = (
             "px-6 py-3 text-left text-xs font-semibold tracking-wider uppercase text-gray-600 dark:text-[#AEB9CC]"
         )
-        return components.Card(
+        return tailwind.Card(
             rx.el.div(
                 rx.el.table(
                     rx.el.thead(
@@ -128,8 +128,8 @@ class DataCoreClustersTable(EventGroup):
                     ),
                     rx.el.tbody(
                         rx.foreach(
-                            DataCoreServiceState.clusters,
-                            lambda manifest: cls.__table_row__(manifest=manifest),
+                            OrbitLabState.datacores,
+                            lambda datacore: cls.__table_row__(datacore=datacore),
                         ),
                         class_name=(
                             "divide-y divide-gray-200 dark:divide-white/[0.08] bg-white/70 dark:bg-[#0E1015]/60 "
@@ -150,11 +150,11 @@ class DataCoreClustersTable(EventGroup):
                     "transition-all duration-200"
                 ),
             ),
-            header=components.Card.Header(
+            header=tailwind.Card.Header(
                 rx.el.div(
                     rx.el.div(),
                     rx.el.div(
-                        components.Buttons.Icon("refresh-ccw", on_click=DataCoreServiceState.cache_clear("clusters")),
+                        tailwind.Buttons.Icon("refresh-ccw", on_click=OrbitLabState.cache_clear("datacores")),
                         class_name="flex space-x-4",
                     ),
                     class_name="w-full flex justify-between",

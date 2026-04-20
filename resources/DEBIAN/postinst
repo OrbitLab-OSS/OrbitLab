@@ -36,4 +36,5 @@ fi
 systemctl daemon-reload
 systemctl enable --now orbitlab-backend.service
 systemctl enable --now orbitlab-frontend.service
+
 rm -f "$ROOT/frontend.zip"

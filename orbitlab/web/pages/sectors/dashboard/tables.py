@@ -2,54 +2,53 @@
 
 import reflex as rx
 
-from orbitlab.data_types import SectorState
-from orbitlab.manifest.sector import SectorManifest
-from orbitlab.web import components
+from orbitlab.data_types import SectorStatus
+from orbitlab.redis.models import Sector
+from orbitlab.web import tailwind
+from orbitlab.web.global_state import OrbitLabState
 from orbitlab.web.utilities import EventGroup
 
 from .dialogs import DeleteSectorDialog
-from .states import SectorsTableState
 
 
 class SectorsTable(EventGroup):
     """A table component for displaying virtual networks in the dashboard."""
 
     @classmethod
-    def __table_row__(cls, sector: SectorManifest) -> rx.Component:
+    def __table_row__(cls, sector: Sector) -> rx.Component:
         """Create and return the table row component."""
-        state = SectorsTableState.state_mapping.get(sector.name, "Pending").to(str)
         return rx.el.tr(
             rx.el.td(
-                sector.name,  # Sector ID
+                sector.config.id,  # Sector ID
                 class_name="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-800 dark:text-gray-200",
             ),
             rx.el.td(
-                sector.spec.alias,  # Sector Name
+                sector.config.alias,  # Sector Name
                 class_name="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-800 dark:text-gray-200",
             ),
             rx.el.td(
                 rx.match(
-                    state,
-                    (SectorState.AVAILABLE, components.Badge(state.capitalize(), color_scheme="green")),
-                    (SectorState.DELETING, components.Badge(state.capitalize(), color_scheme="red")),
-                    components.Badge(state.capitalize(), color_scheme="orange"),
+                    sector.state.status,
+                    (SectorStatus.AVAILABLE, tailwind.Badge(sector.state.status.capitalize(), color_scheme="green")),
+                    (SectorStatus.DELETING, tailwind.Badge(sector.state.status.capitalize(), color_scheme="red")),
+                    tailwind.Badge(sector.state.status.capitalize(), color_scheme="orange"),
                 ),
                 class_name="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-800 dark:text-gray-200",
             ),
             rx.el.td(
-                components.Badge(f"{sector.spec.cidr_block}", color_scheme="blue"),
+                tailwind.Badge(f"{sector.config.cidr_block}", color_scheme="blue"),
                 class_name="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-800 dark:text-gray-200",
             ),
             rx.el.td(
-                sector.spec.tag,
+                sector.config.tag,
                 class_name="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-800 dark:text-gray-200",
             ),
             rx.el.td(
-                components.Menu(
-                    components.Buttons.Icon("ellipsis-vertical"),
-                    components.Menu.Item(
+                tailwind.Menu(
+                    tailwind.Buttons.Icon("ellipsis-vertical"),
+                    tailwind.Menu.Item(
                         "Delete Sector",
-                        on_click=DeleteSectorDialog.check_can_delete(sector.name),
+                        on_click=DeleteSectorDialog.check_can_delete(sector.config.id),
                         danger=True,
                     ),
                 ),
@@ -67,7 +66,7 @@ class SectorsTable(EventGroup):
         header_class = (
             "px-6 py-3 text-left text-xs font-semibold tracking-wider uppercase text-gray-600 dark:text-[#AEB9CC]"
         )
-        return components.Card(
+        return tailwind.Card(
             rx.el.div(
                 rx.el.table(
                     rx.el.thead(
@@ -82,7 +81,7 @@ class SectorsTable(EventGroup):
                         class_name="bg-white/60 dark:bg-white/[0.03] backdrop-blur-sm",
                     ),
                     rx.el.tbody(
-                        rx.foreach(SectorsTableState.sectors, lambda network: cls.__table_row__(network)),
+                        rx.foreach(OrbitLabState.sectors, lambda network: cls.__table_row__(network)),
                         class_name=(
                             "divide-y divide-gray-200 dark:divide-white/[0.08] bg-white/70 dark:bg-[#0E1015]/60 "
                             "backdrop-blur-sm"
@@ -103,11 +102,11 @@ class SectorsTable(EventGroup):
                 ),
             ),
             DeleteSectorDialog(),
-            header=components.Card.Header(
+            header=tailwind.Card.Header(
                 rx.el.div(
                     rx.el.h3("Sectors"),
                     rx.el.div(
-                        components.Buttons.Icon("refresh-ccw", on_click=SectorsTableState.cache_clear("sectors")),
+                        tailwind.Buttons.Icon("refresh-ccw", on_click=OrbitLabState.cache_clear("sectors")),
                         class_name="flex space-x-4",
                     ),
                     class_name="w-full flex justify-between",

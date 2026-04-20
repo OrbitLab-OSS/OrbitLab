@@ -2,13 +2,13 @@
 
 import reflex as rx
 
-from orbitlab.data_types import ComputeState, ComputeStatus, FrontendEvents
-from orbitlab.manifest.compute_instances import VMManifest
-from orbitlab.web import components
-from orbitlab.web.utilities import EventGroup, get_worker
+from orbitlab.data_types import ComputeStatus, ProxmoxComputeStatus, FrontendEvents
+from orbitlab.redis.models import VMInstance
+from orbitlab.web import tailwind
+from orbitlab.web.global_state import OrbitLabState
+from orbitlab.web.utilities import EventGroup, create_workflow
 
 from .dialogs import TerminateVMInstanceDialog
-from .states import VMInstancesTableState
 
 
 class VMInstancesTable(EventGroup):
@@ -16,112 +16,102 @@ class VMInstancesTable(EventGroup):
 
     @staticmethod
     @rx.event
-    async def set_vm_status(_: rx.State, manifest: str, status: ComputeStatus) -> FrontendEvents:
+    async def set_vm_status(_: rx.State, manifest: str, status: ProxmoxComputeStatus) -> FrontendEvents:
         """Update the status of a VM and trigger backend and frontend updates."""
-        worker = get_worker()
-        error = await worker.create_workflow(
-            name="vm.state-change",
-            version="v1",
-            payload={"manifest": manifest, "desired_status": status.value},
-        )
-        if error:
+        payload = {"manifest": manifest, "desired_status": status.value}
+        if error := await create_workflow(name="vm.state-change", version="v1", payload=payload):
             return rx.toast.error(error)
         return rx.toast.info(f"Setting {manifest} to {status}...")
 
     @classmethod
-    def __table_row__(cls, instance: VMManifest) -> rx.Component:
+    def __table_row__(cls, instance: VMInstance) -> rx.Component:
         """Create and return the table row component."""
-        status = VMInstancesTableState.state_map.get(instance.name, "pending").to(str)
-        address = VMInstancesTableState.address_map.get(instance.name).to(str)
-        is_running = status == ComputeState.RUNNING
-        is_not_stopped = (status == ComputeState.STOPPED).__invert__()
         return rx.el.tr(
             rx.el.td(
                 rx.el.div(
                     rx.el.div(
-                        rx.text(instance.metadata.name),
+                        rx.text(instance.config.id),
                         rx.cond(
-                            rx.Var.create(instance.metadata.vmid) > 0,
-                            components.Badge(f"{instance.metadata.vmid}"),
+                            instance.state.vmid,
+                            tailwind.Badge(f"{instance.state.vmid}"),
                         ),
                         class_name="flex space-x-4 items-center",
                     ),
-                    rx.text(instance.name, class_name="text-xs text-gray-500"),
+                    rx.text(instance.config.id, class_name="text-xs text-gray-500"),
                     class_name="flex-col space-y-1 items-center",
                 ),
                 class_name="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-800 dark:text-gray-200",
             ),
             rx.el.td(
                 rx.match(
-                    status,
-                    (ComputeState.RUNNING, components.Badge(status.capitalize(), color_scheme="green")),
-                    (ComputeState.STOPPED, components.Badge(status.capitalize(), color_scheme="orange")),
-                    (ComputeState.TERMINATING, components.Badge(status.capitalize(), color_scheme="red")),
-                    components.Badge(label=status.capitalize(), color_scheme="blue"),
+                    instance.state.status,
+                    (ComputeStatus.RUNNING, tailwind.Badge(instance.state.status.capitalize(), color_scheme="green")),
+                    (ComputeStatus.STOPPED, tailwind.Badge(instance.state.status.capitalize(), color_scheme="orange")),
+                    (ComputeStatus.TERMINATING, tailwind.Badge(instance.state.status.capitalize(), color_scheme="red")),
+                    tailwind.Badge(instance.state.status.capitalize(), color_scheme="blue"),
                 ),
                 class_name="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-800 dark:text-gray-200",
             ),
             rx.el.td(
                 rx.el.div(
-                    rx.text(instance.metadata.sector_name),
-                    components.Badge(f"{instance.spec.sector}"),
+                    rx.text(instance.config.sector_name),
+                    tailwind.Badge(f"{instance.config.sector}"),
                     class_name="flex space-x-4 items-center",
                 ),
                 class_name="px-6 py-4 whitespace-nowrap text-sm text-gray-700 dark:text-gray-300",
             ),
             rx.el.td(
                 rx.cond(
-                    address.is_not_none(),
-                    components.Badge(address, color_scheme="blue"),
-                    components.Badge(label="N/A", color_scheme="blue"),
+                    instance.state.address,
+                    tailwind.Badge(instance.state.address, color_scheme="blue"),
+                    tailwind.Badge(label=" - ", color_scheme="blue"),
                 ),
                 class_name="px-6 py-4 whitespace-nowrap text-sm text-gray-700 dark:text-gray-300",
             ),
             rx.el.td(
-                components.HoverCard(
-                    rx.text(f"{instance.spec.vcpus}", class_name="text-[#1E63E9] dark:text-[#36E2F4]"),
+                tailwind.HoverCard(
+                    rx.text(f"{instance.config.vcpus}", class_name="text-[#1E63E9] dark:text-[#36E2F4]"),
                     rx.el.div(
-                        rx.text(f"{instance.spec.cores}x Cores"),
-                        rx.text(f"{instance.spec.sockets}x Sockets"),
+                        rx.text(f"{instance.config.cores}x Cores"),
+                        rx.text(f"{instance.config.sockets}x Sockets"),
                         class_name="w-full flex-col align-start justify-center space-y-2",
                     ),
                 ),
                 class_name="px-6 py-4 whitespace-nowrap text-sm text-gray-700 dark:text-gray-300",
             ),
             rx.el.td(
-                f"{instance.spec.memory}G",
+                f"{instance.config.memory}G",
                 class_name="px-6 py-4 whitespace-nowrap text-sm text-gray-700 dark:text-gray-300",
             ),
             rx.el.td(
-                components.Menu(
-                    components.Buttons.Icon("ellipsis-vertical"),
-                    components.Menu.Item(
+                tailwind.Menu(
+                    tailwind.Buttons.Icon("ellipsis-vertical"),
+                    tailwind.Menu.Item(
                         "Console",
-                        on_click=rx.redirect(f"/terminal/qemu/{instance.metadata.vmid}", is_external=True),
-                        disabled=status != ComputeState.RUNNING,
+                        on_click=rx.redirect(f"/terminal/qemu/{instance.state.vmid}", is_external=True),
+                        disabled=instance.state.status != ComputeStatus.RUNNING,
                     ),
-                    components.Menu.SubMenu(
+                    tailwind.Menu.SubMenu(
                         "Instance State",
-                        components.Menu.Item(
+                        tailwind.Menu.Item(
                             "Start",
-                            on_click=cls.set_vm_status(instance.name, ComputeStatus.START),
-                            disabled=is_running,
+                            on_click=cls.set_vm_status(instance.config.id, ProxmoxComputeStatus.START),
+                            disabled=instance.state.status == ComputeStatus.RUNNING,
                         ),
-                        components.Menu.Item(
+                        tailwind.Menu.Item(
                             "Reboot",
-                            on_click=cls.set_vm_status(instance.name, ComputeStatus.REBOOT),
-                            disabled=is_running.__invert__(),
+                            on_click=cls.set_vm_status(instance.config.id, ProxmoxComputeStatus.REBOOT),
+                            disabled=instance.state.status != ComputeStatus.RUNNING,
                         ),
-                        components.Menu.Item(
+                        tailwind.Menu.Item(
                             "Stop",
-                            on_click=cls.set_vm_status(instance.name, ComputeStatus.STOP),
-                            disabled=is_running.__invert__(),
+                            on_click=cls.set_vm_status(instance.config.id, ProxmoxComputeStatus.STOP),
+                            disabled=instance.state.status != ComputeStatus.RUNNING,
                         ),
-                        components.Menu.Separator(),
-                        components.Menu.Item(
+                        tailwind.Menu.Separator(),
+                        tailwind.Menu.Item(
                             "Terminate",
-                            on_click=TerminateVMInstanceDialog.confirm(instance.name),
-                            disabled=is_running.__invert__() & is_not_stopped,
+                            on_click=TerminateVMInstanceDialog.confirm(instance.config.id),
                             danger=True,
                         ),
                     ),
@@ -140,7 +130,7 @@ class VMInstancesTable(EventGroup):
         header_class = (
             "px-6 py-3 text-left text-xs font-semibold tracking-wider uppercase text-gray-600 dark:text-[#AEB9CC]"
         )
-        return components.Card(
+        return tailwind.Card(
             rx.el.div(
                 rx.el.table(
                     rx.el.thead(
@@ -156,7 +146,7 @@ class VMInstancesTable(EventGroup):
                         class_name="bg-white/60 dark:bg-white/[0.03] backdrop-blur-sm",
                     ),
                     rx.el.tbody(
-                        rx.foreach(VMInstancesTableState.running, lambda app: cls.__table_row__(app)),
+                        rx.foreach(OrbitLabState.vm_instances, lambda app: cls.__table_row__(app)),
                         class_name=(
                             "divide-y divide-gray-200 dark:divide-white/[0.08] bg-white/70 dark:bg-[#0E1015]/60 "
                             "backdrop-blur-sm"
@@ -177,11 +167,11 @@ class VMInstancesTable(EventGroup):
                     "transition-all duration-200"
                 ),
             ),
-            header=components.Card.Header(
+            header=tailwind.Card.Header(
                 rx.el.div(
                     rx.el.div(),
                     rx.el.div(
-                        components.Buttons.Icon("refresh-ccw", on_click=VMInstancesTableState.cache_clear("running")),
+                        tailwind.Buttons.Icon("refresh-ccw", on_click=OrbitLabState.cache_clear("vm_instances")),
                         class_name="flex space-x-4",
                     ),
                     class_name="w-full flex justify-between items-center",

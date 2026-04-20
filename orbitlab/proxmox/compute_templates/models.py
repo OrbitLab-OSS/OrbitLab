@@ -7,7 +7,6 @@ from typing import Annotated
 from pydantic import BaseModel, Field, RootModel
 
 from orbitlab.data_types import OrbitLabApplianceType
-from orbitlab.manifest.serialization import PveBool
 
 
 class ApplianceInfo(BaseModel):
@@ -90,7 +89,11 @@ class StoredAppliances(RootModel[list[StoredAppliance]]):
         return iter([i for i in self.root if not i.is_orbitlab_appliance])
 
     def get_appliance(self, filename: str) -> StoredAppliance:
-        return next(iter([i for i in self.root if filename in i.volid]))
+        appliance = next(iter([i for i in self.root if filename in i.volid]), None)
+        if not appliance:
+            msg = f"Appliance containing '{filename}' not found."
+            raise ValueError(msg)
+        return appliance
 
     def template_exists(self, template: str) -> bool:
         """Check if an appliance template exists in the stored appliances."""
@@ -131,22 +134,6 @@ class StoredImages(RootModel[list[StoredImage]]):
         return bool(next(iter([i for i in self.root if i.image_name == image]), None))
 
 
-class AgentExecStatus(BaseModel):
-    """Represents the execution status of an agent command in Proxmox."""
-
-    exited: PveBool
-    stderr: str = Field(alias="err-data", default="")
-    stdout: str = Field(alias="out-data", default="")
-    exitcode: int | None = None
-    signal: int | None = None
-
-    @property
-    def logs(self) -> list[str]:
-        """Return combined non-empty lines from stdout and stderr as a list of log entries."""
-        formatted_logs = [line for line in self.stdout.split("\n") if line]
-        formatted_logs.extend([line for line in self.stderr.split("\n") if line])
-        return formatted_logs
-
 class VolumeContentInfo(BaseModel):
     """Represents information about the content of a volume in Proxmox storage."""
 
@@ -154,9 +141,3 @@ class VolumeContentInfo(BaseModel):
     path: str
     size: int
     used: int
-
-
-class AgentExecPid(BaseModel):
-    """Represents the process ID of an agent execution in Proxmox."""
-
-    pid: int

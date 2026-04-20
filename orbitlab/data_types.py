@@ -6,12 +6,59 @@ from typing import Literal
 
 from reflex.event import EventCallback, EventHandler, EventSpec
 
-type FrontendEvents = (
-    EventCallback | EventHandler | EventSpec | list[EventCallback | EventHandler | EventSpec] | FunctionType
-)
-type StreamEventData = tuple[bytes, dict[bytes, bytes]]
-type RedisStreamEvent = tuple[bytes, tuple[StreamEventData]]
-type OrbitLabApplianceType = Literal["backplane-dns", "gateway", "datacore", "dockfs", "etcd", "relay"]
+import base64
+import binascii
+from collections.abc import Callable
+from enum import StrEnum
+from ipaddress import IPv4Address
+from typing import Annotated, TypeVar
+
+from pydantic import PlainSerializer, PlainValidator
+
+
+T = TypeVar("T", bound=StrEnum)
+
+
+def _str_list_to_enum(enum: T) -> Callable[[T], list[T]]:
+    """Convert a list of strings to the specified Enums."""
+
+    def wrapped(string_list: str | list) -> list[T]:
+        if not isinstance(string_list, list):
+            string_list = string_list.split(",")
+        return [enum(i) for i in string_list]  # pyright: ignore[reportCallIssue]
+
+    return wrapped
+
+
+def _peer_list_str(peer_list: str) -> list[IPv4Address]:
+    """Convert a comma-separated string of IP addresses to a list of IPv4Address objects."""
+    return [IPv4Address(addr) for addr in peer_list.split(sep=",")]
+
+
+def _serialize_enum_list(enums: list[StrEnum]) -> list[str]:
+    """Serialize a list of Enums to list of strings."""
+    return [enum.value for enum in enums]
+
+
+def _base64_to_str(data: str) -> str:
+    """Decode a base64-encoded string to its original string value."""
+    try:
+        return base64.b64decode(data, validate=True).decode()
+    except binascii.Error:
+        return data
+
+
+def _to_base64(data: str) -> str:
+    """Encode a string to base64."""
+    return base64.b64encode(data.encode()).decode()
+
+
+SerializeEnum = PlainSerializer(lambda v: v.value)
+SerializeEnumList = PlainSerializer(_serialize_enum_list)
+SerializePath = PlainSerializer(lambda v: str(v))
+SerializeIP = PlainSerializer(lambda addr: str(addr))
+SerializeIPList = PlainSerializer(lambda addrs: [str(addr) for addr in addrs])
+
 
 class ManifestKind(StrEnum):
     """Enumeration of possible manifest kinds in OrbitLab."""
@@ -25,6 +72,7 @@ class ManifestKind(StrEnum):
     DATA_CORE = auto()
     NODE = auto()
     SECTOR = auto()
+    DNS = auto()
     LXC = auto()
     VM = auto()
     SECRET = auto()
@@ -192,13 +240,14 @@ class ClusterMode(StrEnum):
 class InitializationStatus(StrEnum):
     """Enumeration of possible initialization states in OrbitLab."""
 
+    UNKNOWN = auto()
     NOT_STARTED = auto()
     RUNNING = auto()
     ABORTED = auto()
     COMPLETE = auto()
 
 
-class SectorState(StrEnum):
+class SectorStatus(StrEnum):
     """Enumeration of possible sector states in OrbitLab."""
 
     PENDING = auto()
@@ -206,9 +255,10 @@ class SectorState(StrEnum):
     DELETING = auto()
 
 
-class WorkflowStatus(StrEnum):
+class TemplateWorkflowStatus(StrEnum):
     """Enumeration of possible workflow statuses for custom appliances in OrbitLab."""
 
+    NEVER_RAN = auto()
     PENDING = auto()
     STARTING = auto()
     RUNNING = auto()
@@ -217,7 +267,7 @@ class WorkflowStatus(StrEnum):
     FAILED = auto()
 
 
-class ComputeState(StrEnum):
+class ComputeStatus(StrEnum):
     """Enumeration of possible Compute States in OrbitLab."""
 
     STARTING = auto()
@@ -228,7 +278,7 @@ class ComputeState(StrEnum):
     TERMINATING = auto()
 
 
-class ComputeStatus(StrEnum):
+class ProxmoxComputeStatus(StrEnum):
     """Enumeration of possible Compute Status requests for Proxmox."""
 
     REBOOT = auto()
@@ -238,29 +288,29 @@ class ComputeStatus(StrEnum):
     TERMINATE = auto()
 
     @classmethod
-    def get_state(cls, status: str | StrEnum) -> ComputeState:
+    def get_state(cls, status: str | StrEnum) -> ComputeStatus:
         """Return the ComputeState corresponding to the given ComputeStatus."""
         if isinstance(status, StrEnum):
             status = status.value
         match status:
             case "reboot":
-                return ComputeState.RESTARTING
+                return ComputeStatus.RESTARTING
             case "start":
-                return ComputeState.STARTING
+                return ComputeStatus.STARTING
             case "stop":
-                return ComputeState.STOPPING
+                return ComputeStatus.STOPPING
             case "shutdown":
-                return ComputeState.STOPPING
+                return ComputeStatus.STOPPING
             case "terminate":
-                return ComputeState.TERMINATING
+                return ComputeStatus.TERMINATING
         raise ValueError
 
 
 class HealthCheckProtocol(StrEnum):
     """Enumeration of possible Health Check Protocols in OrbitLab."""
 
+    AGENT = auto()
     HTTP = auto()
-    HTTPS = auto()
 
 
 class EventStatus(StrEnum):
@@ -269,7 +319,7 @@ class EventStatus(StrEnum):
     FAILED = "failed"
 
 
-class WorkflowState(StrEnum):
+class WorkflowStatus(StrEnum):
     PENDING = auto()
     VALIDATING = auto()
     PROVISIONING = auto()
@@ -284,10 +334,11 @@ class ETCDStatus(StrEnum):
     PENDING = auto()
     DEGRADED = auto()
     AVAILABLE = auto()
+    UPGRADING = auto()
     DELETING = auto()
 
 
-class DockFSState(StrEnum):
+class DockFSStatus(StrEnum):
     PENDING = auto()
     DEGRADED = auto()
     AVAILABLE = auto()
@@ -310,3 +361,22 @@ class DataCoreEvent(StrEnum):
 class DataCoreNodeRole(StrEnum):
     PRIMARY = auto()
     REPLICA = auto()
+
+
+type PveBool = Annotated[bool, PlainValidator(lambda v: v if isinstance(v, bool) else bool(v))]
+type PveContentList = Annotated[
+    list[StorageContentType],
+    PlainValidator(func=_str_list_to_enum(enum=StorageContentType)),
+    SerializeEnumList,
+]
+type PeerList = Annotated[list[IPv4Address], PlainValidator(func=_peer_list_str), SerializeIPList]
+type PveStorageType = Annotated[StorageType, SerializeEnum]
+type CertificateData = Annotated[str, PlainValidator(_base64_to_str), PlainSerializer(_to_base64)]
+type FrontendEvents = (
+    EventCallback | EventHandler | EventSpec | list[EventCallback | EventHandler | EventSpec] | FunctionType
+)
+type StreamEventData = tuple[bytes, dict[bytes, bytes]]
+type RedisStreamEvent = tuple[bytes, tuple[StreamEventData]]
+type EventReturn = EventHandler | EventSpec | list[EventHandler | EventSpec]
+type OrbitLabApplianceType = Literal["backplane-dns", "gateway", "datacore", "dockfs", "etcd", "relay"]
+type ZoneType = Literal["internal", "external"]

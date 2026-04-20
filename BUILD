@@ -6,7 +6,11 @@ python_requirements(
 pex_binary(
     name="reflex",
     entry_point="reflex",
-    dependencies=[":pyproject"]
+    dependencies=[":pyproject"],
+    env={
+        "REFLEX_BACKEND_PORT": "8081",
+        "REFLEX_FRONTEND_PORT": "8080",
+    },
 )
 
 files(name="assets", sources=["assets/*"])
@@ -17,8 +21,8 @@ resource(
 )
 
 pex_binary(
-    name="orbital-relay",
-    entry_point="proxy:main",
+    name="orbital-receiver",
+    entry_point="orbitlab.receiver:launch",
     dependencies=[":pyproject"],
     interpreter_constraints=[">=3.13"]
 )

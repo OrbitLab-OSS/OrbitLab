@@ -4,13 +4,14 @@ from typing import Final
 
 import reflex as rx
 
-from orbitlab.data_types import FrontendEvents
-from orbitlab.manifest.dockfs import DockFsManifest
-from orbitlab.web import components
-from orbitlab.web.utilities import EventGroup, get_worker
+from orbitlab.data_types import FrontendEvents, StorageContentType
+from orbitlab.redis.clients import BackplaneClient, DockFSClient
+from orbitlab.redis.models import DockFSConfig
+from orbitlab.web import tailwind
+from orbitlab.web.global_state import SelectOptions, SelectionDefaults
+from orbitlab.web.utilities import EventGroup, create_workflow
 
-from .models import CreateDockFSform
-from .states import CreateDockFSDialogState, DeleteDockFSDialogState
+from .states import DeleteDockFSDialogState
 
 
 class CreateDockFSDialog(EventGroup):
@@ -20,46 +21,42 @@ class CreateDockFSDialog(EventGroup):
     @rx.event
     async def submit(_: rx.State, form: dict) -> FrontendEvents:
         """Submit the DockFS creation form."""
-        manifest = DockFsManifest.create(form_data=CreateDockFSform.model_validate(form))
-        worker = get_worker()
-        error = await worker.create_workflow(
-            name="dockfs.create",
-            version="v1",
-            payload={"manifest": manifest.name},
+        dock_fs = await DockFSClient().set_dockfs(
+            config=DockFSConfig(
+                id=await DockFSClient().generate_cluster_id(),
+                name=form["name"],
+                virtual_router_id=await BackplaneClient().get_next_available_vrid(),
+                vip=await BackplaneClient().get_next_available_ip(),
+                memory_gb=int(form["memory"]),
+                sockets=int(form["sockets"]),
+                cores=int(form["cores"]),
+                capacity_gb=int(form["capacity_gb"]),
+                storage=form["storage"]
+            )
         )
-        if error:
+        if error := await create_workflow(name="dockfs.create", version="v1", payload={"id": dock_fs.config.id}):
             return rx.toast.error(error)
         return [
-            rx.toast.info(f"Creating {manifest.name}..."),
-            CreateDockFSDialog.close,
+            rx.toast.info(f"Creating {dock_fs.config.name}..."),
+            tailwind.Dialog.close(CreateDockFSDialog.dialog_id),
         ]
-
-    @staticmethod
-    @rx.event
-    async def close(state: CreateDockFSDialogState) -> FrontendEvents:
-        """Close the dialog."""
-        state.reset()
-        return components.Dialog.close(CreateDockFSDialog.dialog_id)
-
-    @staticmethod
-    @rx.event
-    async def open(_: rx.State) -> FrontendEvents:
-        """Open the dialog."""
-        return components.Dialog.open(CreateDockFSDialog.dialog_id)
 
     dialog_id: Final = "create-dockfs-cluster-dialog"
     form_id: Final = "create-dockfs-cluster-form"
 
     def __new__(cls) -> rx.Component:
         """Create and return the dialog."""
-        return components.Dialog(
+        storage_options = SelectOptions.node_storage_options.get(
+            SelectionDefaults.default_node, default={},
+        ).to(dict).get(StorageContentType.IMAGES, []).to(list[str])
+        return tailwind.Dialog(
             "Create DockFS",
             rx.el.form(
-                components.FieldSet(
+                tailwind.FieldSet(
                     "DockFS Configuration",
-                    components.FieldSet.Field(
+                    tailwind.FieldSet.Field(
                         "Name: ",
-                        components.Input(
+                        tailwind.Input(
                             placeholder="My Media",
                             min="1",
                             max="128",
@@ -71,22 +68,10 @@ class CreateDockFSDialog(EventGroup):
                             class_name="w-full",
                         ),
                     ),
-                    components.FieldSet.Field(
-                        "Disk Store: ",
-                        components.Select(
-                            CreateDockFSDialogState.available_disk_storages,
-                            default_value=CreateDockFSDialogState.disk_storage,
-                            placeholder="Select Storage",
-                            form=cls.form_id,
-                            name="storage",
-                            required=True,
-                            class_name="w-full",
-                        ),
-                    ),
-                    components.FieldSet.Field(
+                    tailwind.FieldSet.Field(
                         "Storage Capacity (Gb): ",
-                        components.Slider(
-                            default_value=CreateDockFSDialogState.capacity_gb,
+                        tailwind.Slider(
+                            default_value=100,
                             min=100,
                             max=2000,
                             step=50,
@@ -96,12 +81,24 @@ class CreateDockFSDialog(EventGroup):
                         ),
                     ),
                 ),
-                components.FieldSet(
+                tailwind.FieldSet(
                     "Machine Configuration",
-                    components.FieldSet.Field(
+                    tailwind.FieldSet.Field(
+                        "Storage: ",
+                        tailwind.Select(
+                            storage_options,
+                            default_value=SelectionDefaults.default_images_storage,
+                            placeholder="Select Storage",
+                            form=cls.form_id,
+                            name="storage",
+                            required=True,
+                            class_name="w-full",
+                        ),
+                    ),
+                    tailwind.FieldSet.Field(
                         "Cores: ",
-                        components.Slider(
-                            default_value=CreateDockFSDialogState.cores,
+                        tailwind.Slider(
+                            default_value=2,
                             min=1,
                             max=12,
                             form=cls.form_id,
@@ -109,10 +106,10 @@ class CreateDockFSDialog(EventGroup):
                             required=True,
                         ),
                     ),
-                    components.FieldSet.Field(
+                    tailwind.FieldSet.Field(
                         "Sockets: ",
-                        components.Slider(
-                            default_value=CreateDockFSDialogState.sockets,
+                        tailwind.Slider(
+                            default_value=1,
                             min=1,
                             max=2,
                             form=cls.form_id,
@@ -120,10 +117,10 @@ class CreateDockFSDialog(EventGroup):
                             required=True,
                         ),
                     ),
-                    components.FieldSet.Field(
+                    tailwind.FieldSet.Field(
                         "Memory (GiB): ",
-                        components.Slider(
-                            default_value=CreateDockFSDialogState.memory_gb,
+                        tailwind.Slider(
+                            default_value=2,
                             min=1,
                             max=12,
                             form=cls.form_id,
@@ -136,8 +133,8 @@ class CreateDockFSDialog(EventGroup):
                 on_submit=cls.submit,
             ),
             rx.el.div(
-                components.Buttons.Secondary("Close", on_click=CreateDockFSDialog.close),
-                components.Buttons.Primary("Submit", form=cls.form_id),
+                tailwind.Buttons.Secondary("Close", on_click=tailwind.Dialog.close(CreateDockFSDialog.dialog_id)),
+                tailwind.Buttons.Primary("Submit", form=cls.form_id),
                 class_name="w-full flex space-x-3 items-center justify-end",
             ),
             dialog_id=cls.dialog_id,
@@ -154,7 +151,7 @@ class DeleteDockFSDialog(EventGroup):
         """Set DockFS name to delete and open dialog."""
         state.reset()
         state.name = name
-        return components.Dialog.open(DeleteDockFSDialog.dialog_id)
+        return tailwind.Dialog.open(DeleteDockFSDialog.dialog_id)
 
     @staticmethod
     @rx.event
@@ -166,13 +163,7 @@ class DeleteDockFSDialog(EventGroup):
     @rx.event
     async def delete(state: DeleteDockFSDialogState) -> FrontendEvents:
         """Delete a custom appliance from Proxmox and remove its manifest."""
-        worker = get_worker()
-        error = await worker.create_workflow(
-            name="dockfs.delete",
-            version="v1",
-            payload={"manifest": state.name},
-        )
-        if error:
+        if error := await create_workflow(name="dockfs.delete", version="v1", payload={"manifest": state.name}):
             return rx.toast.error(error)
         return [
             DeleteDockFSDialog.close,
@@ -184,13 +175,13 @@ class DeleteDockFSDialog(EventGroup):
     async def close(state: DeleteDockFSDialogState) -> FrontendEvents:
         """Cancel custom appliance deletion and close the dialog."""
         state.reset()
-        return components.Dialog.close(DeleteDockFSDialog.dialog_id)
+        return tailwind.Dialog.close(DeleteDockFSDialog.dialog_id)
 
     dialog_id: Final = "confirm-delete-dockfs-dialog"
 
     def __new__(cls) -> rx.Component:
         """Create and return dialog component."""
-        return components.Dialog(
+        return tailwind.Dialog(
             f"Delete {DeleteDockFSDialogState.name}",
             rx.el.div(
                 rx.text(
@@ -205,13 +196,13 @@ class DeleteDockFSDialog(EventGroup):
                 rx.text("If you are sure you want to delete this DockFS, type its name below."),
                 class_name="w-full flex-col space-y-6 my-8",
             ),
-            components.Input(
+            tailwind.Input(
                 placeholder=DeleteDockFSDialogState.name,
                 on_change=cls.update_confirmation,
             ),
             rx.el.div(
-                components.Buttons.Secondary("Cancel", on_click=cls.close),
-                components.Buttons.Primary(
+                tailwind.Buttons.Secondary("Cancel", on_click=cls.close),
+                tailwind.Buttons.Primary(
                     "Delete",
                     disabled=DeleteDockFSDialogState.delete_disabled,
                     on_click=cls.delete,

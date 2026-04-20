@@ -2,7 +2,7 @@
 
 import reflex as rx
 
-from orbitlab.web import components
+from orbitlab.web import tailwind
 
 from .dialogs import CreateDockFSDialog, DeleteDockFSDialog
 from orbitlab.web.layout import orbitlab_page
@@ -15,9 +15,9 @@ from .tables import DockFSTable
 def dockfs_dashboard() -> rx.Component:
     """DockFS Dashboard Page."""
     return rx.el.div(
-        components.PageHeader(
+        tailwind.PageHeader(
             "DockFS Clusters",
-            components.Buttons.Primary("Create DockFS", icon="plus", on_click=CreateDockFSDialog.open),
+            tailwind.Buttons.Primary("Create DockFS", icon="plus", on_click=tailwind.Dialog.open(CreateDockFSDialog.dialog_id)),
         ),
         DockFSTable(),
         CreateDockFSDialog(),

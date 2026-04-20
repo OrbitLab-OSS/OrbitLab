@@ -4,73 +4,69 @@ from typing import Final
 
 import reflex as rx
 
-from orbitlab.data_types import ComputeStatus, FrontendEvents
-from orbitlab.manifest.compute_instances.lxc import LXCManifest
-from orbitlab.web import components
-from orbitlab.web.defaults import ClusterDefaults
-from orbitlab.web.utilities import EventGroup, get_worker
+from orbitlab.data_types import ProxmoxComputeStatus, FrontendEvents
+from orbitlab.redis.clients import ApplianceClient, LXCClient, SecretsClient, SectorClient
+from orbitlab.redis.models import LXCInstanceConfig
+from orbitlab.web import tailwind
+from orbitlab.web.utilities import EventGroup, create_workflow
 
-from .models import CreateLXCForm
 from .progress_panels import GeneralConfigurationPanel, ReviewPanel
-from .states import LaunchLXCState, LXCInstancesTableState
+from .states import LaunchLXCInstanceDialogState, LXCInstancesTableState
 
 
-class LaunchApplianceDialog(EventGroup):
+class LaunchLXCInstanceDialog(EventGroup):
     """Dialog for launching LXC appliances."""
 
     @staticmethod
     @rx.event
-    async def open(state: LaunchLXCState) -> FrontendEvents:
-        """Set the default node and open the dialog."""
-        state.reset()
-        state.node = await state.get_var_value(ClusterDefaults.proxmox_node)
-        return components.Dialog.open(LaunchApplianceDialog.dialog_id)
-
-    @staticmethod
-    @rx.event
-    async def validate_general(state: LaunchLXCState, form: dict) -> FrontendEvents:
+    async def update_form_data(state: LaunchLXCInstanceDialogState, form: dict) -> FrontendEvents:
         """Update the form data with new values and proceed to the next step in the progress panel."""
-        form["memory"] = int(form["memory"])
-        form["swap"] = int(form["swap"])
-        form["cores"] = int(form["cores"])
-        form["disk_size"] = int(form["disk_size"])
         state.form_data.update(form)
-        return components.ProgressPanels.next(LaunchApplianceDialog.progress_id)
+        return tailwind.ProgressPanels.next(LaunchLXCInstanceDialog.progress_id)
 
     @staticmethod
     @rx.event
-    async def validate_network(state: LaunchLXCState, form: dict) -> FrontendEvents:
-        """Validate network configuration and proceed to the next step in the progress panel."""
-        state.form_data.update(form)
-        return components.ProgressPanels.next(LaunchApplianceDialog.progress_id)
-
-    @staticmethod
-    @rx.event
-    async def create_lxc(state: LaunchLXCState, form: dict) -> FrontendEvents:
+    async def create_lxc(state: LaunchLXCInstanceDialogState, form: dict) -> FrontendEvents:
         """Create the custom appliance with the configured settings and workflow steps."""
         state.form_data.update(form)
-        manifest = LXCManifest.create(form_data=CreateLXCForm.model_validate(state.form_data))
-        worker = get_worker()
-        error = await worker.create_workflow(
-            name="lxc.create",
-            version="v1",
-            payload={"manifest": manifest.name},
+        client = LXCClient()
+        
+        instance_id = await client.generate_instance_id()
+        sector = await SectorClient().get(id=state.form_data["sector"])
+        volume_id = await ApplianceClient().get_volume_id(id=state.form_data["appliance"])
+        
+        await SecretsClient().create_lxc_password(lxc_id=instance_id, password=state.form_data.get("password", ""))
+        await client.set_instance(
+            config=LXCInstanceConfig(
+                id=instance_id,
+                appliance_id=state.form_data["appliance"],
+                volume_id=volume_id,
+                storage=state.form_data["storage"],
+                sector=sector.config.id,
+                sector_name=sector.config.alias,
+                disk_size=int(state.form_data["disk_size"]),
+                memory=int(state.form_data["memory"]),
+                swap=int(state.form_data["swap"]),
+                cores=int(state.form_data["cores"]),
+                nfs=bool(state.form_data.get("nfs") == "on"),
+                node=state.form_data["node"],
+            )
         )
-        if error:
+        if error := await create_workflow(name="lxc.create", version="v1", payload={"id": instance_id}):
             return rx.toast.error(error)
         return [
-            rx.toast.info(f"Launching {manifest.name}..."),
-            LaunchApplianceDialog.close,
+            rx.toast.info(f"Launching {instance_id}..."),
+            LaunchLXCInstanceDialog.close,
         ]
 
     @staticmethod
     @rx.event
-    async def close(state: LaunchLXCState) -> FrontendEvents:
+    async def close(state: LaunchLXCInstanceDialogState) -> FrontendEvents:
         """Cancel the appliance creation process and reset the dialog state."""
         state.reset()
         return [
-            components.Dialog.close(LaunchApplianceDialog.dialog_id),
-            components.ProgressPanels.reset(LaunchApplianceDialog.progress_id),
+            tailwind.Dialog.close(LaunchLXCInstanceDialog.dialog_id),
+            tailwind.ProgressPanels.reset(LaunchLXCInstanceDialog.progress_id),
         ]
 
     dialog_id: Final = "launch-appliance-dialog"
@@ -78,20 +74,20 @@ class LaunchApplianceDialog(EventGroup):
 
     def __new__(cls) -> rx.Component:
         """Create and return the dialog."""
-        return components.Dialog(
+        return tailwind.Dialog(
             "Create LXC Instance",
-            components.ProgressPanels(
-                components.ProgressPanels.Step(
+            tailwind.ProgressPanels(
+                tailwind.ProgressPanels.Step(
                     "General Configuration",
                     GeneralConfigurationPanel(),
-                    validate=cls.validate_general,
+                    validate=cls.update_form_data,
                 ),
-                components.ProgressPanels.Step(
+                tailwind.ProgressPanels.Step(
                     "Review & Verify",
                     ReviewPanel(),
                     validate=cls.create_lxc,
                 ),
-                cancel_button=components.Buttons.Secondary("Cancel", on_click=cls.close),
+                cancel_button=tailwind.Buttons.Secondary("Cancel", on_click=cls.close),
                 progress_id=cls.progress_id,
             ),
             dialog_id=cls.dialog_id,
@@ -107,19 +103,14 @@ class TerminateLXCInstanceDialog(EventGroup):
     async def confirm(state: LXCInstancesTableState, instance_id: str) -> FrontendEvents:
         """Set the instance ID to terminate and open the dialog."""
         state.instance_to_terminate = instance_id
-        return components.Dialog.open(TerminateLXCInstanceDialog.dialog_id)
+        return tailwind.Dialog.open(TerminateLXCInstanceDialog.dialog_id)
 
     @staticmethod
     @rx.event
     async def terminate(state: LXCInstancesTableState) -> None:
         """Update the status of an LXC container and trigger backend and frontend updates."""
-        worker = get_worker()
-        error = await worker.create_workflow(
-            name="lxc.state-change",
-            version="v1",
-            payload={"manifest": state.instance_to_terminate, "desired_status": ComputeStatus.TERMINATE},
-        )
-        if error:
+        payload = {"id": state.instance_to_terminate, "desired_status": ProxmoxComputeStatus.TERMINATE}
+        if error := await create_workflow(name="lxc.state-change", version="v1", payload=payload):
             return rx.toast.error(error)
         return [
             rx.toast.info(f"Terminating {state.instance_to_terminate}..."),
@@ -131,13 +122,13 @@ class TerminateLXCInstanceDialog(EventGroup):
     async def close(state: LXCInstancesTableState) -> FrontendEvents:
         """Cancel terminating the instance."""
         state.instance_to_terminate = ""
-        return components.Dialog.close(TerminateLXCInstanceDialog.dialog_id)
+        return tailwind.Dialog.close(TerminateLXCInstanceDialog.dialog_id)
 
     dialog_id: Final = "terminate-lxc-instance-dialog"
 
     def __new__(cls) -> rx.Component:
         """Create and return the dialog."""
-        return components.Dialog(
+        return tailwind.Dialog(
             "Terminate LXC Instance",
             rx.el.div(
                 rx.text(
@@ -148,8 +139,8 @@ class TerminateLXCInstanceDialog(EventGroup):
                 class_name="w-full flex-col space-y-6 my-8",
             ),
             rx.el.div(
-                components.Buttons.Secondary("Cancel", on_click=cls.close),
-                components.Buttons.Primary("Confirm", on_click=cls.terminate),
+                tailwind.Buttons.Secondary("Cancel", on_click=cls.close),
+                tailwind.Buttons.Primary("Confirm", on_click=cls.terminate),
                 class_name="w-full flex justify-end space-x-4 my-8",
             ),
             dialog_id=cls.dialog_id,

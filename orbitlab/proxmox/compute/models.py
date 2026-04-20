@@ -29,16 +29,15 @@ class VendoredImage(BaseModel):
         build_date, _ = build_date_and_filetype.split(".")
         return build_date
 
-    def download_params(self) -> dict[str, str]:
-        """Return the download parameters for this image."""
-        checksum_algorithm, checksum = self.digest.split(":")
-        return {
-            "content": "import",
-            "url": self.browser_download_url,
-            "filename": self.filename,
-            "checksum": checksum,
-            "checksum-algorithm": checksum_algorithm,
-        }
+    @property
+    def checksum(self) -> str:
+        _, checksum = self.digest.split(":")
+        return checksum
+
+    @property
+    def checksum_algorithm(self) -> str:
+        checksum_algorithm, _ = self.digest.split(":")
+        return checksum_algorithm
 
 
 class VendoredImages(BaseModel):
@@ -136,18 +135,15 @@ class VMVolume(BaseModel):
         )
 
 
-class QemuConfig(BaseModel):
-    """Represents QEMU configuration for a compute instance."""
+class ProxmoxPool(BaseModel):
+    pool_id: str = Field(alias="poolid")
+    comment: str
 
-    agent: str
-    scsi0: str
 
-    @property
-    def agent_enabled(self) -> bool:
-        """If the Qemu Guest Agent is enabled on the VM."""
-        return self.agent == "enabled=1"
+class ProxmoxPools(RootModel[list[ProxmoxPool]]):
+    
+    def get_pool_by_alias(self, alias: str) -> ProxmoxPool | None:
+        return next(iter([pool for pool in self.root if pool.comment == alias]), None)
 
-    @property
-    def root_volume_id(self) -> str:
-        volume_id, _ = self.scsi0.split(",")
-        return volume_id
+    def get_pool_by_id(self, pool_id: str) -> ProxmoxPool | None:
+        return next(iter([pool for pool in self.root if pool.pool_id == pool_id]), None)

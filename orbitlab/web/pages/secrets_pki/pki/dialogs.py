@@ -6,14 +6,11 @@ from typing import Final
 import reflex as rx
 
 from orbitlab.data_types import FrontendEvents, KeyUsageTypes
-from orbitlab.manifest.pki import (
-    IntermediateCertificateManifest,
-    LeafCertificateManifest,
-    RootCertificateManifest,
-    Subject,
-)
-from orbitlab.web import components
-from orbitlab.web.utilities import EventGroup, custom_download, get_worker
+from orbitlab.redis.clients import PKIClient
+from orbitlab.redis.models import Subject
+from orbitlab.web import tailwind
+from orbitlab.web.global_state import OrbitLabState
+from orbitlab.web.utilities import EventGroup, custom_download
 
 from .states import (
     IntermediateCertificatesState,
@@ -29,9 +26,9 @@ class CreateRootCertificateDialog(EventGroup):
 
     @staticmethod
     @rx.event
-    async def create_certificate_authority(_: rx.State, form: dict) -> FrontendEvents:
+    async def create_certificate_authority(state: OrbitLabState, form: dict) -> FrontendEvents:
         """Create a new certificate authority from form data."""
-        manifest = RootCertificateManifest.create(
+        cert = await PKIClient().create_certificate_authority(
             subject=Subject(
                 common_name=form["common_name"],
                 org=form["org"],
@@ -40,19 +37,12 @@ class CreateRootCertificateDialog(EventGroup):
                 state_or_province=form["state_or_province"],
                 locality=form["locality"],
             ),
-            key_usage=[KeyUsageTypes(usage) for usage in json.loads(form["key_usage"])],
+            key_usage=[KeyUsageTypes(usage) for usage in json.loads(form["key_usage"])]
         )
-        worker = get_worker()
-        error = await worker.create_workflow(
-            name="pki.create-root",
-            version="v1",
-            payload={"manifest": manifest.name},
-        )
-        if error:
-            return rx.toast.error(error)
+        state.root_certificates.append(cert)
         return [
-            rx.toast.info(f"Creating {form['common_name']}..."),
-            components.Dialog.close(CreateRootCertificateDialog.dialog_id),
+            rx.toast.success(f"Created {form['common_name']}!"),
+            tailwind.Dialog.close(CreateRootCertificateDialog.dialog_id),
         ]
 
     dialog_id: Final = "create-certificate-authority-dialog"
@@ -60,14 +50,14 @@ class CreateRootCertificateDialog(EventGroup):
 
     def __new__(cls) -> rx.Component:
         """Create and return the dialog component."""
-        return components.Dialog(
+        return tailwind.Dialog(
             "Create Certificate Authority",
             rx.el.form(
-                components.FieldSet(
+                tailwind.FieldSet(
                     "Subject",
-                    components.FieldSet.Field(
+                    tailwind.FieldSet.Field(
                         "Common Name: ",
-                        components.Input(
+                        tailwind.Input(
                             placeholder="My Root CA 1",
                             pattern=r"[A-Za-z0-9_.\-\* ]{1,64}(?:\.[A-Za-z0-9_.\-\* ]{1,64})*",
                             auto_complete="root-ca-common-name",
@@ -77,9 +67,9 @@ class CreateRootCertificateDialog(EventGroup):
                             class_name="w-full"
                         ),
                     ),
-                    components.FieldSet.Field(
+                    tailwind.FieldSet.Field(
                         "Organization: ",
-                        components.Input(
+                        tailwind.Input(
                             placeholder="My Org",
                             pattern=r"[A-Za-z0-9 .,'()\-_/&]{1,128}",
                             form=cls.form_id,
@@ -88,9 +78,9 @@ class CreateRootCertificateDialog(EventGroup):
                             class_name="w-full"
                         ),
                     ),
-                    components.FieldSet.Field(
+                    tailwind.FieldSet.Field(
                         "Organizational Unit: ",
-                        components.Input(
+                        tailwind.Input(
                             placeholder="My Team",
                             pattern=r"[A-Za-z0-9 .,'()\-_/&]{1,128}",
                             form=cls.form_id,
@@ -99,9 +89,9 @@ class CreateRootCertificateDialog(EventGroup):
                             class_name="w-full"
                         ),
                     ),
-                    components.FieldSet.Field(
+                    tailwind.FieldSet.Field(
                         "Country Code (XX): ",
-                        components.Input(
+                        tailwind.Input(
                             placeholder="US",
                             pattern=r"[A-Z]{2}",
                             form=cls.form_id,
@@ -110,9 +100,9 @@ class CreateRootCertificateDialog(EventGroup):
                             class_name="w-full"
                         ),
                     ),
-                    components.FieldSet.Field(
+                    tailwind.FieldSet.Field(
                         "State or Province: ",
-                        components.Input(
+                        tailwind.Input(
                             placeholder="Somewhere",
                             pattern=r"[A-Za-z0-9 .,'()\-_/&]{1,128}",
                             form=cls.form_id,
@@ -121,9 +111,9 @@ class CreateRootCertificateDialog(EventGroup):
                             class_name="w-full"
                         ),
                     ),
-                    components.FieldSet.Field(
+                    tailwind.FieldSet.Field(
                         "Locality: ",
-                        components.Input(
+                        tailwind.Input(
                             placeholder="Someplace",
                             pattern=r"[A-Za-z0-9 .,'()\-_/&]{1,128}",
                             form=cls.form_id,
@@ -133,20 +123,20 @@ class CreateRootCertificateDialog(EventGroup):
                         ),
                     ),
                 ),
-                components.FieldSet(
+                tailwind.FieldSet(
                     "Key Usage",
-                    components.FieldSet.Field(
+                    tailwind.FieldSet.Field(
                         "Select All That Apply: ",
-                        components.CheckboxGroup(
-                            components.CheckboxGroup.Item("Digital Signature", "digital_signature"),
-                            components.CheckboxGroup.Item("Key Encipherment", "key_encipherment"),
-                            components.CheckboxGroup.Item("Certificate Signing", "key_cert_sign"),
-                            components.CheckboxGroup.Item("Data Encipherment", "data_encipherment"),
-                            components.CheckboxGroup.Item("CRL Signing", "crl_sign"),
-                            components.CheckboxGroup.Item("Content Commitment", "content_commitment"),
-                            components.CheckboxGroup.Item("Key Agreement", "key_agreement"),
-                            components.CheckboxGroup.Item("Encipher Only", "encipher_only"),
-                            components.CheckboxGroup.Item("Decipher Only", "decipher_only"),
+                        tailwind.CheckboxGroup(
+                            tailwind.CheckboxGroup.Item("Digital Signature", "digital_signature"),
+                            tailwind.CheckboxGroup.Item("Key Encipherment", "key_encipherment"),
+                            tailwind.CheckboxGroup.Item("Certificate Signing", "key_cert_sign"),
+                            tailwind.CheckboxGroup.Item("Data Encipherment", "data_encipherment"),
+                            tailwind.CheckboxGroup.Item("CRL Signing", "crl_sign"),
+                            tailwind.CheckboxGroup.Item("Content Commitment", "content_commitment"),
+                            tailwind.CheckboxGroup.Item("Key Agreement", "key_agreement"),
+                            tailwind.CheckboxGroup.Item("Encipher Only", "encipher_only"),
+                            tailwind.CheckboxGroup.Item("Decipher Only", "decipher_only"),
                             form=cls.form_id,
                             name="key_usage",
                             required=True,
@@ -158,8 +148,8 @@ class CreateRootCertificateDialog(EventGroup):
                 class_name="px-3 overflow-y-auto",
             ),
             rx.el.div(
-                components.Buttons.Secondary("Cancel", on_click=lambda: components.Dialog.close(cls.dialog_id)),
-                components.Buttons.Primary("Submit", form=cls.form_id),
+                tailwind.Buttons.Secondary("Cancel", on_click=lambda: tailwind.Dialog.close(cls.dialog_id)),
+                tailwind.Buttons.Primary("Submit", form=cls.form_id),
                 class_name="w-full flex justify-end mt-4 space-x-3 my-8",
             ),
             dialog_id=cls.dialog_id,
@@ -174,17 +164,10 @@ class DeleteRootCertificateDialog(EventGroup):
     @rx.event
     async def delete(state: ManageRootCertificateState) -> FrontendEvents:
         """Delete the certificate authority and close related dialogs."""
-        worker = get_worker()
-        error = await worker.create_workflow(
-            name="pki.delete",
-            version="v1",
-            payload={"manifest": state.id},
-        )
-        if error:
-            return rx.toast.error(error)
+        await PKIClient().delete_root_certificate(common_name=state.common_name)
         return [
-            rx.toast.info(f"Deleting {state.common_name}..."),
-            components.Dialog.close(ManageRootCertificateDialog.dialog_id),
+            rx.toast.success(f"Deleted {state.common_name}!"),
+            tailwind.Dialog.close(ManageRootCertificateDialog.dialog_id),
             DeleteRootCertificateDialog.close,
         ]
 
@@ -193,7 +176,7 @@ class DeleteRootCertificateDialog(EventGroup):
     async def close(state: ManageRootCertificateState) -> FrontendEvents:
         """Cancel the certificate authority deletion process."""
         state.reset()
-        return components.Dialog.close(DeleteRootCertificateDialog.dialog_id)
+        return tailwind.Dialog.close(DeleteRootCertificateDialog.dialog_id)
 
     @staticmethod
     @rx.event
@@ -208,7 +191,7 @@ class DeleteRootCertificateDialog(EventGroup):
 
     def __new__(cls) -> rx.Component:
         """Create and return dialog component."""
-        return components.Dialog(
+        return tailwind.Dialog(
             f"Revoke {ManageRootCertificateState.common_name}",
             rx.el.div(
                 rx.text(
@@ -222,13 +205,13 @@ class DeleteRootCertificateDialog(EventGroup):
                 ),
                 class_name="w-full flex-col space-y-6 my-8",
             ),
-            components.Input(
+            tailwind.Input(
                 placeholder=ManageRootCertificateState.common_name,
                 on_change=cls.ensure_ca_names_match,
             ),
             rx.el.div(
-                components.Buttons.Secondary("Cancel", on_click=cls.close),
-                components.Buttons.Primary(
+                tailwind.Buttons.Secondary("Cancel", on_click=cls.close),
+                tailwind.Buttons.Primary(
                     "Confirm",
                     disabled=ManageRootCertificateState.delete_disabled,
                     on_click=cls.delete,
@@ -245,25 +228,25 @@ class ManageRootCertificateDialog(EventGroup):
 
     @staticmethod
     @rx.event
-    async def manage(state: ManageRootCertificateState, name: str) -> FrontendEvents:
+    async def manage(state: ManageRootCertificateState, common_name: str) -> FrontendEvents:
         """Load and display the root certificate management dialog."""
-        state.manifest = RootCertificateManifest.load(name=name)
-        return components.Dialog.open(ManageRootCertificateDialog.dialog_id)
+        state.cert = await PKIClient().get_root_certificate(common_name=common_name)
+        return tailwind.Dialog.open(ManageRootCertificateDialog.dialog_id)
 
     dialog_id: Final = "manage-certificate-authority-dialog"
 
     def __new__(cls) -> rx.Component:
         """Create and return dialog component."""
-        return components.Dialog(
+        return tailwind.Dialog(
             f"Manage {ManageRootCertificateState.common_name}",
             rx.el.div(
                 rx.el.div(
-                    components.Menu(
-                        components.Buttons.Primary(
+                    tailwind.Menu(
+                        tailwind.Buttons.Primary(
                             "Manage Certificate",
                             icon="chevron-down",
                         ),
-                        components.Menu.Item(
+                        tailwind.Menu.Item(
                             "Download Certificate",
                             on_click=custom_download(
                                 data=ManageRootCertificateState.certificate_data,
@@ -271,16 +254,16 @@ class ManageRootCertificateDialog(EventGroup):
                                 mime_type="application/x-pem-file",
                             ),
                         ),
-                        components.Menu.Separator(),
-                        components.Menu.Item(
+                        tailwind.Menu.Separator(),
+                        tailwind.Menu.Item(
                             "Delete",
-                            on_click=components.Dialog.open(DeleteRootCertificateDialog.dialog_id),
+                            on_click=tailwind.Dialog.open(DeleteRootCertificateDialog.dialog_id),
                             class_name="text-red-400 hover:text-red-500 hover:bg-red-500/10 hover:border-red-500/50",
                         ),
                     ),
-                    components.Buttons.Secondary(
+                    tailwind.Buttons.Secondary(
                         "Close",
-                        on_click=components.Dialog.close(cls.dialog_id),
+                        on_click=tailwind.Dialog.close(cls.dialog_id),
                     ),
                     class_name="w-full flex justify-end space-x-4 my-4",
                 ),
@@ -335,7 +318,7 @@ class ManageRootCertificateDialog(EventGroup):
                             rx.data_list.value(
                                 rx.foreach(
                                     ManageRootCertificateState.key_usage,
-                                    lambda usage: components.Badge(usage, color_scheme="blue"),
+                                    lambda usage: tailwind.Badge(usage, color_scheme="blue"),
                                 ),
                                 class_name="flex-wrap",
                             ),
@@ -355,27 +338,17 @@ class CreateIntermediateCADialog(EventGroup):
 
     @staticmethod
     @rx.event
-    async def create_intermediate_ca(_: rx.State, form: dict) -> FrontendEvents:
+    async def create_intermediate_ca(state: OrbitLabState, form: dict) -> FrontendEvents:
         """Create a new intermediate certificate authority from form data."""
-        root_manifest = RootCertificateManifest.load(name=form["root_ca"])
-        subject = root_manifest.spec.subject
-        subject.common_name = form["common_name"]
-        manifest = IntermediateCertificateManifest.create(
-            subject=subject,
-            root_ca=form["root_ca"],
+        cert = await PKIClient().create_intermediate_certificate(
+            common_name=form["common_name"],
+            root_ca_common_name=form["root_ca"],
             domain_constraint=form["domain_constraint"],
         )
-        worker = get_worker()
-        error = await worker.create_workflow(
-            name="pki.create-intermediate",
-            version="v1",
-            payload={"manifest": manifest.name},
-        )
-        if error:
-            return rx.toast.error(error)
+        state.intermediate_certificates.append(cert)
         return [
-            rx.toast.info(f"Creating {form['common_name']}..."),
-            components.Dialog.close(CreateIntermediateCADialog.dialog_id),
+            rx.toast.success(f"Created {form['common_name']}!"),
+            tailwind.Dialog.close(CreateIntermediateCADialog.dialog_id),
         ]
 
     dialog_id: Final = "create-intermediate-ca-dialog"
@@ -383,7 +356,7 @@ class CreateIntermediateCADialog(EventGroup):
 
     def __new__(cls) -> rx.Component:
         """Create and return the dialog component."""
-        return components.Dialog(
+        return tailwind.Dialog(
             "Create Intermediate Signing Certificate",
             rx.el.form(
                 rx.el.p(
@@ -394,11 +367,11 @@ class CreateIntermediateCADialog(EventGroup):
                     ),
                     class_name="my-6",
                 ),
-                components.FieldSet(
+                tailwind.FieldSet(
                     "Signing Certificate Configuration",
-                    components.FieldSet.Field(
+                    tailwind.FieldSet.Field(
                         "Common Name: ",
-                        components.Input(
+                        tailwind.Input(
                             placeholder="My Intermediate CA 1",
                             pattern=r"[A-Za-z0-9_.\-\* ]{1,64}(?:\.[A-Za-z0-9_.\-\* ]{1,64})*",
                             auto_complete="intermediate-ca-common-name",
@@ -408,9 +381,9 @@ class CreateIntermediateCADialog(EventGroup):
                             class_name="w-full"
                         ),
                     ),
-                    components.FieldSet.Field(
+                    tailwind.FieldSet.Field(
                         "Root CA: ",
-                        components.Select(
+                        tailwind.Select(
                             RootCertificatesState.select_options,
                             placeholder="Select Root CA",
                             form=cls.form_id,
@@ -419,9 +392,9 @@ class CreateIntermediateCADialog(EventGroup):
                             class_name="w-full"
                         ),
                     ),
-                    components.FieldSet.Field(
+                    tailwind.FieldSet.Field(
                         "Domain Constraint: ",
-                        components.Input(
+                        tailwind.Input(
                             placeholder="example.com",
                             pattern=r"(?:[A-Za-z0-9](?:[A-Za-z0-9\-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z]{2,}",
                             form=cls.form_id,
@@ -436,8 +409,8 @@ class CreateIntermediateCADialog(EventGroup):
                 class_name="px-3 overflow-y-auto",
             ),
             rx.el.div(
-                components.Buttons.Secondary("Cancel", on_click=lambda: components.Dialog.close(cls.dialog_id)),
-                components.Buttons.Primary("Submit", form=cls.form_id),
+                tailwind.Buttons.Secondary("Cancel", on_click=lambda: tailwind.Dialog.close(cls.dialog_id)),
+                tailwind.Buttons.Primary("Submit", form=cls.form_id),
                 class_name="w-full flex justify-end mt-4 space-x-3",
             ),
             dialog_id=cls.dialog_id,
@@ -453,7 +426,7 @@ class DeleteIntermediateCertificateDialog(EventGroup):
     async def close(state: ManageIntermediateCertificateState) -> FrontendEvents:
         """Cancel the intermediate certificate authority deletion process."""
         state.reset()
-        return components.Dialog.close(DeleteIntermediateCertificateDialog.dialog_id)
+        return tailwind.Dialog.close(DeleteIntermediateCertificateDialog.dialog_id)
 
     @staticmethod
     @rx.event
@@ -468,17 +441,10 @@ class DeleteIntermediateCertificateDialog(EventGroup):
     @rx.event
     async def delete(state: ManageIntermediateCertificateState) -> FrontendEvents:
         """Delete the intermediate certificate authority and close related dialogs."""
-        worker = get_worker()
-        error = await worker.create_workflow(
-            name="pki.delete",
-            version="v1",
-            payload={"manifest": state.id},
-        )
-        if error:
-            return rx.toast.error(error)
+        await PKIClient().delete_intermediate_certificate(common_name=state.common_name)
         return [
-            rx.toast.info(f"Deleting {state.common_name}..."),
-            components.Dialog.close(ManageIntermediateCertDialog.dialog_id),
+            rx.toast.success(f"Deleted {state.common_name}!"),
+            tailwind.Dialog.close(ManageIntermediateCertDialog.dialog_id),
             DeleteIntermediateCertificateDialog.close,
         ]
 
@@ -486,7 +452,7 @@ class DeleteIntermediateCertificateDialog(EventGroup):
 
     def __new__(cls) -> rx.Component:
         """Create and return the dialog component."""
-        return components.Dialog(
+        return tailwind.Dialog(
             f"Delete {ManageIntermediateCertificateState.common_name}",
             rx.el.div(
                 rx.text(
@@ -500,13 +466,13 @@ class DeleteIntermediateCertificateDialog(EventGroup):
                 ),
                 class_name="w-full flex-col space-y-6 my-8",
             ),
-            components.Input(
+            tailwind.Input(
                 placeholder=ManageIntermediateCertificateState.common_name,
                 on_change=cls.ensure_ica_names_match,
             ),
             rx.el.div(
-                components.Buttons.Secondary("Cancel", on_click=cls.close),
-                components.Buttons.Primary(
+                tailwind.Buttons.Secondary("Cancel", on_click=cls.close),
+                tailwind.Buttons.Primary(
                     "Confirm",
                     disabled=ManageIntermediateCertificateState.delete_disabled,
                     on_click=cls.delete,
@@ -523,25 +489,25 @@ class ManageIntermediateCertDialog(EventGroup):
 
     @staticmethod
     @rx.event
-    async def manage(state: ManageIntermediateCertificateState, name: str) -> FrontendEvents:
+    async def manage(state: ManageIntermediateCertificateState, common_name: str) -> FrontendEvents:
         """Load and display the root certificate management dialog."""
-        state.manifest = IntermediateCertificateManifest.load(name=name)
-        return components.Dialog.open(ManageIntermediateCertDialog.dialog_id)
+        state.cert = await PKIClient().get_intermediate_certificate(common_name=common_name)
+        return tailwind.Dialog.open(ManageIntermediateCertDialog.dialog_id)
 
     dialog_id: Final = "manage-intermediate-ca-dialog"
 
     def __new__(cls) -> rx.Component:
         """Create and return the dialog component."""
-        return components.Dialog(
+        return tailwind.Dialog(
             f"Manage {ManageIntermediateCertificateState.common_name}",
             rx.el.div(
                 rx.el.div(
-                    components.Menu(
-                        components.Buttons.Primary(
+                    tailwind.Menu(
+                        tailwind.Buttons.Primary(
                             "Manage Certificate",
                             icon="chevron-down",
                         ),
-                        components.Menu.Item(
+                        tailwind.Menu.Item(
                             "Download Certificate",
                             on_click=custom_download(
                                 data=ManageIntermediateCertificateState.certificate_data,
@@ -549,7 +515,7 @@ class ManageIntermediateCertDialog(EventGroup):
                                 mime_type="application/x-pem-file",
                             ),
                         ),
-                        components.Menu.Item(
+                        tailwind.Menu.Item(
                             "Download Chain",
                             on_click=custom_download(
                                 data=ManageIntermediateCertificateState.certificate_chain_data,
@@ -557,16 +523,16 @@ class ManageIntermediateCertDialog(EventGroup):
                                 mime_type="application/x-pem-file",
                             ),
                         ),
-                        components.Menu.Separator(),
-                        components.Menu.Item(
+                        tailwind.Menu.Separator(),
+                        tailwind.Menu.Item(
                             "Delete",
-                            on_click=components.Dialog.open(DeleteIntermediateCertificateDialog.dialog_id),
+                            on_click=tailwind.Dialog.open(DeleteIntermediateCertificateDialog.dialog_id),
                             class_name="text-red-400 hover:text-red-500 hover:bg-red-500/10 hover:border-red-500/50",
                         ),
                     ),
-                    components.Buttons.Secondary(
+                    tailwind.Buttons.Secondary(
                         "Close",
-                        on_click=components.Dialog.close(cls.dialog_id),
+                        on_click=tailwind.Dialog.close(cls.dialog_id),
                     ),
                     class_name="w-full flex justify-end space-x-4 my-4",
                 ),
@@ -635,29 +601,19 @@ class CreateLeafCertificateDialog(EventGroup):
 
     @staticmethod
     @rx.event
-    async def create_certificate(_: rx.State, form: dict) -> FrontendEvents:
+    async def create_certificate(state: OrbitLabState, form: dict) -> FrontendEvents:
         """Create a new leaf certificate from form data."""
-        intermediate_manifest = IntermediateCertificateManifest.load(name=form["intermediate_ca"])
-        subject = intermediate_manifest.spec.subject
-        subject.common_name = form["common_name"]
-        manifest = LeafCertificateManifest.create(
-            subject=subject,
-            signing_ca=form["intermediate_ca"],
+        cert = await PKIClient().create_leaf_certificate(
+            common_name=form["common_name"],
             san_dns=[san.strip() for san in form.get("san_dns", "").split(",") if san],
             san_ips=[san.strip() for san in form.get("san_ips", "").split(",") if san],
+            signing_ca_common_name=form["intermediate_ca"],
             server_auth="server_auth" in form,
         )
-        worker = get_worker()
-        error = await worker.create_workflow(
-            name="pki.create-leaf",
-            version="v1",
-            payload={"manifest": manifest.name},
-        )
-        if error:
-            return rx.toast.error(error)
+        state.leaf_certificates.append(cert)
         return [
-            rx.toast.info(f"Creating {form['common_name']}..."),
-            components.Dialog.close(CreateLeafCertificateDialog.dialog_id),
+            rx.toast.success(f"Created {form['common_name']}!"),
+            tailwind.Dialog.close(CreateLeafCertificateDialog.dialog_id),
         ]
 
     dialog_id: Final = "create-leaf-certificate-dialog"
@@ -665,14 +621,14 @@ class CreateLeafCertificateDialog(EventGroup):
 
     def __new__(cls) -> rx.Component:
         """Create and return the dialog component."""
-        return components.Dialog(
+        return tailwind.Dialog(
             "Create Leaf Certificate",
             rx.el.form(
-                components.FieldSet(
+                tailwind.FieldSet(
                     "Leaf Certificate Configuration",
-                    components.FieldSet.Field(
+                    tailwind.FieldSet.Field(
                         "Common Name: ",
-                        components.Input(
+                        tailwind.Input(
                             placeholder="test.example.com",
                             pattern=r"[A-Za-z0-9_.\-\* ]{1,64}(?:\.[A-Za-z0-9_.\-\* ]{1,64})*",
                             auto_complete="leaf-cert-common-name",
@@ -682,9 +638,9 @@ class CreateLeafCertificateDialog(EventGroup):
                             class_name="w-full"
                         ),
                     ),
-                    components.FieldSet.Field(
+                    tailwind.FieldSet.Field(
                         "Signing CA: ",
-                        components.Select(
+                        tailwind.Select(
                             IntermediateCertificatesState.select_options,
                             placeholder="Select Signing CA",
                             form=cls.form_id,
@@ -693,9 +649,9 @@ class CreateLeafCertificateDialog(EventGroup):
                             class_name="w-full",
                         ),
                     ),
-                    components.FieldSet.Field(
+                    tailwind.FieldSet.Field(
                         "SAN DNS: ",
-                        components.Input(
+                        tailwind.Input(
                             placeholder="test.example.com,*.example.com",
                             form=cls.form_id,
                             name="san_dns",
@@ -703,9 +659,9 @@ class CreateLeafCertificateDialog(EventGroup):
                         ),
                         description="Comma-separated DNS names",
                     ),
-                    components.FieldSet.Field(
+                    tailwind.FieldSet.Field(
                         "SAN IPs: ",
-                        components.Input(
+                        tailwind.Input(
                             placeholder="192.168.0.1,172.16.0.1",
                             form=cls.form_id,
                             name="san_ips",
@@ -713,9 +669,9 @@ class CreateLeafCertificateDialog(EventGroup):
                         ),
                         description="Comma-separated IP addresses",
                     ),
-                    components.FieldSet.Field(
+                    tailwind.FieldSet.Field(
                         "Server Auth: ",
-                        components.Checkbox(
+                        tailwind.Checkbox(
                             form=cls.form_id,
                             name="server_auth",
                         ),
@@ -727,8 +683,8 @@ class CreateLeafCertificateDialog(EventGroup):
                 class_name="px-3 overflow-y-auto",
             ),
             rx.el.div(
-                components.Buttons.Secondary("Cancel", on_click=lambda: components.Dialog.close(cls.dialog_id)),
-                components.Buttons.Primary("Submit", form=cls.form_id),
+                tailwind.Buttons.Secondary("Cancel", on_click=lambda: tailwind.Dialog.close(cls.dialog_id)),
+                tailwind.Buttons.Primary("Submit", form=cls.form_id),
                 class_name="w-full flex justify-end mt-4 space-x-3 my-8",
             ),
             dialog_id=cls.dialog_id,
@@ -741,25 +697,25 @@ class ManageLeafCertDialog(EventGroup):
 
     @staticmethod
     @rx.event
-    async def manage(state: ManageLeafCertificateState, name: str) -> FrontendEvents:
+    async def manage(state: ManageLeafCertificateState, common_name: str) -> FrontendEvents:
         """Load and display the root certificate management dialog."""
-        state.manifest = LeafCertificateManifest.load(name=name)
-        return components.Dialog.open(ManageLeafCertDialog.dialog_id)
+        state.cert = await PKIClient().get_leaf_certificate(common_name=common_name)
+        return tailwind.Dialog.open(ManageLeafCertDialog.dialog_id)
 
     dialog_id: Final = "manage-leaf-certificate-dialog"
 
     def __new__(cls) -> rx.Component:
         """Create and return the dialog component."""
-        return components.Dialog(
+        return tailwind.Dialog(
             f"Manage {ManageLeafCertificateState.common_name}",
             rx.el.div(
                 rx.el.div(
-                    components.Menu(
-                        components.Buttons.Primary(
+                    tailwind.Menu(
+                        tailwind.Buttons.Primary(
                             "Manage Certificate",
                             icon="chevron-down",
                         ),
-                        components.Menu.Item(
+                        tailwind.Menu.Item(
                             "Download Certificate",
                             on_click=custom_download(
                                 data=ManageLeafCertificateState.certificate_data,
@@ -767,7 +723,7 @@ class ManageLeafCertDialog(EventGroup):
                                 mime_type="application/x-pem-file",
                             ),
                         ),
-                        components.Menu.Item(
+                        tailwind.Menu.Item(
                             "Download Chain",
                             on_click=custom_download(
                                 data=ManageLeafCertificateState.certificate_chain_data,
@@ -775,7 +731,7 @@ class ManageLeafCertDialog(EventGroup):
                                 mime_type="application/x-pem-file",
                             ),
                         ),
-                        components.Menu.Item(
+                        tailwind.Menu.Item(
                             "Download Key",
                             on_click=custom_download(
                                 data=ManageLeafCertificateState.key_data,
@@ -783,16 +739,16 @@ class ManageLeafCertDialog(EventGroup):
                                 mime_type="application/x-pem-file",
                             ),
                         ),
-                        components.Menu.Separator(),
-                        components.Menu.Item(
+                        tailwind.Menu.Separator(),
+                        tailwind.Menu.Item(
                             "Delete",
-                            on_click=components.Dialog.open(DeleteLeafCertificateDialog.dialog_id),
+                            on_click=tailwind.Dialog.open(DeleteLeafCertificateDialog.dialog_id),
                             class_name="text-red-400 hover:text-red-500 hover:bg-red-500/10 hover:border-red-500/50",
                         ),
                     ),
-                    components.Buttons.Secondary(
+                    tailwind.Buttons.Secondary(
                         "Close",
-                        on_click=components.Dialog.close(cls.dialog_id),
+                        on_click=tailwind.Dialog.close(cls.dialog_id),
                     ),
                     class_name="w-full flex justify-end space-x-4 my-4",
                 ),
@@ -869,7 +825,7 @@ class DeleteLeafCertificateDialog(EventGroup):
     async def close(state: ManageLeafCertificateState) -> FrontendEvents:
         """Cancel the leaf certificate deletion process and close the dialog."""
         state.reset()
-        return components.Dialog.close(DeleteLeafCertificateDialog.dialog_id)
+        return tailwind.Dialog.close(DeleteLeafCertificateDialog.dialog_id)
 
     @staticmethod
     @rx.event
@@ -881,17 +837,10 @@ class DeleteLeafCertificateDialog(EventGroup):
     @rx.event
     async def delete_cert(state: ManageLeafCertificateState) -> FrontendEvents:
         """Delete the selected leaf certificate and close related dialogs."""
-        worker = get_worker()
-        error = await worker.create_workflow(
-            name="pki.delete",
-            version="v1",
-            payload={"manifest": state.id},
-        )
-        if error:
-            return rx.toast.error(error)
+        await PKIClient().delete_leaf_certificate(common_name=state.common_name)
         return [
             rx.toast.info(f"Deleting {state.common_name}..."),
-            components.Dialog.close(ManageLeafCertDialog.dialog_id),
+            tailwind.Dialog.close(ManageLeafCertDialog.dialog_id),
             DeleteLeafCertificateDialog.close,
         ]
 
@@ -899,7 +848,7 @@ class DeleteLeafCertificateDialog(EventGroup):
 
     def __new__(cls) -> rx.Component:
         """Create and return the dialog component."""
-        return components.Dialog(
+        return tailwind.Dialog(
             f"Delete {ManageLeafCertificateState.common_name}",
             rx.el.div(
                 rx.text(
@@ -909,13 +858,13 @@ class DeleteLeafCertificateDialog(EventGroup):
                 ),
                 class_name="w-full flex-col space-y-6 my-8",
             ),
-            components.Input(
+            tailwind.Input(
                 placeholder=ManageLeafCertificateState.common_name,
                 on_change=cls.ensure_cert_names_match,
             ),
             rx.el.div(
-                components.Buttons.Secondary("Cancel", on_click=cls.close),
-                components.Buttons.Primary(
+                tailwind.Buttons.Secondary("Cancel", on_click=cls.close),
+                tailwind.Buttons.Primary(
                     "Delete",
                     disabled=ManageLeafCertificateState.delete_disabled,
                     on_click=cls.delete_cert,

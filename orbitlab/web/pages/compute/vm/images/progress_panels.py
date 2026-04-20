@@ -5,13 +5,11 @@ from typing import Final, cast
 
 import reflex as rx
 
-from orbitlab.constants import Directories
-from orbitlab.data_types import FrontendEvents, WorkflowStepType
-from orbitlab.manifest.compute_templates.workflow_models import FileConfig, WorkflowStep
-from orbitlab.web import components
-from orbitlab.web.defaults import ClusterDefaults
-from orbitlab.web.pages.nodes.states import ProxmoxState
+from orbitlab.data_types import FrontendEvents, StorageContentType, WorkflowStepType
+from orbitlab.web import tailwind
+from orbitlab.web.global_state import SelectOptions, SelectionDefaults
 from orbitlab.web.utilities import EventGroup
+from orbitlab.worker.workflows.models import FileConfig, WorkflowStep
 
 from .states import CustomImageDialogState
 
@@ -21,42 +19,31 @@ class GeneralConfigurationPanel(EventGroup):
 
     @staticmethod
     @rx.event
-    async def set_node(state: CustomImageDialogState, node: str) -> None:
+    async def set_node(state: CustomImageDialogState, node: str) -> FrontendEvents:
         """Set the selected node and clear disk store selection."""
         state.form_data["node"] = node
-        if "disk_store" in state.form_data:
-            del state.form_data["disk_store"]
-
-    @staticmethod
-    @rx.event
-    async def set_image_store(state: CustomImageDialogState, storage: str) -> None:
-        """Set the selected image storage."""
-        state.form_data["image_store"] = storage
-
-    @staticmethod
-    @rx.event
-    async def set_disk_store(state: CustomImageDialogState, storage: str) -> None:
-        """Set the selected disk storage."""
-        state.form_data["disk_store"] = storage
-
-    @staticmethod
-    @rx.event
-    async def set_sector(state: CustomImageDialogState, sector: str) -> None:
-        """Set the sector name."""
-        state.form_data["sector"] = sector
-        if "subnet" in state.form_data:
-            del state.form_data["subnet"]
+        return [
+            rx.set_value("custom-vm-image-temp-storage", ""),
+            rx.set_value("custom-vm-image-storage", "")
+        ]
 
     def __new__(cls) -> rx.Component:
         """Create and return the Progress Panel components."""
+        selected_node = CustomImageDialogState.form_data.get("node", default=SelectionDefaults.default_node).to(str)
+        node_storage_options = SelectOptions.node_storage_options.get(
+            selected_node, default={},
+        ).to(dict[StorageContentType, list[str]])
+        image_storage_options = node_storage_options.get(StorageContentType.IMAGES, default=[]).to(list[str])
+        import_storage_options = node_storage_options.get(StorageContentType.IMPORT, default=[]).to(list[str])
         return rx.fragment(
-            components.FieldSet(
-                "Proxmox",
-                components.FieldSet.Field(
+            tailwind.FieldSet(
+                "Image Configuration",
+                tailwind.FieldSet.Field(
                     "Image Name: ",
-                    components.Input(
+                    tailwind.Input(
                         placeholder="My Image",
-                        default_value=CustomImageDialogState.name,
+                        auto_complete="off",
+                        default_value=CustomImageDialogState.form_data.get("name", ""),
                         error="Names can be up to 128 characters.",
                         min="1",
                         max="128",
@@ -65,77 +52,21 @@ class GeneralConfigurationPanel(EventGroup):
                         class_name="w-full",
                     ),
                 ),
-                components.FieldSet.Field(
+                tailwind.FieldSet.Field(
                     "Base Image: ",
-                    components.Select(
-                        CustomImageDialogState.base_images,
-                        default_value=CustomImageDialogState.base_image,
+                    tailwind.Select(
+                        SelectOptions.base_image_options,
+                        default_value=CustomImageDialogState.form_data.get("base_image", ""),
                         placeholder="Select Base Image",
                         name="base_image",
                         required=True,
                         class_name="w-full",
                     ),
                 ),
-                components.FieldSet.Field(
-                    "Node: ",
-                    components.Select(
-                        ProxmoxState.node_names,
-                        placeholder="Select Node",
-                        default_value=ClusterDefaults.proxmox_node,
-                        on_change=cls.set_node,
-                        name="node",
-                        required=True,
-                        class_name="w-full",
-                    ),
-                ),
-                components.FieldSet.Field(
-                    "Image Storage: ",
-                    components.Select(
-                        CustomImageDialogState.available_image_stores,
-                        default_value=CustomImageDialogState.image_store,
-                        on_change=cls.set_image_store,
-                        placeholder="Select Storage",
-                        name="image_store",
-                        required=True,
-                        class_name="w-full",
-                    ),
-                ),
-                components.FieldSet.Field(
-                    "Temp Disk Store: ",
-                    components.Select(
-                        CustomImageDialogState.available_disk_stores,
-                        default_value=CustomImageDialogState.disk_store,
-                        on_change=cls.set_disk_store,
-                        placeholder="Select Storage",
-                        name="disk_store",
-                        required=True,
-                        class_name="w-full",
-                    ),
-                ),
-                components.FieldSet.Field(
-                    "Cores: ",
-                    components.Slider(
-                        default_value=CustomImageDialogState.cores,
-                        min=1,
-                        max=8,
-                        name="cores",
-                        required=True,
-                    ),
-                ),
-                components.FieldSet.Field(
-                    "Memory (GiB): ",
-                    components.Slider(
-                        default_value=CustomImageDialogState.memory_gb,
-                        min=1,
-                        max=12,
-                        name="memory",
-                        required=True,
-                    ),
-                ),
-                components.FieldSet.Field(
+                tailwind.FieldSet.Field(
                     "Disk Size (GiB): ",
-                    components.Slider(
-                        default_value=CustomImageDialogState.disk_size,
+                    tailwind.Slider(
+                        default_value=CustomImageDialogState.form_data.get("disk_size", 8).to(float),
                         min=3,
                         max=10,
                         name="disk_size",
@@ -143,16 +74,75 @@ class GeneralConfigurationPanel(EventGroup):
                     ),
                 ),
             ),
-            components.FieldSet(
-                "Network Configuration",
-                components.FieldSet.Field(
-                    "Sector",
-                    components.Select(
-                        CustomImageDialogState.available_sectors,
-                        value=CustomImageDialogState.sector,
-                        on_change=cls.set_sector,
+            tailwind.FieldSet(
+                "Proxmox Configuration",
+                tailwind.FieldSet.Field(
+                    "Node: ",
+                    tailwind.Select(
+                        SelectOptions.node_options,
+                        placeholder="Select Node",
+                        default_value=selected_node,
+                        on_change=cls.set_node,
+                        name="node",
                         required=True,
                         class_name="w-full",
+                    ),
+                ),
+                tailwind.FieldSet.Field(
+                    "Image Storage: ",
+                    tailwind.Select(
+                        import_storage_options,
+                        default_value=CustomImageDialogState.form_data.get("image_store", default=SelectionDefaults.default_import_storage).to(str),
+                        placeholder="Select Storage",
+                        name="image_store",
+                        required=True,
+                        class_name="w-full",
+                        id="custom-vm-image-storage"
+                    ),
+                ),
+                tailwind.FieldSet.Field(
+                    "Temp Disk Store: ",
+                    tailwind.Select(
+                        image_storage_options,
+                        default_value=CustomImageDialogState.form_data.get("disk_store", default=SelectionDefaults.default_images_storage).to(str),
+                        placeholder="Select Storage",
+                        name="disk_store",
+                        required=True,
+                        class_name="w-full",
+                        id="custom-vm-image-temp-storage"
+                    ),
+                ),
+            ),
+            tailwind.FieldSet(
+                "Machine Configuration",
+                tailwind.FieldSet.Field(
+                    "Sector",
+                    tailwind.Select(
+                        SelectOptions.sector_options,
+                        default_value=CustomImageDialogState.form_data.get("sector", ""),
+                        name="sector",
+                        required=True,
+                        class_name="w-full",
+                    ),
+                ),
+                tailwind.FieldSet.Field(
+                    "Cores: ",
+                    tailwind.Slider(
+                        default_value=CustomImageDialogState.form_data.get("cores", 2).to(float),
+                        min=1,
+                        max=6,
+                        name="cores",
+                        required=True,
+                    ),
+                ),
+                tailwind.FieldSet.Field(
+                    "Memory (GiB): ",
+                    tailwind.Slider(
+                        default_value=CustomImageDialogState.form_data.get("memory", 2).to(float),
+                        min=1,
+                        max=12,
+                        name="memory",
+                        required=True,
                     ),
                 ),
             ),
@@ -172,7 +162,7 @@ class FilesWorkflowStep(EventGroup):
                 uploaded_files: list[FileConfig] = []
                 state.uploading = True
                 for file in selected_files:
-                    path: Path = Directories.CUSTOM_APPLIANCES / state.form_data["name"] / file.name
+                    path: Path = state.form_data["name"] / file.name
                     path.parent.mkdir(parents=True, exist_ok=True)
                     data = await file.read()
 
@@ -187,7 +177,7 @@ class FilesWorkflowStep(EventGroup):
     async def configure_files(state: CustomImageDialogState, step_id: int) -> FrontendEvents:
         """Configure files for a specific workflow step."""
         state.files_data = state.steps_config[step_id].files
-        return components.Dialog.open(FilesWorkflowStep.dialog_id)
+        return tailwind.Dialog.open(FilesWorkflowStep.dialog_id)
 
     @staticmethod
     @rx.event
@@ -221,7 +211,7 @@ class FilesWorkflowStep(EventGroup):
     def reset(state: CustomImageDialogState) -> rx.event.EventCallback:
         """Cancel the current file upload operation."""
         state.files_data = None
-        return components.Dialog.close(FilesWorkflowStep.dialog_id)
+        return tailwind.Dialog.close(FilesWorkflowStep.dialog_id)
 
     dialog_id: Final = "custom-image-files-workflow-step-edit-dialog"
     upload_id: Final = "custom-image-files-workflow-step-upload"
@@ -234,7 +224,7 @@ class FilesWorkflowStep(EventGroup):
         return rx.el.div(
             rx.el.div(
                 rx.el.p("Source: "),
-                components.Input(
+                tailwind.Input(
                     value=source,
                     disabled=True,
                 ),
@@ -242,7 +232,7 @@ class FilesWorkflowStep(EventGroup):
             ),
             rx.el.div(
                 rx.el.p("Destination: "),
-                components.Input(
+                tailwind.Input(
                     default_value=destination,
                     pattern=r"^\/(?:[A-Za-z0-9._\-]+(?:\/[A-Za-z0-9._\-]+)*)?$",
                     name=source,
@@ -263,14 +253,14 @@ class FilesWorkflowStep(EventGroup):
             rx.cond(
                 CustomImageDialogState.uploading,
                 rx.el.div(
-                    components.Buttons.Primary("Cancel", on_click=cls.cancel_upload),
-                    components.ProgressBars.Basic(value=CustomImageDialogState.upload_progress),
+                    tailwind.Buttons.Primary("Cancel", on_click=cls.cancel_upload),
+                    tailwind.ProgressBars.Basic(value=CustomImageDialogState.upload_progress),
                     class_name="flex w-full items-center justify-center space-x-4",
                 ),
                 rx.cond(
                     files.to(bool),
                     rx.fragment(
-                        components.Dialog(
+                        tailwind.Dialog(
                             f"Configure Files Step: {step.name}",
                             rx.el.form(id=form_id, on_submit=lambda data: cls.save_files(sort_id, data)),
                             rx.callout(
@@ -286,19 +276,19 @@ class FilesWorkflowStep(EventGroup):
                                 class_name="divide-y divide-white/10",
                             ),
                             rx.el.div(
-                                components.Buttons.Secondary("Cancel", on_click=cls.reset),
-                                components.Buttons.Primary("Save & Close", form=form_id),
+                                tailwind.Buttons.Secondary("Cancel", on_click=cls.reset),
+                                tailwind.Buttons.Primary("Save & Close", form=form_id),
                                 class_name="w-full flex justify-end space-x-2 mt-10",
                             ),
                             dialog_id=cls.dialog_id,
                             class_name="max-w-[80vw] w-[80vw] max-h-[80vh] h-fit",
                         ),
-                        components.Buttons.Primary(
+                        tailwind.Buttons.Primary(
                             "Configure Files",
                             on_click=cls.configure_files(sort_id),
                         ),
                     ),
-                    components.UploadBox(
+                    tailwind.UploadBox(
                         upload_id=cls.upload_id,
                         on_drop=cls.handle_uploads(
                             rx.upload_files(upload_id=cls.upload_id, on_upload_progress=cls.on_upload_progress),
@@ -331,21 +321,21 @@ class ScriptWorkflowStep(EventGroup):
     async def reset(state: CustomImageDialogState) -> rx.event.EventCallback:
         """Reset the script editing state by clearing script data and step ID."""
         state.script_value = state.default_script_value = ""
-        return components.Dialog.close(ScriptWorkflowStep.dialog_id)
+        return tailwind.Dialog.close(ScriptWorkflowStep.dialog_id)
 
     @staticmethod
     @rx.event
     async def edit_script(state: CustomImageDialogState, step_id: int) -> rx.event.EventCallback:
         """Set the script step ID for editing."""
         state.script_value = state.default_script_value = state.steps_config[step_id].script or ""
-        return components.Dialog.open(ScriptWorkflowStep.dialog_id)
+        return tailwind.Dialog.open(ScriptWorkflowStep.dialog_id)
 
     dialog_id: Final = "image-script-workflow-step-edit-dialog"
 
     def __new__(cls, sort_id: int | rx.Var[int]) -> rx.Component:
         """Create and return the Script workflow step."""
         return rx.el.div(
-            components.Dialog(
+            tailwind.Dialog(
                 "Edit Workflow Script",
                 rx.callout(
                     """
@@ -355,20 +345,20 @@ class ScriptWorkflowStep(EventGroup):
                     icon="info",
                     class_name="my-2",
                 ),
-                components.Editor(
+                tailwind.Editor(
                     value=CustomImageDialogState.default_script_value,
                     on_change=cls.on_script_change,
                     language="shell",
                 ),
                 rx.el.div(
-                    components.Buttons.Secondary("Cancel", on_click=cls.reset),
-                    components.Buttons.Primary("Save & Close", on_click=cls.save_script(sort_id)),
+                    tailwind.Buttons.Secondary("Cancel", on_click=cls.reset),
+                    tailwind.Buttons.Primary("Save & Close", on_click=cls.save_script(sort_id)),
                     class_name="w-full flex justify-end space-x-2 mt-10",
                 ),
                 dialog_id=cls.dialog_id,
                 class_name="max-w-[80vw] w-[80vw] max-h-[80vh] h-fit",
             ),
-            components.Buttons.Primary("Edit Script", on_click=cls.edit_script(sort_id)),
+            tailwind.Buttons.Primary("Edit Script", on_click=cls.edit_script(sort_id)),
             class_name="flex grow items-center justify-center space-x-6",
         )
 
@@ -410,12 +400,12 @@ class WorkflowConfigurationPanel(EventGroup):
 
     @staticmethod
     @rx.event
-    async def update_step_order(state: CustomImageDialogState, steps: list[components.SortableItem]) -> None:
+    async def update_step_order(state: CustomImageDialogState, steps: list[tailwind.SortableItem]) -> None:
         """Update the order of workflow steps."""
         state.step_order = steps
 
     @classmethod
-    def sortable_step(cls, item: components.SortableItem) -> rx.Component:
+    def sortable_step(cls, item: tailwind.SortableItem) -> rx.Component:
         """Create a sortable workflow step component."""
         sort_id = rx.Var.create(item["id"]).to(int)
         step_config: WorkflowStep = CustomImageDialogState.steps_config.get(sort_id, {}).to(WorkflowStep)
@@ -430,7 +420,7 @@ class WorkflowConfigurationPanel(EventGroup):
             ),
             rx.el.div(
                 rx.el.div(
-                    components.Input(
+                    tailwind.Input(
                         value=step_config.name,
                         on_change=lambda name: cls.set_step_name(sort_id, name),
                         placeholder="Step Name (Required)",
@@ -456,7 +446,7 @@ class WorkflowConfigurationPanel(EventGroup):
                     ),
                     rx.fragment(),
                 ),
-                components.Buttons.Icon(
+                tailwind.Buttons.Icon(
                     "trash",
                     on_click=lambda: cls.delete_step(sort_id),
                 ),
@@ -477,18 +467,18 @@ class WorkflowConfigurationPanel(EventGroup):
         """Create and return the Progress Panel components."""
         return rx.fragment(
             rx.el.div(
-                components.Menu(
-                    components.Buttons.Primary(
+                tailwind.Menu(
+                    tailwind.Buttons.Primary(
                         "Add Workflow Step",
                         icon="chevron-down",
                     ),
-                    components.Menu.Item("Script Step", on_click=cls.add_step(WorkflowStepType.SCRIPT)),
-                    components.Menu.Item("Files Step", on_click=cls.add_step(WorkflowStepType.FILES)),
+                    tailwind.Menu.Item("Script Step", on_click=cls.add_step(WorkflowStepType.SCRIPT)),
+                    tailwind.Menu.Item("Files Step", on_click=cls.add_step(WorkflowStepType.FILES)),
                 ),
                 rx.text("Drag steps to change execution order."),
                 class_name="w-full flex justify-between mb-4",
             ),
-            components.Sortable(
+            tailwind.Sortable(
                 rx.foreach(CustomImageDialogState.step_order, lambda item: cls.sortable_step(item)),
                 data=CustomImageDialogState.step_order,
                 on_change=cls.update_step_order,
@@ -512,26 +502,26 @@ class ReviewPanel:
                 icon="info",
                 class_name="my-2",
             ),
-            components.DataList(
-                components.DataList.Item(
-                    components.DataList.Label("Name"),
-                    components.DataList.Value(CustomImageDialogState.name),
+            tailwind.DataList(
+                tailwind.DataList.Item(
+                    tailwind.DataList.Label("Name"),
+                    tailwind.DataList.Value(CustomImageDialogState.form_data.get("name")),
                 ),
-                components.DataList.Item(
-                    components.DataList.Label("Base"),
-                    components.DataList.Value(CustomImageDialogState.base_image),
+                tailwind.DataList.Item(
+                    tailwind.DataList.Label("Base"),
+                    tailwind.DataList.Value(CustomImageDialogState.form_data.get("base_image")),
                 ),
-                components.DataList.Item(
-                    components.DataList.Label("Image Storage"),
-                    components.DataList.Value(CustomImageDialogState.image_store),
+                tailwind.DataList.Item(
+                    tailwind.DataList.Label("Image Storage"),
+                    tailwind.DataList.Value(CustomImageDialogState.form_data.get("image_store")),
                 ),
-                components.DataList.Item(
-                    components.DataList.Label("Sector"),
-                    components.DataList.Value(CustomImageDialogState.sector),
+                tailwind.DataList.Item(
+                    tailwind.DataList.Label("Sector"),
+                    tailwind.DataList.Value(CustomImageDialogState.form_data.get("sector")),
                 ),
-                components.DataList.Item(
-                    components.DataList.Label("Workflow Steps"),
-                    components.DataList.Value(
+                tailwind.DataList.Item(
+                    tailwind.DataList.Label("Workflow Steps"),
+                    tailwind.DataList.Value(
                         rx.el.div(
                             rx.foreach(
                                 CustomImageDialogState.step_names_in_order,

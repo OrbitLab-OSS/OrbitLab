@@ -2,12 +2,12 @@
 
 import reflex as rx
 
-from orbitlab.web import components
-from orbitlab.web.defaults import ClusterDefaults
-from orbitlab.web.pages.sectors.dashboard.states import SectorsTableState
+from orbitlab.data_types import FrontendEvents, StorageContentType
+from orbitlab.web import tailwind
+from orbitlab.web.global_state import SelectOptions, SelectionDefaults
 from orbitlab.web.utilities import EventGroup
 
-from .states import LaunchLXCState
+from .states import LaunchLXCInstanceDialogState
 
 
 class GeneralConfigurationPanel(EventGroup):
@@ -15,45 +15,25 @@ class GeneralConfigurationPanel(EventGroup):
 
     @staticmethod
     @rx.event
-    async def set_node(state: LaunchLXCState, node: str) -> None:
+    async def set_node(state: LaunchLXCInstanceDialogState, node: str) -> FrontendEvents:
         """Set the selected node and clear storage selection."""
         state.form_data["node"] = node
-        if "storage" in state.form_data:
-            del state.form_data["storage"]
-
-    @staticmethod
-    @rx.event
-    async def set_storage(state: LaunchLXCState, storage: str) -> None:
-        """Set the storage selection in the form data."""
-        state.form_data["storage"] = storage
-
-    @staticmethod
-    @rx.event
-    async def set_rootdir(state: LaunchLXCState, storage: str) -> None:
-        """Set the storage selection in the form data."""
-        state.form_data["rootdir"] = storage
+        return rx.set_value("lxc-instance-disk-storage", "")
 
     def __new__(cls) -> rx.Component:
         """Create and return the Progress Panel components."""
+        selected_node = LaunchLXCInstanceDialogState.form_data.get("node", default=SelectionDefaults.default_node).to(str)
+        storage_options = SelectOptions.node_storage_options.get(
+            selected_node, default={},
+        ).to(dict).get(StorageContentType.ROOTDIR, default=[]).to(list[str])
         return rx.fragment(
-            components.FieldSet(
-                "Proxmox",
-                components.FieldSet.Field(
-                    "Appliance: ",
-                    components.Select(
-                        LaunchLXCState.appliances,
-                        default_value=LaunchLXCState.appliance,
-                        placeholder="Select Appliance",
-                        name="appliance",
-                        required=True,
-                        class_name="w-full",
-                    ),
-                ),
-                components.FieldSet.Field(
+            tailwind.FieldSet(
+                "Instance Configuration",
+                tailwind.FieldSet.Field(
                     "Hostname: ",
-                    components.Input(
+                    tailwind.Input(
                         placeholder="my-lxc",
-                        default_value=LaunchLXCState.name,
+                        auto_complete="off",
                         error="Names can be up to 64 alphanumeric characters, hyphens, and underscores.",
                         min="1",
                         max="64",
@@ -62,11 +42,68 @@ class GeneralConfigurationPanel(EventGroup):
                         class_name="w-full",
                     ),
                 ),
-                components.FieldSet.Field(
+                tailwind.FieldSet.Field(
+                    "Appliance: ",
+                    tailwind.Select(
+                        SelectOptions.all_appliance_options,
+                        placeholder="Select Appliance",
+                        name="appliance",
+                        required=True,
+                        class_name="w-full",
+                    ),
+                ),
+                tailwind.FieldSet.Field(
+                    "Disk Size (Gb): ",
+                    tailwind.Slider(
+                        default_value=10,
+                        min=8,
+                        max=128,
+                        name="disk_size",
+                        required=True,
+                    ),
+                ),
+                tailwind.FieldSet.Field(
+                    "Cores: ",
+                    tailwind.Slider(
+                        default_value=2,
+                        min=1,
+                        max=8,
+                        name="cores",
+                        required=True,
+                    ),
+                ),
+                tailwind.FieldSet.Field(
+                    "Memory (GiB): ",
+                    tailwind.Slider(
+                        default_value=2,
+                        min=1,
+                        max=12,
+                        name="memory",
+                        required=True,
+                    ),
+                ),
+                tailwind.FieldSet.Field(
+                    "Swap (GiB): ",
+                    tailwind.Slider(
+                        default_value=1,
+                        min=1,
+                        max=4,
+                        name="swap",
+                        required=True,
+                    ),
+                ),
+                tailwind.FieldSet.Field(
+                    "Enable NFS: ",
+                    tailwind.Checkbox(name="nfs"),
+                ),
+            ),
+            tailwind.FieldSet(
+                "Proxmox Configuration",
+                tailwind.FieldSet.Field(
                     "Node: ",
-                    components.Select(
-                        ClusterDefaults.available_nodes,
-                        default_value=ClusterDefaults.proxmox_node,
+                    tailwind.Select(
+                        SelectOptions.node_options,
+                        default_value=selected_node,
                         placeholder="Select Node",
                         on_change=cls.set_node,
                         name="node",
@@ -74,77 +111,34 @@ class GeneralConfigurationPanel(EventGroup):
                         class_name="w-full",
                     ),
                 ),
-                components.FieldSet.Field(
+                tailwind.FieldSet.Field(
                     "Disk Store: ",
-                    components.Select(
-                        LaunchLXCState.available_rootfs,
-                        default_value=ClusterDefaults.rootdir_storage,
-                        on_change=cls.set_rootdir,
+                    tailwind.Select(
+                        storage_options,
+                        default_value=SelectionDefaults.default_rootdir_storage,
                         placeholder="Select Storage",
-                        name="rootfs",
+                        name="storage",
                         required=True,
                         class_name="w-full",
+                        id="lxc-instance-disk-storage"
                     ),
                 ),
-                components.FieldSet.Field(
-                    "Disk Size (Gb): ",
-                    components.Slider(
-                        default_value=LaunchLXCState.disk_size_gb,
-                        min=8,
-                        max=128,
-                        name="disk_size",
-                        required=True,
-                    ),
-                ),
-                components.FieldSet.Field(
-                    "Cores: ",
-                    components.Slider(
-                        default_value=LaunchLXCState.cores,
-                        min=1,
-                        max=8,
-                        name="cores",
-                        required=True,
-                    ),
-                ),
-                components.FieldSet.Field(
-                    "Memory (GiB): ",
-                    components.Slider(
-                        default_value=LaunchLXCState.memory_gb,
-                        min=1,
-                        max=12,
-                        name="memory",
-                        required=True,
-                    ),
-                ),
-                components.FieldSet.Field(
-                    "Swap (GiB): ",
-                    components.Slider(
-                        default_value=LaunchLXCState.swap_gb,
-                        min=1,
-                        max=12,
-                        name="swap",
-                        required=True,
-                    ),
-                ),
-            ),
-            components.FieldSet(
-                "Networking",
-                components.FieldSet.Field(
+                tailwind.FieldSet.Field(
                     "Sector",
-                    components.Select(
-                        SectorsTableState.sector_options,
+                    tailwind.Select(
+                        SelectOptions.sector_options,
                         name="sector",
                         required=True,
                         class_name="w-full",
                     ),
                 ),
             ),
-            components.FieldSet(
+            tailwind.FieldSet(
                 "Secrets",
-                components.FieldSet.Field(
+                tailwind.FieldSet.Field(
                     "Root Password",
                     rx.el.div(
-                        components.Input(
+                        tailwind.Input(
                             type="password",
                             error="Must be between 8 to 64 characters",
                             min="8",
@@ -159,7 +153,7 @@ class GeneralConfigurationPanel(EventGroup):
                         class_name="flex-col space-y-1 justify-start align-start",
                     ),
                 ),
-                components.FieldSet.Field(
+                tailwind.FieldSet.Field(
                     "SSH Key",
                     rx.text("Not currently supported", class_name="font-light italic"),
                 ),
@@ -172,35 +166,38 @@ class ReviewPanel:
 
     def __new__(cls) -> rx.Component:
         """Create and return the Progress Panel components."""
+        memory = LaunchLXCInstanceDialogState.form_data.get("memory")
+        swap = LaunchLXCInstanceDialogState.form_data.get("swap")
+        disk_size = LaunchLXCInstanceDialogState.form_data.get("disk_size")
         return rx.fragment(
-            components.DataList(
-                components.DataList.Item(
-                    components.DataList.Label("Hostname"),
-                    components.DataList.Value(LaunchLXCState.name),
+            tailwind.DataList(
+                tailwind.DataList.Item(
+                    tailwind.DataList.Label("Hostname"),
+                    tailwind.DataList.Value(LaunchLXCInstanceDialogState.form_data.get("name")),
                 ),
-                components.DataList.Item(
-                    components.DataList.Label("Appliance"),
-                    components.DataList.Value(LaunchLXCState.appliance),
+                tailwind.DataList.Item(
+                    tailwind.DataList.Label("Appliance"),
+                    tailwind.DataList.Value(LaunchLXCInstanceDialogState.form_data.get("appliance")),
                 ),
-                components.DataList.Item(
-                    components.DataList.Label("Root Store"),
-                    components.DataList.Value(LaunchLXCState.rootfs),
+                tailwind.DataList.Item(
+                    tailwind.DataList.Label("Storage"),
+                    tailwind.DataList.Value(LaunchLXCInstanceDialogState.form_data.get("storage")),
                 ),
-                components.DataList.Item(
-                    components.DataList.Label("Disk Size"),
-                    components.DataList.Value(f"{LaunchLXCState.disk_size_gb}GB"),
+                tailwind.DataList.Item(
+                    tailwind.DataList.Label("Disk Size"),
+                    tailwind.DataList.Value(f"{disk_size} GB"),
                 ),
-                components.DataList.Item(
-                    components.DataList.Label("Memory"),
-                    components.DataList.Value(f"{LaunchLXCState.memory_gb}GiB ({LaunchLXCState.swap_gb}GiB Swap)"),
+                tailwind.DataList.Item(
+                    tailwind.DataList.Label("Memory"),
+                    tailwind.DataList.Value(f"{memory} GiB ({swap} GiB Swap)"),
                 ),
-                components.DataList.Item(
-                    components.DataList.Label("Cores"),
-                    components.DataList.Value(f"{LaunchLXCState.cores}"),
+                tailwind.DataList.Item(
+                    tailwind.DataList.Label("Cores"),
+                    tailwind.DataList.Value(LaunchLXCInstanceDialogState.form_data.get("cores")),
                 ),
-                components.DataList.Item(
-                    components.DataList.Label("Network"),
-                    components.DataList.Value(LaunchLXCState.sector),
+                tailwind.DataList.Item(
+                    tailwind.DataList.Label("Sector"),
+                    tailwind.DataList.Value(LaunchLXCInstanceDialogState.form_data.get("sector")),
                 ),
             ),
         )

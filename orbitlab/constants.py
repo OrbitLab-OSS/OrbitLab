@@ -1,35 +1,7 @@
 """Constants for OrbitLab."""
 
-import os
-from pathlib import Path
 from types import SimpleNamespace
 from typing import Final, LiteralString
-
-
-class Directories(SimpleNamespace):
-    """Directory paths for OrbitLab file system structure."""
-
-    ORBITLAB_ROOT: Final = (
-        Path().cwd() / "TEST_ROOT" if bool(os.environ.get("ORBITLAB_DEV")) else Path("/etc/pve/orbitlab")
-    )
-    MANIFEST_ROOT: Final = ORBITLAB_ROOT / "manifests"
-    WORKFLOW_FILES_ROOT: Final = ORBITLAB_ROOT / "workflow-files"
-
-    CUSTOM_APPLIANCES: Final = WORKFLOW_FILES_ROOT / "custom_appliances"
-
-    DNS_ROOT: Final = ORBITLAB_ROOT / "dns"
-    DNS_ZONE_ROOT: Final = DNS_ROOT / "zones"
-
-    SECRETS_ROOT: Final = ORBITLAB_ROOT / "secrets"
-    VAULT: Final = SECRETS_ROOT / "vault"
-    PKI_ROOT: Final = SECRETS_ROOT / "pki"
-
-    def make_dirs(self) -> None:
-        """Create all directories defined in this class."""
-        if os.environ.get("__REFLEX_COMPILE_CONTEXT") == "run": 
-            for attr in self.__annotations__:
-                directory: Path = getattr(self, attr)
-                directory.mkdir(parents=True, exist_ok=True)
 
 
 class PKI(SimpleNamespace):
@@ -67,7 +39,7 @@ class NetworkSettings(SimpleNamespace):
     RESERVED_SECTOR_IPS = 50
 
 
-SCRIPT = """cat <<EOF > {filename}
+SCRIPT = """cat <<'EOF' > {filename}
 #!/bin/bash
 set -euo pipefail
 {content}
@@ -80,6 +52,7 @@ class ProxmoxRE(SimpleNamespace):
     """Constants for Proxmox-related remote execution operations."""
 
     SCRIPT: LiteralString = SCRIPT
+    USER = "orbitlab@pve"
 
 
 class EventStreams(SimpleNamespace):
@@ -87,3 +60,5 @@ class EventStreams(SimpleNamespace):
 
     WORKFLOWS = "ol:workflows"
     EVENTS = "ol:events"
+    WORKFLOW_LOGS = "ol:logs:workflows"
+    SYSTEM_LOGS = "ol:logs:system"

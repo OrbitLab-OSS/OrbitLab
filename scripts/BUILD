@@ -25,6 +25,7 @@ run_shell_command(
         "resources:resources",
         ":static-html",
         "//:orbitlab-backend",
+        "//:orbital-receiver",
         ":orbitlab-frontend",
         "//:rxconfig",
     ],

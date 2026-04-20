@@ -34,7 +34,7 @@ class PctExecError(Exception):
 
     def __init__(self, exit_code: int, msg: str, logs: list[str]) -> None:
         """Initialize PctExecError."""
-        super().__init__(msg)
+        super().__init__(f"{msg}: {logs}")
         self.msg = msg
         self.exit_code = exit_code
         self.logs = logs

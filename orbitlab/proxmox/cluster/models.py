@@ -2,7 +2,7 @@
 
 from pydantic import BaseModel, RootModel
 
-from orbitlab.manifest.serialization import PveBool, PveContentList
+from orbitlab.data_types import PveBool, PveContentList
 
 
 class HANode(BaseModel):

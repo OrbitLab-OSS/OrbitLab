@@ -1,9 +1,12 @@
 """VM Workflows."""
 
-from orbitlab.data_types import ComputeState, ComputeStatus
-from orbitlab.manifest.compute_instances import VMManifest
-from orbitlab.web.pages.compute.vm.instances.states import VMInstancesTableState
-from orbitlab.worker.workflows.utilities import VMUtils
+import asyncio
+from typing import Annotated
+
+from orbitlab.data_types import ComputeStatus, ProxmoxComputeStatus, SerializeEnum
+from orbitlab.proxmox import ProxmoxCompute
+from orbitlab.redis.clients import VMClient
+from orbitlab.web.global_state import OrbitLabState
 
 from .base import Workflow, WorkflowPayload
 
@@ -11,15 +14,10 @@ from .base import Workflow, WorkflowPayload
 class VMPayload(WorkflowPayload):
     """Default payload for VM workflows."""
 
-    manifest: str
-
-    @property
-    def redis_name(self) -> str:
-        """VM Redis Hash Name."""
-        return f"ol:vm:{self.manifest}"
+    id: str
 
 
-class VMCreateV1(Workflow, VMUtils):
+class VMCreateV1(Workflow):
     """Workflow for creating an VM instance."""
 
     TYPE: str = "vm.create"
@@ -28,54 +26,36 @@ class VMCreateV1(Workflow, VMUtils):
     payload: VMPayload
 
     async def validate(self) -> None:
-        """Validate the VM manifest and ensure it is not already assigned a VMID."""
-        if self.payload.manifest not in VMManifest.get_existing():
-            await self.fail(error=f"Manifest {self.payload.manifest} does not exist")
-            return
-
-        manifest = VMManifest.load(name=self.payload.manifest)
-        if manifest.metadata.vmid:
-            await self.succeed(f"VM {self.payload.manifest} already assigned VMID {manifest.metadata.vmid}")
-            return
-
-        await self.set_redis_hash_value(name=self.payload.redis_name, key="state", value=ComputeState.STARTING)
-        await self.emit_reflex_events(events=[VMInstancesTableState.cache_clear("running")])
+        instance = await VMClient().get_instance(id=self.payload.id)
+        if instance.state.vmid:
+            return await self.succeed(f"VM {self.payload.id} already assigned VMID {instance.state.vmid}")
 
     async def provision(self) -> None:
         """Provision the VM instance by creating and starting it."""
-        manifest = VMManifest.load(name=self.payload.manifest)
-        vmid = self.proxmox_compute.get_next_vmid()
-        await self.create(
-            params=manifest.create_vm_params(vmid=vmid),
-            node=manifest.metadata.node,
-            disk_size=manifest.spec.disk_size,
-        )
-        await self.start(vmid=vmid)
+        proxmox = ProxmoxCompute()
+        client = VMClient()
+        instance = await client.get_instance(id=self.payload.id)
+        vmid = await proxmox.get_next_vmid()
+        params = await client.generate_vm_create_params(id=instance.config.id, vmid=vmid)
+        
+        await self.log(message=f"Creating {vmid}@{instance.config.node} with params: {self._redact_params(params=params)}")
+        await proxmox.create_vm(params=params, node=instance.config.node)
+        
+        await self.log(message=f"Resizing scsi0 on {vmid}@{instance.config.node} to: {instance.config.disk_size}G")
+        await asyncio.sleep(1)  # Take a beat so Proxmox doesn't panic when trying to resize the disk after creation
+        await proxmox.resize_disk(vmid=vmid, disk_size=instance.config.disk_size)
+        
+        await self.log(message=f"Starting {vmid}@{instance.config.node}")
+        await proxmox.start(vmid=vmid)
 
     async def finalize(self) -> None:
         """Finalize the VM creation by retrieving and storing the IPv4 address."""
-        manifest = VMManifest.load(name=self.payload.manifest)
-
-        # Start another workflow to wait for agent/IP
-        await self._create_new_workflow(
-            workflow=AquireVMIpAddress,
-            payload=AquireVMIpAddress.PAYLOAD_TYPE.model_validate({"manifest": self.payload.manifest}),
-        )
-
-        await self.update_state(name=self.payload.redis_name, status=ComputeStatus.START, vmid=manifest.metadata.vmid)
-        await self.emit_reflex_events(events=[VMInstancesTableState.cache_clear("running")])
-
-    async def on_failure(self) -> None:
-        """Handle cleanup actions when the workflow fails."""
-        if self.payload.manifest in VMManifest.get_existing():
-            manifest = VMManifest.load(name=self.payload.manifest)
-            await self.redis.hdel(self.payload.redis_name, "state", "ipv4")
-            await self.log(message=f"Deleting manifest {self.payload.manifest}")
-            manifest.delete()
-            await self.emit_reflex_events(events=[VMInstancesTableState.cache_clear("running")])
+        await self._create_new_workflow(workflow=AquireVMIpAddress, payload=self.payload.copy_payload())
+        await VMClient().set_instance_status(id=self.payload.id, status=ComputeStatus.RUNNING)
+        await self.emit_reflex_events(events=[OrbitLabState.cache_clear("vm_instances")])
 
 
-class AquireVMIpAddress(Workflow, VMUtils):
+class AquireVMIpAddress(Workflow):
     """Workflow for acquiring an IPv4 address for a VM instance."""
 
     TYPE: str = "vm.acquire-ip"
@@ -85,42 +65,35 @@ class AquireVMIpAddress(Workflow, VMUtils):
 
     async def validate(self) -> None:
         """Validate that the VM has qemu guest agent enabled."""
-        if self.payload.manifest not in VMManifest.get_existing():
-            await self.fail(f"Manifest {self.payload.manifest} does not exist")
-            return
-
-        manifest = VMManifest.load(name=self.payload.manifest)
-        if not await self.agent_enabled(vmid=manifest.metadata.vmid):
-            await self.fail(f"VM {self.payload.manifest} does not have qemu guest agent enabled")
-            return
+        instance = await VMClient().get_instance(id=self.payload.id)
+        if not await ProxmoxCompute().get_agent_enabled(vmid=instance.state.vmid):
+            await self.fail(error=f"Guest Agent not enabled for {self.payload.id}")
 
     async def provision(self) -> None:
         """Provision the LXC container."""
-        manifest = VMManifest.load(name=self.payload.manifest)
+        instance = await VMClient().get_instance(id=self.payload.id)
+        proxmox = ProxmoxCompute()
         max_retries = 3
         retries = 0
         while retries < max_retries:
-            ip_address = await self.get_ipv4_address(vmid=manifest.metadata.vmid)
-            if ip_address:
-                await self.set_redis_hash_value(name=self.payload.redis_name, key="ipv4", value=ip_address.with_prefixlen)
-                return
+            if address := await proxmox.get_vm_private_ipv4(vmid=instance.state.vmid):
+                return await VMClient().set_instance_address(id=self.payload.id, address=address)
             retries += 1
-            await self.log(level="Info", message=f"Acquiring IPv4 address for {manifest.name} retry {retries}")
-
-        await self.fail(error=f"Max retries exceeded attempting to aquire IPv4 address for  {self.payload.manifest}")
+            await self.log(level="Info", message=f"Acquiring IPv4 address for {self.payload.id} retry {retries}")
+        await self.fail(error=f"Max retries exceeded attempting to aquire IPv4 address for {self.payload.id}")
 
     async def on_succeed(self) -> None:
         """Handle actions to perform when the workflow succeeds."""
-        await self.emit_reflex_events(events=[VMInstancesTableState.cache_clear("running")])
+        await self.emit_reflex_events(events=[OrbitLabState.cache_clear("vm_instances")])
 
 
 class VMStateChangePayload(VMPayload):
     """Payload for VM state change events."""
 
-    desired_status: ComputeStatus
+    desired_status: Annotated[ProxmoxComputeStatus, SerializeEnum]
 
 
-class VMStateChangeV1(Workflow, VMUtils):
+class VMStateChangeV1(Workflow):
     """Workflow for changing the state of an VM instance."""
 
     TYPE: str = "vm.state-change"
@@ -130,52 +103,37 @@ class VMStateChangeV1(Workflow, VMUtils):
 
     async def validate(self) -> None:
         """Validate the current state of the VM and ensure the desired state change is possible."""
-        if self.payload.manifest not in VMManifest.get_existing():
-            await self.fail(f"VM Manifest {self.payload.manifest} does not exist")
-            return
+        client = VMClient()
+        instance = await client.get_instance(id=self.payload.id)
 
-        manifest = VMManifest.load(name=self.payload.manifest)
-
-        status = self.proxmox_compute.get_vm_status(vmid=manifest.metadata.vmid)
-        if status == "stopped" and self.payload.desired_status not in (ComputeStatus.START, ComputeStatus.TERMINATE):
-            await self.fail(
-                f"VMID {manifest.metadata.vmid} is stopped and cannot be set to {self.payload.desired_status}",
+        status = await ProxmoxCompute().get_vm_status(vmid=instance.state.vmid)
+        if status == "stopped" and self.payload.desired_status not in (ProxmoxComputeStatus.START, ProxmoxComputeStatus.TERMINATE):
+            return await self.fail(
+                f"VMID {instance.state.vmid} is stopped and cannot be set to {self.payload.desired_status}",
             )
-            return
 
-        if status == "running" and self.payload.desired_status == ComputeStatus.START:
-            await self.redis.hset(name=self.payload.redis_name, key="state", value=ComputeState.RUNNING.value)
-            await self.succeed(f"VMID {manifest.metadata.vmid} already running.")
-            return
+        if status == "running" and self.payload.desired_status == ProxmoxComputeStatus.START:
+            await client.set_instance_status(id=self.payload.id, status=ComputeStatus.RUNNING)
+            return await self.succeed(f"VMID {instance.state.vmid} already running.")
 
-        await self.update_state(name=self.payload.redis_name, status=self.payload.desired_status)
+        await client.set_instance_status(id=self.payload.id, status=ProxmoxComputeStatus.get_state(status=status))
 
     async def provision(self) -> None:
         """Change the state of the LXC container to the desired state."""
-        manifest = VMManifest.load(name=self.payload.manifest)
-
+        instance = await VMClient().get_instance(id=self.payload.id)
         match self.payload.desired_status:
-            case ComputeStatus.STOP:
-                await self.stop(vmid=manifest.metadata.vmid)
-            case ComputeStatus.SHUTDOWN:
-                await self.stop(vmid=manifest.metadata.vmid, shutdown=True)
-            case ComputeStatus.START:
-                await self.start(vmid=manifest.metadata.vmid)
-            case ComputeStatus.REBOOT:
-                await self.reboot(vmid=manifest.metadata.vmid)
-            case ComputeStatus.TERMINATE:
-                await self.terminate(vmid=manifest.metadata.vmid)
+            case ProxmoxComputeStatus.STOP:
+                await ProxmoxCompute().stop(vmid=instance.state.vmid)
+            case ProxmoxComputeStatus.SHUTDOWN:
+                await ProxmoxCompute().shutdown(vmid=instance.state.vmid)
+            case ProxmoxComputeStatus.START:
+                await ProxmoxCompute().start(vmid=instance.state.vmid)
+            case ProxmoxComputeStatus.REBOOT:
+                await ProxmoxCompute().reboot(vmid=instance.state.vmid)
+            case ProxmoxComputeStatus.TERMINATE:
+                await ProxmoxCompute().terminate(vmid=instance.state.vmid)
 
     async def finalize(self) -> None:
         """Finalize the state change by updating or cleaning up its state."""
-        manifest = VMManifest.load(name=self.payload.manifest)
-
-        if self.payload.desired_status == ComputeStatus.TERMINATE:
-            manifest.delete()
-            await self.redis.hdel(self.payload.redis_name, "state", "ipv4")  # pyright: ignore[reportGeneralTypeIssues]
-            await self.emit_reflex_events(events=[VMInstancesTableState.cache_clear("running")])
-            return
-
-        await self.update_state(
-            name=self.payload.redis_name, status=self.payload.desired_status, vmid=manifest.metadata.vmid,
-        )
+        if self.payload.desired_status == ProxmoxComputeStatus.TERMINATE:
+            VMClient().delete_instance(id=self.payload.id)

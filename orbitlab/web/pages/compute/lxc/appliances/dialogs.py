@@ -1,26 +1,26 @@
 """OrbitLab LXC Dialogs."""
 
+import asyncio
 from collections.abc import AsyncGenerator
 from typing import Final
 
 import reflex as rx
 from reflex.event import EventCallback, EventSpec
 
-from orbitlab.data_types import ApplianceType, FrontendEvents, StorageContentType
-from orbitlab.manifest.compute_templates.appliances import BaseApplianceManifest, CustomApplianceManifest
-from orbitlab.manifest.nodes import NodeManifest
+from orbitlab.data_types import ApplianceType, FrontendEvents, StorageContentType, TemplateWorkflowStatus
 from orbitlab.proxmox.compute_templates import ApplianceInfo
-from orbitlab.web import components
-from orbitlab.web.defaults import ClusterDefaults
-from orbitlab.web.utilities import EventGroup, get_worker
+from orbitlab.redis.clients import ApplianceClient
+from orbitlab.redis.models import BaseApplianceConfig, CustomApplianceConfig
+from orbitlab.web import tailwind
+from orbitlab.web.global_state import SelectionDefaults, SelectOptions
+from orbitlab.web.utilities import EventGroup, create_workflow, get_redis_value
 
-from .models import ApplianceItemDownload, CreateCustomApplianceForm
 from .progress_panels import GeneralConfigurationPanel as CustomGeneralPanel
 from .progress_panels import ReviewPanel as CustomReviewPanel
 from .progress_panels import WorkflowConfigurationPanel
 from .states import (
     CustomApplianceState,
-    CustomApplianceTableState,
+    ApplianceWorkflowLogsViewDialogState,
     DeleteApplianceState,
     DownloadApplianceState,
 )
@@ -32,39 +32,35 @@ class DownloadApplianceDialog(EventGroup):
     @staticmethod
     @rx.event
     async def set_node(state: DownloadApplianceState, template: str, name: str) -> None:
-        """Set the node for a template and update available storage options."""
-        state.download_configs[template].node = name
-        state.download_configs[template].available_storage = NodeManifest.load(
-            name=name,
-        ).list_storages(content_type=StorageContentType.VZTMPL)
+        """Set the node for a template."""
+        state.download_configs[template] = name
 
     @staticmethod
     @rx.event
     async def submit(state: DownloadApplianceState, form: dict) -> FrontendEvents:
         """Handle the submission of the appliance download form."""
-        template: str = form["template"]
-        state.download_configs[template].downloading = True
         appliance = (
-            next(iter(apl for apl in state.system_appliances if apl.template == template))
+            next(iter(apl for apl in state.system_appliances if apl.template == form["template"]))
             if state.appliance_view == ApplianceType.SYSTEM
-            else next(iter(apl for apl in state.turnkey_appliances if apl.template == template))
+            else next(iter(apl for apl in state.turnkey_appliances if apl.template == form["template"]))
         )
-        manifest = BaseApplianceManifest.create_from_appliance_info(
-            node=form["node"],
-            storage=form["storage"],
-            appliance=appliance,
+        client = ApplianceClient()
+        appliance_id = await client.generate_appliance_id(appliance_type="base")
+        await client.set_appliance(
+            appliance_type="base",
+            config=BaseApplianceConfig(
+                id=appliance_id,
+                node=form["node"],
+                storage=form["storage"],
+                template=appliance.template,
+                description=appliance.description,
+            )
         )
-        worker = get_worker()
-        error = await worker.create_workflow(
-            name="appliance.download",
-            version="v1",
-            payload={"manifest": manifest.name},
-        )
-        if error:
+        if error := await create_workflow(name="appliance.download", version="v1", payload={"id": appliance_id}):
             return rx.toast.error(error)
         return [
-            components.Dialog.close(DownloadApplianceDialog.dialog_id),
-            rx.toast.info(f"Downloading {manifest.spec.template}..."),
+            tailwind.Dialog.close(DownloadApplianceDialog.dialog_id),
+            rx.toast.info(f"Downloading {appliance_id}..."),
         ]
 
     @staticmethod
@@ -82,7 +78,9 @@ class DownloadApplianceDialog(EventGroup):
     @classmethod
     def __appliance__(cls, appliance: ApplianceInfo) -> rx.Component:
         """Create a grid list item component for a system appliance."""
-        return components.GridList.Item(
+        selected_node = DownloadApplianceState.download_configs.get(appliance.template, default="").to(str)
+        storage_options = SelectOptions.node_storage_options.get(selected_node, {}).to(dict).get(StorageContentType.VZTMPL, []).to(list[str])
+        return tailwind.GridList.Item(
             rx.el.div(
                 rx.el.div(
                     rx.el.h3(
@@ -108,20 +106,17 @@ class DownloadApplianceDialog(EventGroup):
                         value=appliance.template,
                         class_name="hidden",
                     ),
-                    components.Select(
-                        DownloadApplianceState.nodes,
-                        default_value=DownloadApplianceState.download_configs[appliance.template]
-                        .to(ApplianceItemDownload)
-                        .node,
+                    tailwind.Select(
+                        SelectOptions.node_options,
+                        default_value=SelectionDefaults.default_node,
                         placeholder="Select Node",
                         name="node",
                         required=True,
                         on_change=lambda node: cls.set_node(appliance.template, node),
                     ),
-                    components.Select(
-                        DownloadApplianceState.download_configs[appliance.template]
-                        .to(ApplianceItemDownload)
-                        .available_storage,
+                    tailwind.Select(
+                        storage_options,
+                        default_value=SelectionDefaults.default_vztmpl_storage,
                         placeholder="Select Storage",
                         name="storage",
                         required=True,
@@ -131,11 +126,7 @@ class DownloadApplianceDialog(EventGroup):
                     class_name="flex-col space-y-2",
                 ),
                 rx.el.div(
-                    rx.cond(
-                        DownloadApplianceState.download_configs[appliance.template].to(ApplianceItemDownload).downloading,
-                        components.OrbitLabLogo(size=38, animated=True),
-                        components.Buttons.Primary("Download", form=f"form-{appliance.template}"),
-                    ),
+                    tailwind.Buttons.Primary("Download", form=f"form-{appliance.template}"),
                     class_name="w-full flex items-center justify-center my-2"
                 ),
                 class_name="flex flex-col items-center justify-center",
@@ -147,23 +138,23 @@ class DownloadApplianceDialog(EventGroup):
 
     def __new__(cls) -> rx.Component:
         """Create and return the download appliance dialog component."""
-        return components.Dialog(
+        return tailwind.Dialog(
             "Select Appliance to Download",
             rx.el.form(id=cls.form_id, on_submit=cls.submit),
             rx.el.div(
-                components.RadioGroup(
-                    components.RadioGroup.Item(
+                tailwind.RadioGroup(
+                    tailwind.RadioGroup.Item(
                         "system",
                         on_change=cls.set_appliance_view("system"),
                         value=DownloadApplianceState.appliance_view,
                     ),
-                    components.RadioGroup.Item(
+                    tailwind.RadioGroup.Item(
                         "turnkey",
                         on_change=cls.set_appliance_view("turnkey"),
                         value=DownloadApplianceState.appliance_view,
                     ),
                 ),
-                components.Input(placeholder="Search appliances...", icon="search", on_change=cls.search_appliances),
+                tailwind.Input(placeholder="Search appliances...", icon="search", on_change=cls.search_appliances),
                 class_name="flex items-center justify-between mb-4 space-x-4",
             ),
             rx.scroll_area(
@@ -172,14 +163,14 @@ class DownloadApplianceDialog(EventGroup):
                         DownloadApplianceState.appliance_view,
                         (
                             ApplianceType.TURNKEY,
-                            components.GridList(
+                            tailwind.GridList(
                                 rx.foreach(
                                     DownloadApplianceState.turnkey_appliances,
                                     lambda apl: cls.__appliance__(apl),
                                 ),
                             ),
                         ),
-                        components.GridList(
+                        tailwind.GridList(
                             rx.foreach(
                                 DownloadApplianceState.system_appliances,
                                 lambda apl: cls.__appliance__(apl),
@@ -192,7 +183,7 @@ class DownloadApplianceDialog(EventGroup):
                 class_name="flex-grow",
             ),
             rx.el.div(
-                components.Buttons.Secondary("Close", on_click=components.Dialog.close(cls.dialog_id)),
+                tailwind.Buttons.Secondary("Close", on_click=tailwind.Dialog.close(cls.dialog_id)),
                 class_name="w-full flex justify-end mt-4",
             ),
             on_open=DownloadApplianceState.load,
@@ -209,23 +200,19 @@ class CustomApplianceDialog(EventGroup):
     async def start_appliance_creation(state: CustomApplianceState, base_appliance: str) -> FrontendEvents:
         """Initialize appliance creation from a base appliance and open the dialog."""
         state.form_data["base_appliance"] = base_appliance
-        state.form_data["node"] = await state.get_var_value(ClusterDefaults.proxmox_node)
-        state.form_data["storage"] = await state.get_var_value(ClusterDefaults.vztmpl_storage)
-        state.form_data["rootfs"] = await state.get_var_value(ClusterDefaults.rootdir_storage)
-        return components.Dialog.open(CustomApplianceDialog.dialog_id)
+        state.form_data["node"] = await state.get_var_value(SelectionDefaults.default_node)
+        state.form_data["storage"] = await state.get_var_value(SelectionDefaults.default_vztmpl_storage)
+        state.form_data["rootfs"] = await state.get_var_value(SelectionDefaults.default_rootdir_storage)
+        return tailwind.Dialog.open(CustomApplianceDialog.dialog_id)
 
     @staticmethod
     @rx.event
     async def validate_general(state: CustomApplianceState, form: dict) -> FrontendEvents:
         """Update the form data with new values and proceed to the next step in the progress panel."""
-        if not state.edit_mode:
-            name = form["name"]
-            if name in CustomApplianceManifest.get_existing():
-                return rx.toast.error(f"Appliance with name '{name}' already exists.")
         form["memory"] = int(form["memory"])
         form["swap"] = int(form["swap"])
         state.form_data.update(form)
-        return components.ProgressPanels.next(CustomApplianceDialog.progress_id)
+        return tailwind.ProgressPanels.next(CustomApplianceDialog.progress_id)
 
     @staticmethod
     @rx.event
@@ -240,36 +227,42 @@ class CustomApplianceDialog(EventGroup):
                 return rx.toast.error(f"Step {step_name}: {error}")
             steps.append(state.steps_config[step["id"]])
         state.form_data["workflow_steps"] = steps
-        return components.ProgressPanels.next(CustomApplianceDialog.progress_id)
+        return tailwind.ProgressPanels.next(CustomApplianceDialog.progress_id)
 
     @staticmethod
     @rx.event
     async def create_appliance(state: CustomApplianceState, form: dict) -> FrontendEvents:
         """Create the custom appliance with the configured settings and workflow steps."""
         state.form_data.update(form)
-        if state.edit_mode:
-            manifest = CustomApplianceManifest.load(name=state.appliance_id)
-            manifest.update(form_data=CreateCustomApplianceForm.model_validate(state.form_data))
-        else:
-            manifest = CustomApplianceManifest.create(
-                form_data=CreateCustomApplianceForm.model_validate(state.form_data),
+        client = ApplianceClient()
+        appliance_id = await client.generate_appliance_id(appliance_type="custom")
+        volume_id = await client.get_volume_id(id=state.form_data["base_appliance"])
+        await client.set_appliance(
+            appliance_type="custom",
+            config=CustomApplianceConfig(
+                id=appliance_id,
+                name=state.form_data["name"],
+                base_appliance_id=state.form_data["base_appliance"],
+                volume_id=volume_id,
+                node=state.form_data["node"],
+                storage=state.form_data["rootfs"],
+                cores=int(state.form_data["cores"]),
+                memory=int(state.form_data["memory"]),
+                swap=int(state.form_data["swap"]),
+                sector=state.form_data["sector"],
+                steps=state.form_data["workflow_steps"],
             )
+        )
         return [
             CustomApplianceDialog.reset,
-            CustomApplianceDialog.run_workflow(manifest.name),
+            CustomApplianceDialog.run_workflow(appliance_id),
         ]
 
     @staticmethod
     @rx.event
     async def run_workflow(_: rx.State, name: str) -> AsyncGenerator[EventSpec | EventCallback, None]:
         """Run the workflow for the specified custom appliance by name."""
-        worker = get_worker()
-        error = await worker.create_workflow(
-            name="appliance.custom",
-            version="v1",
-            payload={"manifest": name},
-        )
-        if error:
+        if error := await create_workflow(name="appliance.custom", version="v1", payload={"manifest": name}):
             return rx.toast.error(error)
         return [
             rx.toast.info(f"Initiating {name} workflow..."),
@@ -282,8 +275,8 @@ class CustomApplianceDialog(EventGroup):
         """Cancel the appliance creation process and reset the dialog state."""
         state.reset()
         return [
-            components.Dialog.close(CustomApplianceDialog.dialog_id),
-            components.ProgressPanels.reset(CustomApplianceDialog.progress_id),
+            tailwind.Dialog.close(CustomApplianceDialog.dialog_id),
+            tailwind.ProgressPanels.reset(CustomApplianceDialog.progress_id),
         ]
 
     dialog_id: Final = "create-appliance-dialog"
@@ -291,25 +284,25 @@ class CustomApplianceDialog(EventGroup):
 
     def __new__(cls) -> rx.Component:
         """Create and return the dialog."""
-        return components.Dialog(
+        return tailwind.Dialog(
             CustomApplianceState.dialog_title,
-            components.ProgressPanels(
-                components.ProgressPanels.Step(
+            tailwind.ProgressPanels(
+                tailwind.ProgressPanels.Step(
                     "General Configuration",
                     CustomGeneralPanel(),
                     validate=cls.validate_general,
                 ),
-                components.ProgressPanels.Step(
+                tailwind.ProgressPanels.Step(
                     "Workflow Steps",
                     WorkflowConfigurationPanel(),
                     validate=cls.validate_wf_steps,
                 ),
-                components.ProgressPanels.Step(
+                tailwind.ProgressPanels.Step(
                     "Review & Verify",
                     CustomReviewPanel(),
                     validate=cls.create_appliance,
                 ),
-                cancel_button=components.Buttons.Secondary("Cancel", on_click=cls.reset),
+                cancel_button=tailwind.Buttons.Secondary("Cancel", on_click=cls.reset),
                 progress_id=cls.progress_id,
             ),
             dialog_id=cls.dialog_id,
@@ -322,15 +315,16 @@ class DeleteApplianceDialog(EventGroup):
 
     @staticmethod
     @rx.event
-    async def confirm(state: DeleteApplianceState, name: str) -> FrontendEvents:
+    async def confirm(state: DeleteApplianceState, appliance_id: str) -> FrontendEvents:
         """Set appliance name to delete and open dialog."""
         state.reset()
-        state.name = name
-        if name in CustomApplianceManifest.get_existing():
+        state.appliance_id = appliance_id
+        custom_appliances = await state.get_var_value(SelectOptions.custom_image_options)
+        if appliance_id in custom_appliances.values():
             state.appliance_type = "custom"
         else:
             state.appliance_type = "base"
-        return components.Dialog.open(DeleteApplianceDialog.dialog_id)
+        return tailwind.Dialog.open(DeleteApplianceDialog.dialog_id)
 
     @staticmethod
     @rx.event
@@ -342,17 +336,11 @@ class DeleteApplianceDialog(EventGroup):
     @rx.event
     async def delete(state: DeleteApplianceState) -> FrontendEvents:
         """Delete a custom appliance from Proxmox and remove its manifest."""
-        worker = get_worker()
-        error = await worker.create_workflow(
-            name="appliance.delete",
-            version="v1",
-            payload={"manifest": state.name, "appliance_type": state.appliance_type},
-        )
-        if error:
+        if error := await create_workflow(name="appliance.delete", version="v1", payload={"id": state.appliance_id, "appliance_type": state.appliance_type}):
             return rx.toast.error(error)
         return [
             DeleteApplianceDialog.close,
-            rx.toast.info(f"Deleting {state.name}..."),
+            rx.toast.info(f"Deleting {state.appliance_id}..."),
         ]
 
     @staticmethod
@@ -360,18 +348,18 @@ class DeleteApplianceDialog(EventGroup):
     async def close(state: DeleteApplianceState) -> FrontendEvents:
         """Cancel custom appliance deletion and close the dialog."""
         state.reset()
-        return components.Dialog.close(DeleteApplianceDialog.dialog_id)
+        return tailwind.Dialog.close(DeleteApplianceDialog.dialog_id)
 
     dialog_id: Final = "confirm-delete-appliance-dialog"
 
     def __new__(cls) -> rx.Component:
         """Create and return dialog component."""
-        return components.Dialog(
-            f"Delete {DeleteApplianceState.name}",
+        return tailwind.Dialog(
+            f"Delete {DeleteApplianceState.appliance_id}",
             rx.el.div(
                 rx.text(
                     "You are about to delete custom LXC appliance '",
-                    rx.el.span(DeleteApplianceState.name, class_name="font-bold"),
+                    rx.el.span(DeleteApplianceState.appliance_id, class_name="font-bold"),
                     rx.el.span(
                         """'. This will delete the manifest and the appliance from Proxmox Storage. Any existing
                         compute created from this appliance will not be affected.
@@ -381,13 +369,13 @@ class DeleteApplianceDialog(EventGroup):
                 rx.text("If you are sure you want to delete this appliance, type its name below."),
                 class_name="w-full flex-col space-y-6 my-8",
             ),
-            components.Input(
-                placeholder=DeleteApplianceState.name,
+            tailwind.Input(
+                placeholder=DeleteApplianceState.appliance_id,
                 on_change=cls.update_confirmation,
             ),
             rx.el.div(
-                components.Buttons.Secondary("Cancel", on_click=cls.close),
-                components.Buttons.Primary(
+                tailwind.Buttons.Secondary("Cancel", on_click=cls.close),
+                tailwind.Buttons.Primary(
                     "Delete",
                     disabled=DeleteApplianceState.delete_disabled,
                     on_click=cls.delete,
@@ -403,36 +391,86 @@ class WorkflowLogsViewDialog(EventGroup):
     """View custom appliance workflow logs."""
 
     @staticmethod
-    @rx.event
-    async def view_workflow_logs(state: CustomApplianceTableState, name: str) -> FrontendEvents:
-        """Set the workflow to view and open the dialog."""
-        state.workflow_to_view = name
-        return components.Dialog.open(WorkflowLogsViewDialog.dialog_id)
+    @rx.event(background=True)
+    async def refresh_logs(state: ApplianceWorkflowLogsViewDialogState) -> FrontendEvents | None:
+        while state.countdown_refresh_seconds != 0:
+            if not state.view_workflow:
+                return
+            async with state:
+                state.countdown_refresh_seconds -= 1
+            await asyncio.sleep(1)
+        async with state:
+            state.logs = await get_redis_value(name=f"ol:appliance:{state.view_workflow}", key="logs")
+            state.countdown_refresh_seconds = 5
+        status = await ApplianceClient().get_workflow_status(id=state.view_workflow)
+        if status not in (TemplateWorkflowStatus.FAILED, TemplateWorkflowStatus.SUCCEEDED):
+            state.workflow_running = True
+            return [
+                WorkflowLogsViewDialog.refresh_logs,
+                rx.call_script(
+                    "document.getElementById('custom-lxc-workflow-logs').scrollIntoView({ behavior: 'smooth', block: 'end' });"
+                ),
+            ]
+        state.workflow_running = False
+        return rx.call_script(
+            "document.getElementById('custom-lxc-workflow-logs').scrollIntoView({ behavior: 'smooth', block: 'end' });"
+        )
 
     @staticmethod
     @rx.event
-    async def close(state: CustomApplianceTableState) -> FrontendEvents:
+    async def view_workflow_logs(state: ApplianceWorkflowLogsViewDialogState, name: str) -> FrontendEvents:
+        """Set the workflow to view and open the dialog."""
+        state.view_workflow = name
+        return [
+            WorkflowLogsViewDialog.refresh_logs,
+            tailwind.Dialog.open(WorkflowLogsViewDialog.dialog_id)
+        ]
+
+    @staticmethod
+    @rx.event
+    async def close(state: ApplianceWorkflowLogsViewDialogState) -> FrontendEvents:
         """Close the dialog."""
-        state.reset()
-        return components.Dialog.close(WorkflowLogsViewDialog.dialog_id)
+        state.view_workflow = ""
+        state.workflow_running = False
+        state.logs = ""
+        state.countdown_refresh_seconds = 5
+        return tailwind.Dialog.close(WorkflowLogsViewDialog.dialog_id)
 
     dialog_id: Final = "appliance-workflow-logs-view-dialog"
 
     def __new__(cls) -> rx.Component:
         """Create and return dialog component."""
-        return components.Dialog(
-            f"{CustomApplianceTableState.workflow_to_view} Workflow Logs",
+        return tailwind.Dialog(
+            f"{ApplianceWorkflowLogsViewDialogState.view_workflow} Workflow Logs",
             rx.el.div(
-                rx.code_block(
-                    language="shell-session",
-                    code=CustomApplianceTableState.logs,
-                    code_tag_props={"style": {"whiteSpace": "pre-wrap"}},
-                    show_line_numbers=True,
+                rx.cond(
+                    ApplianceWorkflowLogsViewDialogState.logs != "",
+                    rx.code_block(
+                        language="log",
+                        code=ApplianceWorkflowLogsViewDialogState.logs,
+                        code_tag_props={"style": {"whiteSpace": "pre-wrap"}},
+                        show_line_numbers=False,
+                        id=rx.Var.create("custom-lxc-workflow-logs"),
+                    ),
+                    rx.el.div(
+                        tailwind.OrbitLabLogo(animated=True),
+                        class_name="w-full h-full flex items-center justify-center"
+                    ),
                 ),
                 class_name="w-full h-full overflow-auto",
             ),
             rx.el.div(
-                components.Buttons.Secondary("Close", on_click=cls.close),
+                tailwind.Buttons.Secondary(
+                    rx.el.div(
+                        "Close",
+                        rx.cond(
+                            ApplianceWorkflowLogsViewDialogState.workflow_running,
+                            rx.progress(value=ApplianceWorkflowLogsViewDialogState.countdown_refresh_seconds, max=5),
+                            rx.fragment(),
+                        )
+                    ),
+                    on_click=cls.close,
+                ),
                 class_name="w-full flex justify-end space-x-4 my-4",
             ),
             dialog_id=cls.dialog_id,

@@ -5,13 +5,11 @@ from typing import Final, cast
 
 import reflex as rx
 
-from orbitlab.constants import Directories
-from orbitlab.data_types import FrontendEvents, WorkflowStepType
-from orbitlab.manifest.compute_templates.workflow_models import FileConfig, WorkflowStep
-from orbitlab.web import components
-from orbitlab.web.defaults import ClusterDefaults
-from orbitlab.web.pages.nodes.states import ProxmoxState
+from orbitlab.data_types import FrontendEvents, StorageContentType, WorkflowStepType
+from orbitlab.web import tailwind
+from orbitlab.web.global_state import SelectOptions, SelectionDefaults
 from orbitlab.web.utilities import EventGroup
+from orbitlab.worker.workflows.models import FileConfig, WorkflowStep
 
 from .states import CustomApplianceState
 
@@ -21,46 +19,31 @@ class GeneralConfigurationPanel(EventGroup):
 
     @staticmethod
     @rx.event
-    async def set_node(state: CustomApplianceState, node: str) -> None:
+    async def set_node(state: CustomApplianceState, node: str) -> FrontendEvents:
         """Set the selected node and clear storage selection."""
         state.form_data["node"] = node
-        if "storage" in state.form_data:
-            del state.form_data["storage"]
-
-    @staticmethod
-    @rx.event
-    async def set_storage(state: CustomApplianceState, storage: str) -> None:
-        """Set the storage selection in the form data."""
-        state.form_data["storage"] = storage
-
-    @staticmethod
-    @rx.event
-    async def set_rootdir(state: CustomApplianceState, storage: str) -> None:
-        """Set the storage selection in the form data."""
-        state.form_data["rootdir"] = storage
-
-    @staticmethod
-    @rx.event
-    async def set_sector(state: CustomApplianceState, sector: str) -> None:
-        """Set the sector name."""
-        state.form_data["sector"] = sector
-
-    @staticmethod
-    @rx.event
-    async def set_subnet(state: CustomApplianceState, subnet: str) -> None:
-        """Set the subnet name."""
-        state.form_data["subnet"] = subnet
+        return [
+            rx.set_value("custom-lxc-appliance-temp-storage", ""),
+            rx.set_value("custom-lxc-appliance-storage", "")
+        ]
 
     def __new__(cls) -> rx.Component:
         """Create and return the Progress Panel components."""
+        selected_node = CustomApplianceState.form_data.get("node", default=SelectionDefaults.default_node).to(str)
+        node_storage_options = SelectOptions.node_storage_options.get(
+            selected_node, default="",
+        ).to(dict[StorageContentType, list[str]])
+        vztmpl_storage_options = node_storage_options.get(StorageContentType.VZTMPL, default=[]).to(list[str])
+        rootdir_storage_options = node_storage_options.get(StorageContentType.ROOTDIR, default=[]).to(list[str])
         return rx.fragment(
-            components.FieldSet(
-                "Proxmox",
-                components.FieldSet.Field(
+            tailwind.FieldSet(
+                "Appliance Configuration",
+                tailwind.FieldSet.Field(
                     "Appliance Name: ",
-                    components.Input(
+                    tailwind.Input(
                         placeholder="My Appliance",
-                        default_value=CustomApplianceState.name,
+                        auto_complete="off",
+                        default_value=CustomApplianceState.form_data.get("name", ""),
                         min="1",
                         max="128",
                         name="name",
@@ -68,84 +51,87 @@ class GeneralConfigurationPanel(EventGroup):
                         class_name="w-full",
                     ),
                 ),
-                components.FieldSet.Field(
+                tailwind.FieldSet.Field(
                     "Base Appliance: ",
-                    components.Select(
-                        CustomApplianceState.available_appliances,
-                        default_value=CustomApplianceState.base_appliance,
+                    tailwind.Select(
+                        SelectOptions.base_appliance_options,
+                        default_value=CustomApplianceState.form_data.get("base_appliance", ""),
                         placeholder="Select Base Appliance",
                         name="base_appliance",
                         required=True,
                         class_name="w-full",
                     ),
                 ),
-                components.FieldSet.Field(
+            ),
+            tailwind.FieldSet(
+                "Proxmox Configuration",
+                tailwind.FieldSet.Field(
                     "Node: ",
-                    components.Select(
-                        ProxmoxState.node_names,
+                    tailwind.Select(
+                        SelectOptions.node_options,
                         placeholder="Select Node",
-                        default_value=ClusterDefaults.proxmox_node,
+                        default_value=selected_node,
                         on_change=cls.set_node,
                         name="node",
                         required=True,
                         class_name="w-full",
                     ),
                 ),
-                components.FieldSet.Field(
+                tailwind.FieldSet.Field(
                     "Appliance Storage: ",
-                    components.Select(
-                        CustomApplianceState.available_storage,
-                        default_value=CustomApplianceState.storage,
-                        on_change=cls.set_storage,
+                    tailwind.Select(
+                        vztmpl_storage_options,
+                        default_value=CustomApplianceState.form_data.get("storage", SelectionDefaults.default_vztmpl_storage),
                         placeholder="Select Storage",
                         name="storage",
                         required=True,
                         class_name="w-full",
+                        id="custom-lxc-appliance-storage"
                     ),
                 ),
-                components.FieldSet.Field(
-                    "Rootdir Storage: ",
-                    components.Select(
-                        CustomApplianceState.available_rootfs,
-                        default_value=ClusterDefaults.rootdir_storage,
-                        on_change=cls.set_rootdir,
+                tailwind.FieldSet.Field(
+                    "Temp Disk Storage: ",
+                    tailwind.Select(
+                        rootdir_storage_options,
+                        default_value=CustomApplianceState.form_data.get("rootfs", SelectionDefaults.default_rootdir_storage),
                         placeholder="Select Storage",
                         name="rootfs",
                         required=True,
                         class_name="w-full",
+                        id="custom-lxc-appliance-temp-storage"
                     ),
                 ),
-                components.FieldSet.Field(
+            ),
+            tailwind.FieldSet(
+                "Machine Configuration",
+                tailwind.FieldSet.Field(
+                    "Sector",
+                    tailwind.Select(
+                        SelectOptions.sector_options,
+                        value=CustomApplianceState.form_data.get("sector", ""),
+                        name="sector",
+                        required=True,
+                        class_name="w-full",
+                    ),
+                ),
+                tailwind.FieldSet.Field(
                     "Memory (GiB): ",
-                    components.Slider(
-                        default_value=CustomApplianceState.memory_gb,
+                    tailwind.Slider(
+                        default_value=CustomApplianceState.form_data.get("memory", 2).to(float),
                         min=1,
                         max=12,
                         name="memory",
                         required=True,
                     ),
                 ),
-                components.FieldSet.Field(
+                tailwind.FieldSet.Field(
                     "Swap (GiB): ",
-                    components.Slider(
-                        default_value=CustomApplianceState.swap_gb,
+                    tailwind.Slider(
+                        default_value=CustomApplianceState.form_data.get("swap", 1).to(float),
                         min=1,
-                        max=12,
+                        max=4,
                         name="swap",
                         required=True,
-                    ),
-                ),
-            ),
-            components.FieldSet(
-                "Network Configuration",
-                components.FieldSet.Field(
-                    "Sector",
-                    components.Select(
-                        ClusterDefaults.available_sectors,
-                        value=CustomApplianceState.sector,
-                        on_change=cls.set_sector,
-                        required=True,
-                        class_name="w-full",
                     ),
                 ),
             ),
@@ -165,7 +151,7 @@ class FilesWorkflowStep(EventGroup):
                 uploaded_files: list[FileConfig] = []
                 state.uploading = True
                 for file in selected_files:
-                    path: Path = Directories.CUSTOM_APPLIANCES / state.form_data["name"] / file.name
+                    path: Path = state.form_data["name"] / file.name
                     path.parent.mkdir(parents=True, exist_ok=True)
                     data = await file.read()
 
@@ -180,7 +166,7 @@ class FilesWorkflowStep(EventGroup):
     async def configure_files(state: CustomApplianceState, step_id: int) -> FrontendEvents:
         """Configure files for a specific workflow step."""
         state.files_data = state.steps_config[step_id].files
-        return components.Dialog.open(FilesWorkflowStep.dialog_id)
+        return tailwind.Dialog.open(FilesWorkflowStep.dialog_id)
 
     @staticmethod
     @rx.event
@@ -214,7 +200,7 @@ class FilesWorkflowStep(EventGroup):
     def reset(state: CustomApplianceState) -> rx.event.EventCallback:
         """Cancel the current file upload operation."""
         state.files_data = None
-        return components.Dialog.close(FilesWorkflowStep.dialog_id)
+        return tailwind.Dialog.close(FilesWorkflowStep.dialog_id)
 
     dialog_id: Final = "files-workflow-step-edit-dialog"
     upload_id: Final = "files-workflow-step-upload"
@@ -235,7 +221,7 @@ class FilesWorkflowStep(EventGroup):
         return rx.el.div(
             rx.el.div(
                 rx.el.p("Source: "),
-                components.Input(
+                tailwind.Input(
                     value=source,
                     disabled=True,
                 ),
@@ -243,7 +229,7 @@ class FilesWorkflowStep(EventGroup):
             ),
             rx.el.div(
                 rx.el.p("Destination: "),
-                components.Input(
+                tailwind.Input(
                     default_value=destination,
                     pattern=r"^\/(?:[A-Za-z0-9._\-]+(?:\/[A-Za-z0-9._\-]+)*)?$",
                     name=source,
@@ -264,14 +250,14 @@ class FilesWorkflowStep(EventGroup):
             rx.cond(
                 CustomApplianceState.uploading,
                 rx.el.div(
-                    components.Buttons.Primary("Cancel", on_click=cls.cancel_upload),
-                    components.ProgressBars.Basic(value=CustomApplianceState.upload_progress),
+                    tailwind.Buttons.Primary("Cancel", on_click=cls.cancel_upload),
+                    tailwind.ProgressBars.Basic(value=CustomApplianceState.upload_progress),
                     class_name="flex w-full items-center justify-center space-x-4",
                 ),
                 rx.cond(
                     files.to(bool),
                     rx.fragment(
-                        components.Dialog(
+                        tailwind.Dialog(
                             f"Configure Files Step: {step.name}",
                             rx.el.form(id=form_id, on_submit=lambda data: cls.save_files(sort_id, data)),
                             rx.callout(
@@ -287,19 +273,19 @@ class FilesWorkflowStep(EventGroup):
                                 class_name="divide-y divide-white/10",
                             ),
                             rx.el.div(
-                                components.Buttons.Secondary("Cancel", on_click=cls.reset),
-                                components.Buttons.Primary("Save & Close", form=form_id),
+                                tailwind.Buttons.Secondary("Cancel", on_click=cls.reset),
+                                tailwind.Buttons.Primary("Save & Close", form=form_id),
                                 class_name="w-full flex justify-end space-x-2 mt-10",
                             ),
                             dialog_id=cls.dialog_id,
                             class_name="max-w-[80vw] w-[80vw] max-h-[80vh] h-fit",
                         ),
-                        components.Buttons.Primary(
+                        tailwind.Buttons.Primary(
                             "Configure Files",
                             on_click=cls.configure_files(sort_id),
                         ),
                     ),
-                    components.UploadBox(
+                    tailwind.UploadBox(
                         upload_id=cls.upload_id,
                         on_drop=cls.handle_uploads(
                             rx.upload_files(upload_id=cls.upload_id, on_upload_progress=cls.on_upload_progress),
@@ -336,21 +322,21 @@ class ScriptWorkflowStep(EventGroup):
     async def reset(state: CustomApplianceState) -> rx.event.EventCallback:
         """Reset the script editing state by clearing script data and step ID."""
         state.script_value = state.default_script_value = ""
-        return components.Dialog.close(ScriptWorkflowStep.dialog_id)
+        return tailwind.Dialog.close(ScriptWorkflowStep.dialog_id)
 
     @staticmethod
     @rx.event
     async def edit_script(state: CustomApplianceState, step_id: int) -> rx.event.EventCallback:
         """Set the script step ID for editing."""
         state.script_value = state.default_script_value = state.steps_config[step_id].script or ""
-        return components.Dialog.open(ScriptWorkflowStep.dialog_id)
+        return tailwind.Dialog.open(ScriptWorkflowStep.dialog_id)
 
     dialog_id: Final = "script-workflow-step-edit-dialog"
 
     def __new__(cls, sort_id: int | rx.Var[int]) -> rx.Component:
         """Create and return the Script workflow step."""
         return rx.el.div(
-            components.Dialog(
+            tailwind.Dialog(
                 "Edit Workflow Script",
                 rx.callout(
                     """
@@ -360,20 +346,20 @@ class ScriptWorkflowStep(EventGroup):
                     icon="info",
                     class_name="my-2",
                 ),
-                components.Editor(
+                tailwind.Editor(
                     value=CustomApplianceState.default_script_value,
                     on_change=cls.on_script_change,
                     language="shell",
                 ),
                 rx.el.div(
-                    components.Buttons.Secondary("Cancel", on_click=cls.reset),
-                    components.Buttons.Primary("Save & Close", on_click=cls.save_script(sort_id)),
+                    tailwind.Buttons.Secondary("Cancel", on_click=cls.reset),
+                    tailwind.Buttons.Primary("Save & Close", on_click=cls.save_script(sort_id)),
                     class_name="w-full flex justify-end space-x-2 mt-10",
                 ),
                 dialog_id=cls.dialog_id,
                 class_name="max-w-[80vw] w-[80vw] max-h-[80vh] h-fit",
             ),
-            components.Buttons.Primary("Edit Script", on_click=cls.edit_script(sort_id)),
+            tailwind.Buttons.Primary("Edit Script", on_click=cls.edit_script(sort_id)),
             class_name="flex grow items-center justify-center space-x-6",
         )
 
@@ -421,12 +407,12 @@ class WorkflowConfigurationPanel(EventGroup):
 
     @staticmethod
     @rx.event
-    async def update_step_order(state: CustomApplianceState, steps: list[components.SortableItem]) -> None:
+    async def update_step_order(state: CustomApplianceState, steps: list[tailwind.SortableItem]) -> None:
         """Update the order of workflow steps in the appliance configuration."""
         state.step_order = steps
 
     @classmethod
-    def sortable_step(cls, item: components.SortableItem) -> rx.Component:
+    def sortable_step(cls, item: tailwind.SortableItem) -> rx.Component:
         """Create a sortable workflow step component."""
         sort_id = rx.Var.create(item["id"]).to(int)
         step_config: WorkflowStep = CustomApplianceState.steps_config.get(sort_id, {}).to(WorkflowStep)
@@ -441,7 +427,7 @@ class WorkflowConfigurationPanel(EventGroup):
             ),
             rx.el.div(
                 rx.el.div(
-                    components.Input(
+                    tailwind.Input(
                         value=step_config.name,
                         on_change=lambda name: cls.set_step_name(sort_id, name),
                         placeholder="Step Name (Required)",
@@ -467,7 +453,7 @@ class WorkflowConfigurationPanel(EventGroup):
                     ),
                     rx.fragment(),
                 ),
-                components.Buttons.Icon(
+                tailwind.Buttons.Icon(
                     "trash",
                     on_click=lambda: cls.delete_step(sort_id),
                 ),
@@ -488,18 +474,18 @@ class WorkflowConfigurationPanel(EventGroup):
         """Create and return the Progress Panel components."""
         return rx.fragment(
             rx.el.div(
-                components.Menu(
-                    components.Buttons.Primary(
+                tailwind.Menu(
+                    tailwind.Buttons.Primary(
                         "Add Workflow Step",
                         icon="chevron-down",
                     ),
-                    components.Menu.Item("Script Step", on_click=cls.add_step(WorkflowStepType.SCRIPT)),
-                    components.Menu.Item("Files Step", on_click=cls.add_step(WorkflowStepType.FILES)),
+                    tailwind.Menu.Item("Script Step", on_click=cls.add_step(WorkflowStepType.SCRIPT)),
+                    tailwind.Menu.Item("Files Step", on_click=cls.add_step(WorkflowStepType.FILES)),
                 ),
                 rx.text("Drag steps to change execution order."),
                 class_name="w-full flex justify-between mb-4",
             ),
-            components.Sortable(
+            tailwind.Sortable(
                 rx.foreach(CustomApplianceState.step_order, lambda item: cls.sortable_step(item)),
                 data=CustomApplianceState.step_order,
                 on_change=cls.update_step_order,
@@ -528,35 +514,22 @@ class ReviewPanel:
                 icon="info",
                 class_name="my-2",
             ),
-            components.DataList(
-                components.DataList.Item(
-                    components.DataList.Label("Name"),
-                    components.DataList.Value(CustomApplianceState.name),
+            tailwind.DataList(
+                tailwind.DataList.Item(
+                    tailwind.DataList.Label("Name"),
+                    tailwind.DataList.Value(CustomApplianceState.form_data.get("name")),
                 ),
-                components.DataList.Item(
-                    components.DataList.Label("Base"),
-                    components.DataList.Value(CustomApplianceState.base_appliance),
+                tailwind.DataList.Item(
+                    tailwind.DataList.Label("Base"),
+                    tailwind.DataList.Value(CustomApplianceState.form_data.get("base_appliance")),
                 ),
-                components.DataList.Item(
-                    components.DataList.Label("Storage"),
-                    components.DataList.Value(CustomApplianceState.storage),
+                tailwind.DataList.Item(
+                    tailwind.DataList.Label("Storage"),
+                    tailwind.DataList.Value(CustomApplianceState.form_data.get("storage")),
                 ),
-                # components.DataList.Item(
-                #     components.DataList.Label("Root CAs"),
-                #     components.DataList.Value(
-                #         rx.cond(
-                #             CustomApplianceState.root_certs.length() > 0,
-                #             rx.foreach(
-                #                 CustomApplianceState.root_certs,
-                #                 lambda name: components.Badge(name, color_scheme="blue"),
-                #             ),
-                #             rx.text("N/A", class_name="font-light italic"),
-                #         ),
-                #     ),
-                # ),
-                components.DataList.Item(
-                    components.DataList.Label("Workflow Steps"),
-                    components.DataList.Value(
+                tailwind.DataList.Item(
+                    tailwind.DataList.Label("Workflow Steps"),
+                    tailwind.DataList.Value(
                         rx.el.div(
                             rx.foreach(
                                 CustomApplianceState.step_names_in_order,

@@ -5,18 +5,18 @@ import random
 from typing import Literal
 
 import reflex as rx
-import websocket
 from starlette.applications import Starlette
 from starlette.endpoints import WebSocketEndpoint
 from starlette.exceptions import WebSocketException
 from starlette.routing import WebSocketRoute
 from starlette.websockets import WebSocket
+from websockets.asyncio import client as websocket
 
-from orbitlab.constants import Directories
-from orbitlab.data_types import InitializationStatus
+# from orbitlab.constants import Directories
+# from orbitlab.data_types import InitializationStatus
 from orbitlab.proxmox import Proxmox
-from orbitlab.web import components
-from orbitlab.web.components.initializer import ConfigureBackplaneDialog, ConfigureDefaultsDialog, ErrorDialog, InitializationState
+from orbitlab.web import tailwind
+# from orbitlab.web.tailwind.initializer import ConfigureBackplaneDialog, ConfigureDefaultsDialog, ErrorDialog, InitializationState
 from orbitlab.web.pages import pages  # noqa: F401
 from orbitlab.worker import Worker
 from orbitlab.web.layout import orbitlab_page
@@ -28,12 +28,17 @@ def dashboard() -> rx.Component:
         class_name="w-full flex space-x-6",
     )
 
+
+class FooState(rx.State):
+    bar: bool = True
+
     
 @rx.page("/")
 def home() -> rx.Component:
     """Home page that displays either the main dashboard or splash page based on configuration status."""
     return rx.cond(
-        InitializationState.status == InitializationStatus.COMPLETE,
+        # InitializationState.status == InitializationStatus.COMPLETE,
+        FooState.bar,
         dashboard(),
         rx.box(
             rx.box(
@@ -65,31 +70,31 @@ def home() -> rx.Component:
                 ),
                 class_name="absolute inset-0",
             ),
-            components.OrbitLabLogo(size=150, animated=True),
-            rx.box(
-                rx.text(
-                    "OrbitLab",
-                    class_name="text-[#E8F1FF] font-semibold tracking-widest text-2xl mt-8 fade-title",
-                ),
-                rx.cond(
-                    InitializationState.status == InitializationStatus.NOT_STARTED,
-                    rx.el.div(
-                            components.Buttons.Primary("Initialize", on_click=InitializationState.phase_1),
-                            class_name=(
-                                "w-full flex items-center justify-center mt-6 animate-[fadeInUp_3s_ease-in-out] "
-                                "relative z-10"
-                            ),
-                        ),
-                    rx.text(
-                        InitializationState.process_info,
-                        class_name="text-[#36E2F4] text-sm mt-2 fade-subtitle",
-                    ),    
-                ),
-                class_name="flex flex-col items-center justify-center",
-            ),
-            ErrorDialog(),
-            ConfigureBackplaneDialog(),
-            ConfigureDefaultsDialog(),
+            tailwind.OrbitLabLogo(size=150, animated=True),
+            # rx.box(
+            #     rx.text(
+            #         "OrbitLab",
+            #         class_name="text-[#E8F1FF] font-semibold tracking-widest text-2xl mt-8 fade-title",
+            #     ),
+            #     rx.cond(
+            #         InitializationState.status == InitializationStatus.NOT_STARTED,
+            #         rx.el.div(
+            #             tailwind.Buttons.Primary("Initialize", on_click=InitializationState.phase_1),
+            #             class_name=(
+            #                 "w-full flex items-center justify-center mt-6 animate-[fadeInUp_3s_ease-in-out] "
+            #                 "relative z-10"
+            #             ),
+            #         ),
+            #         rx.text(
+            #             InitializationState.process_info,
+            #             class_name="text-[#36E2F4] text-sm mt-2 fade-subtitle",
+            #         ),    
+            #     ),
+            #     class_name="flex flex-col items-center justify-center",
+            # ),
+            # ErrorDialog(),
+            # ConfigureBackplaneDialog(),
+            # ConfigureDefaultsDialog(),
             class_name=(
                 "relative flex flex-col items-center justify-center min-h-screen w-full "
                 "bg-[#0E1015] overflow-hidden select-none"
@@ -102,7 +107,7 @@ class TerminalProxy(WebSocketEndpoint):
     """WebSocket endpoint that proxies terminal connections between the browser and Proxmox."""
 
     encoding = "text"
-    proxmox: websocket.WebSocket | None = None
+    proxmox: websocket.ClientConnection | None = None
     task: asyncio.Task | None = None
     event: asyncio.Event = asyncio.Event()
 
@@ -113,10 +118,9 @@ class TerminalProxy(WebSocketEndpoint):
 
         while True:
             if self.event.is_set():
-                self.proxmox.close(status=0)
+                await self.proxmox.close()
                 break
-            data = await asyncio.to_thread(self.proxmox.recv)
-            data = data.encode() if isinstance(data, str) else data
+            data = await self.proxmox.recv()
             await websocket.send_bytes(data=data)
 
     async def on_connect(self, websocket: WebSocket) -> None:
@@ -124,16 +128,16 @@ class TerminalProxy(WebSocketEndpoint):
         await websocket.accept()
         compute_type: Literal["qemu", "lxc"] = websocket.path_params["compute_type"]
         vmid = int(websocket.path_params["vmid"])
-        self.proxmox = Proxmox().get_terminal_websocket(compute_type=compute_type, vmid=vmid)
+        self.proxmox = await Proxmox().get_terminal_websocket(compute_type=compute_type, vmid=vmid)
         self.event = asyncio.Event()
-        if not self.proxmox.recv() == b"OK":
+        if not await self.proxmox.recv(decode=True) == "OK":
             raise WebSocketException(code=1)
         self.task = asyncio.create_task(self.proxmox_to_browser(websocket=websocket))
 
     async def on_receive(self, _: WebSocket, data: str) -> None:
         """Handle data received from the browser and forward it to the Proxmox websocket."""
         if self.proxmox:
-            self.proxmox.send(data)
+            await self.proxmox.send(data)
 
     async def on_disconnect(self, websocket: WebSocket, _: int) -> None:
         """Handle the disconnection of the WebSocket and clean up resources."""
@@ -151,5 +155,5 @@ app = rx.App(
         ],
     ),
 )
-Directories().make_dirs()
+# Directories().make_dirs()
 app.register_lifespan_task(Worker().start)
