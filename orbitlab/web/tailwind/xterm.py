@@ -11,42 +11,116 @@ XTERM_CONSTANTS = Template(
   const terminalRef = useRef(null);
   const socketRef = useRef(null);
   const socketUrl = `${$socket_url}`;
-  const termOptions = {
-    rows: 34,
-    cols: 197,
-    fontFamily: "Fira Code, courier-new, courier, monospace",
-    cursorBlink: true
-  };
-  const fitAddon = new FitAddon();
 """,
 )
-SOCKET_HOOKS: Final = """
+SOCKET_HOOKS: Final = r"""
   useEffect(() => {
     if (!ref.current || !socketUrl) return;
     if (terminalRef.current) return;
-    let term = new Terminal(termOptions)
+    
+    let term = new Terminal({
+      fontFamily: "Fira Code, courier-new, courier, monospace",
+      cursorBlink: true,
+      reflowCursorLine: false,
+      scrollback: 1000,
+    });
+    
+    const fitAddon = new FitAddon();
+    term.loadAddon(fitAddon);
     term.open(ref.current);
+    
     terminalRef.current = term;
-    let websocket = new WebSocket(`${socketUrl}`)
+    
+    const websocket = new WebSocket(`${socketUrl}`)
     websocket.binaryType = "arraybuffer";
-    websocket.onopen = () => {
-      term.loadAddon(fitAddon);
-      term.loadAddon(new WebglAddon());
+    socketRef.current = websocket;
+    
+    let isOpen = false;
+    let lastCols = 0;
+    let lastRows = 0;
+    let resizeFrame = null;
+    
+    function sendResize() {
+      if (!isOpen) return;
+
+      const box = ref.current.getBoundingClientRect();
+
       fitAddon.fit();
+
+      const cols = term.cols;
+      const rows = term.rows;
+
+      if (!cols || !rows) return;
+
+      websocket.send(`1:${cols}:${rows}:`);
     }
+    
+    function scheduleResize() {
+      if (resizeFrame !== null) {
+        cancelAnimationFrame(resizeFrame);
+      }
+
+      resizeFrame = requestAnimationFrame(() => {
+        resizeFrame = requestAnimationFrame(() => {
+          resizeFrame = null;
+          sendResize();
+        });
+      });
+    }
+    
+    websocket.onopen = async () => {
+      isOpen = true;
+      
+      if (document.fonts?.ready) {
+        await document.fonts.ready;
+      }
+      
+      scheduleResize();
+    };
+    
     websocket.onmessage = (event) => {
       term.write(new Uint8Array(event.data));
     };
-    term.onResize(function (size) {
-      websocket.send("1:" + size.cols + ":" + size.rows + ":");
+    
+    term.onResize(({ cols, rows }) => {
+      if (!isOpen) return;
+      if (!cols || !rows) return;
+      if (cols === lastCols && rows === lastRows) return;
+
+      lastCols = cols;
+      lastRows = rows;
+
+      websocket.send(`1:${cols}:${rows}:`);
     });
+    
     term.onData((data) => {
       websocket.send(`0:${data.length}:${data}`);
     });
-    window.addEventListener('resize', function() {
-      fitAddon.fit();
+    
+    const resizeObserver = new ResizeObserver(() => {
+      scheduleResize();
     });
-    socketRef.current = websocket;
+    
+    resizeObserver.observe(ref.current);
+    
+    window.addEventListener("resize", scheduleResize);
+    
+    scheduleResize();
+    
+    return () => {
+      window.removeEventListener("resize", scheduleResize);
+      resizeObserver.disconnect();
+
+      if (resizeFrame !== null) {
+        cancelAnimationFrame(resizeFrame);
+      }
+
+      websocket.close();
+      term.dispose();
+
+      socketRef.current = null;
+      terminalRef.current = null;
+    };
   }, [socketUrl])
 """
 
@@ -95,7 +169,7 @@ class Xterm(rx.Component):
                 class_name="toast-body",
                 id=rx.Var.create("toastMessage"),
             ),
-            class_name="w-full h-full shrink grow",
+            class_name="h-[85vh] min-h-0 w-full",
         ).render()
         rendered["props"].extend(["ref:ref"])
         return rendered

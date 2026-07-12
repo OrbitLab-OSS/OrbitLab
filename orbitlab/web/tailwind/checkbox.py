@@ -92,6 +92,8 @@ class CheckboxGroup:
 class CheckboxProps(TypedDict, total=False):
     """TypedDict for properties of the Checkbox component."""
 
+    text: str | rx.Var[str]
+    checked: bool | rx.Var[bool]
     on_click: FrontendEvents
     form: str
     name: str
@@ -104,12 +106,16 @@ class Checkbox:
 
     def __new__(cls, **props: Unpack[CheckboxProps]) -> rx.Component:
         """Create and return the component."""
+        text = props.pop("text", "")
+        checked = props.pop("checked", None)
         class_name = props.pop("class_name", "")
         form = props.pop("form", None)
         name = props.pop("name", None)
         required = props.pop("required", None)
         on_click = props.pop("on_click", None)
         return rx.checkbox(
+            text=text,
+            checked=checked,
             form=form,
             name=name,
             required=required,

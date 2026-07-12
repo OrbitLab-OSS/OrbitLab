@@ -20,9 +20,10 @@ from .progress_bars import ProgressBars
 from .progress_panels import ProgressPanels
 from .radio_group import RadioGroup
 from .selects import MultiSelect, Select
-from .sidebar import SideBar
 from .slider import Slider
 from .sortable import Sortable, SortableItem
+from .table import Table
+from .tabs import Tabs
 from .upload import UploadBox
 from .xterm import Terminal
 
@@ -49,10 +50,11 @@ __all__ = (
     "ProgressPanels",
     "RadioGroup",
     "Select",
-    "SideBar",
     "Slider",
     "Sortable",
     "SortableItem",
+    "Table",
+    "Tabs",
     "Terminal",
     "UploadBox",
     "WithStatus",

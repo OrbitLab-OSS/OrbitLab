@@ -20,7 +20,7 @@ class PrimaryButtonProps(TypedDict, total=False):
 class PrimaryButton:
     """A primary button component with gradient styling and optional icon."""
 
-    def __new__(cls, text: str, *, icon: str | None = None, **props: Unpack[PrimaryButtonProps]) -> rx.Component:
+    def __new__(cls, text: str | rx.Component, *, icon: str | None = None, **props: Unpack[PrimaryButtonProps]) -> rx.Component:
         """Create and return the primary button component."""
         class_name = props.pop("class_name", "")
         props["class_name"] = (
@@ -49,7 +49,7 @@ class SecondaryButtonProps(TypedDict, total=False):
 class SecondaryButton:
     """A secondary button component with subtle styling."""
 
-    def __new__(cls, text: str, *, icon: str | None = None, **props: Unpack[SecondaryButtonProps]) -> rx.Component:
+    def __new__(cls, text: str | rx.Component, *, icon: str | None = None, **props: Unpack[SecondaryButtonProps]) -> rx.Component:
         """Create and return the secondary button component."""
         class_name = props.pop("class_name", "")
         props["class_name"] = (

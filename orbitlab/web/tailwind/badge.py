@@ -122,7 +122,7 @@ class Badge:
 
     def __new__(
         cls,
-        label: str,
+        label: str | rx.Var[str],
         color_scheme: Colors = "default",
         size: Literal["sm", "md", "lg"] = "md",
         icon: str | None = None,

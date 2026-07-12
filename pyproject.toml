@@ -12,7 +12,7 @@ dependencies = [
     "pydantic==2.12.3",
     "pydantic-settings==2.11.0",
     "PyYAML==6.0.3",
-    "reflex==0.8.28",
+    "reflex==0.9.3",
     "reflex-vite-config-plugin==0.0.4",
     "redis", # Let reflex set the version
     "starlette", # Let reflex set the version

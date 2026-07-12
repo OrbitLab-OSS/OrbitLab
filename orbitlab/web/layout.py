@@ -5,8 +5,8 @@ from collections.abc import Callable
 import reflex as rx
 
 from orbitlab.data_types import InitializationStatus
-# from orbitlab.web.tailwind.initializer import InitializationState
-from orbitlab.web.tailwind.sidebar import SideBar
+from orbitlab.web.global_state import OrbitLabState
+from orbitlab.web.components.sidebar import SideBar
 
 
 def require_configuration(page: Callable[[], rx.Component]) -> Callable[[], rx.Component]:
@@ -14,8 +14,7 @@ def require_configuration(page: Callable[[], rx.Component]) -> Callable[[], rx.C
 
     def wrapped() -> rx.Component:
         return rx.cond(
-            # InitializationState.status == InitializationStatus.COMPLETE,
-            True,
+            OrbitLabState.status == InitializationStatus.COMPLETE,
             page(),
             rx.el.div(on_mount=rx.redirect("/")),
         )
@@ -34,14 +33,11 @@ def orbitlab_page(page: Callable[[], rx.Component]) -> Callable[[], rx.Component
                 SideBar.Section(
                     text="Compute",
                     href="/compute",
-                    icon="server-cog",
+                    icon="cpu",
                     children=[
-                        SideBar.Header(title="LXC"),
-                        SideBar.NavItem(icon="cpu", text="Instances", href="/compute/lxc/instances"),
-                        SideBar.NavItem(icon="file-box", text="Appliances", href="/compute/lxc/appliances"),
-                        SideBar.Header(title="VM"),
-                        SideBar.NavItem(icon="cpu", text="Instances", href="/compute/vm/instances"),
-                        SideBar.NavItem(icon="hard-drive", text="Images", href="/compute/vm/images"),
+                        SideBar.Header(title="Templates"),
+                        SideBar.NavItem(icon="file-box", text="Appliances", href="/compute/appliances"),
+                        SideBar.NavItem(icon="hard-drive", text="Images", href="/compute/images"),
                         SideBar.Header(title="Autoscaling"),
                         SideBar.NavItem(icon="server-cog", text="VM Pools", href="/compute/autoscaling"),
                     ]
@@ -74,12 +70,13 @@ def orbitlab_page(page: Callable[[], rx.Component]) -> Callable[[], rx.Component
                 SideBar.Section(icon="network", text="Sectors", href="/sectors"),
                 SideBar.Section(icon="warehouse", text="DockFS", href="/dock-fs"),
                 SideBar.Section(icon="database", text="DataCore", href="/datacore"),
+                SideBar.Section(icon="chevrons-left-right-ellipsis", text="Conduit", href="/conduit"),
                 SideBar.Section(icon="logs", text="Logs", href="/logs"),
             ),
             rx.el.div(
                 page(),
                 class_name=(
-                    "h-full w-full flex-col p-4 "
+                    "w-full h-full flex-col p-4 overflow-auto "
                     "bg-gradient-to-b from-gray-200 to-gray-400 "
                     "dark:from-[#111317] dark:to-[#151820] "
                     "text-gray-800 dark:text-[#E8F1FF] "

@@ -1,21 +1,23 @@
 """OrbitLab Event Worker."""
 
 import asyncio
-from functools import cached_property
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
+from functools import cached_property
+import os
 import sys
 
+import reflex as rx
 from pydantic import ValidationError
+from redis.asyncio import Redis
 from redis.exceptions import ResponseError
 
 from orbitlab.constants import EventStreams
-from orbitlab.data_types import EventStatus, RedisStreamEvent
+from orbitlab.data_types import EventStatus
 from orbitlab.proxmox import Proxmox
-from orbitlab.web.utilities import get_redis
 from orbitlab.worker import workflows
-from orbitlab.worker.events import OrbitLabEvent, WorkflowEvent
+from orbitlab.worker.events import NotificationEvent, OrbitLabEvent, WorkflowEvent
 
 
 class WorkflowRegistry:
@@ -52,6 +54,11 @@ def _register_workflows_() -> WorkflowRegistry:
 class Worker:
     """OrbitLab Event Worker."""
 
+    GROUP_NAME = "ol:workers"
+    READ_COUNT = 10
+    BLOCK_MS = 5_000
+    CLAIM_IDLE_MS = 30_000
+
     registry = _register_workflows_()
 
     def __init__(self) -> None:
@@ -59,21 +66,75 @@ class Worker:
         self.task: asyncio.Task | None = None
         self._event = asyncio.Event()
         self._workflows = set()
-        self.redis = get_redis()
+        self.redis = self._get_redis()
+
+    @classmethod
+    def _get_redis(cls) -> Redis:
+        if os.environ.get("ORBITLAB_DEV"):
+            return Redis.from_url(os.environ["ORBITLAB_REDIS_URL"])
+        return Redis(db=10)
 
     @cached_property
     def node(self) -> str:
         return Proxmox().__node__
 
-    async def _parse_workflow_event(self, stream_event: RedisStreamEvent) -> WorkflowEvent:
-        _, event_data = stream_event
-        _event_data = event_data[0]
-        _, payload = _event_data
-        return WorkflowEvent.model_validate({key.decode(): value.decode() for key, value in payload.items()})
+    @staticmethod
+    def _decode(value: bytes | str | memoryview) -> str:
+        if isinstance(value, memoryview):
+            value = value.tobytes()
+        if isinstance(value, bytes):
+            return value.decode()
+        return value
+
+    def _parse_stream_events(self, stream_events: list) -> list[tuple[str, dict[str, str]]]:
+        if not stream_events:
+            return []
+        _, event_data = stream_events[0]
+        return [
+            (
+                self._decode(event_id),
+                {self._decode(key): self._decode(value) for key, value in payload.items()},
+            )
+            for event_id, payload in event_data
+        ]
+
+    async def _parse_workflow_event(self, stream_event: tuple[str, dict[str, str]]) -> tuple[str, WorkflowEvent]:
+        event_id, payload = stream_event
+        return event_id, WorkflowEvent.model_validate(payload)
+
+    async def _read_pending_stream_events(self, stream: str, consumer: str) -> list[tuple[str, dict[str, str]]]:
+        _next_start, event_data, _deleted = await self.redis.xautoclaim(
+            name=stream,
+            groupname=self.GROUP_NAME,
+            consumername=consumer,
+            min_idle_time=self.CLAIM_IDLE_MS,
+            start_id="0-0",
+            count=self.READ_COUNT,
+        )
+        return [
+            (
+                self._decode(event_id),
+                {self._decode(key): self._decode(value) for key, value in payload.items()},
+            )
+            for event_id, payload in event_data
+        ]
+
+    async def _read_stream_events(self, stream: str, consumer: str) -> list[tuple[str, dict[str, str]]]:
+        if pending_events := await self._read_pending_stream_events(stream=stream, consumer=consumer):
+            return pending_events
+        return self._parse_stream_events(
+            await self.redis.xreadgroup(
+                groupname=self.GROUP_NAME,
+                consumername=consumer,
+                streams={stream: ">"},
+                count=self.READ_COUNT,
+                block=self.BLOCK_MS,
+            ),
+        )
 
     async def _handle_workflow_event(self, event: WorkflowEvent) -> None:
         if event.status in (EventStatus.SUCCEEDED, EventStatus.FAILED):
-            self.redis.xdel(name=event.redis_key)
+            await self.redis.delete(event.redis_key)
         elif workflow_cls := self.registry.resolve(event=event):
             workflow = asyncio.create_task(workflow_cls(redis=self.redis, event=event).run_once())
             self._workflows.add(workflow)
@@ -93,32 +154,21 @@ class Worker:
 
     async def _ensure_group(self, group: str, stream: str) -> None:
         try:
-            stream_groups = await self.redis.xinfo_groups(name=stream)
-            for stream_group in stream_groups:
-                if stream_group["name"].decode() == group:
-                    return
+            await self.redis.xgroup_create(name=stream, groupname=group, mkstream=True)
         except ResponseError as err:
-            if "no such key" not in str(err):
+            if "BUSYGROUP" not in str(err):
                 raise
-        await self.redis.xgroup_create(name=stream, groupname=group, mkstream=True)
 
     async def _process_workflows(self) -> None:
-        await self._ensure_group(group="ol:workers", stream=EventStreams.WORKFLOWS)
-        while True:
+        consumer = self.node
+        await self._ensure_group(group=self.GROUP_NAME, stream=EventStreams.WORKFLOWS)
+        while not self._event.is_set():
             try:
-                stream_events = await self.redis.xreadgroup(
-                    groupname="ol:workers",
-                    consumername="pve-1-2",
-                    streams={EventStreams.WORKFLOWS: ">"},
-                    count=1,
-                )
-                if stream_events:
-                    event = await self._parse_workflow_event(stream_event=stream_events[0])
+                stream_events = await self._read_stream_events(stream=EventStreams.WORKFLOWS, consumer=consumer)
+                for stream_event in stream_events:
+                    event_id, event = await self._parse_workflow_event(stream_event=stream_event)
                     await self._handle_workflow_event(event=event)
-                if self._event.is_set():
-                    sys.stdout.write("Exiting Workflow Stream...\n")
-                    break
-                await asyncio.sleep(1)
+                    await self.redis.xack(EventStreams.WORKFLOWS, self.GROUP_NAME, event_id)
             except Exception as err:  # noqa: BLE001
                 await self.redis.xadd(
                     name=EventStreams.SYSTEM_LOGS,
@@ -131,19 +181,16 @@ class Worker:
                     maxlen=5000,
                     approximate=True,
                 )
+        sys.stdout.write("Exiting Workflow Stream...\n")
 
     async def _process_events(self) -> None:
-        await self._ensure_group(group="ol:workers", stream=EventStreams.EVENTS)
-        while True:
+        consumer = self.node
+        await self._ensure_group(group=self.GROUP_NAME, stream=EventStreams.EVENTS)
+        while not self._event.is_set():
             try:
-                stream_events = await self.redis.xreadgroup(
-                    groupname="ol:workers",
-                    consumername=self.node,
-                    streams={EventStreams.EVENTS: ">"},
-                    count=1,
-                )
-                if stream_events:
-                    event = OrbitLabEvent.parse_from_redis(stream_events[0])
+                stream_events = await self._read_stream_events(stream=EventStreams.EVENTS, consumer=consumer)
+                for event_id, payload in stream_events:
+                    event = OrbitLabEvent.model_validate(payload)
                     if error := await self.create_workflow(
                         name=event.event, version=event.version, payload=event.payload,
                     ):
@@ -158,22 +205,51 @@ class Worker:
                             maxlen=5000,
                             approximate=True,
                         )
-                if self._event.is_set():
-                    sys.stdout.write("Exiting Event Stream...\n")
-                    break
-                await asyncio.sleep(1)
+                    await self.redis.xack(EventStreams.EVENTS, self.GROUP_NAME, event_id)
             except Exception as err:  # noqa: BLE001
                 await self.redis.xadd(
                     name=EventStreams.SYSTEM_LOGS,
                     fields={
                         "timestamp": datetime.now(UTC).isoformat(),
                         "level": "Error",
-                        "trace": "worker.worker.Worker._process_workflows",
+                        "trace": "worker.worker.Worker._process_events",
                         "message": str(err),
                     },
                     maxlen=5000,
                     approximate=True,
                 )
+        sys.stdout.write("Exiting Event Stream...\n")
+
+    async def _process_notifications(self) -> None:
+        consumer = self.node
+        await self._ensure_group(group=self.GROUP_NAME, stream=EventStreams.NOTIFICATIONS)
+        while not self._event.is_set():
+            try:
+                stream_events = await self._read_stream_events(stream=EventStreams.NOTIFICATIONS, consumer=consumer)
+                for event_id, payload in stream_events:
+                    notification = NotificationEvent.model_validate(payload)
+                    if notification.level == "INFO":
+                        event = rx.toast.info(notification.message)
+                    if notification.level == "WARN":
+                        event = rx.toast.warning(notification.message)
+                    else:
+                        event = rx.toast.error(notification.message)
+                    await workflows.Workflow.emit_reflex_events(event)
+                    await self.redis.xack(EventStreams.NOTIFICATIONS, self.GROUP_NAME, event_id)
+                    
+            except Exception as err:  # noqa: BLE001
+                await self.redis.xadd(
+                    name=EventStreams.SYSTEM_LOGS,
+                    fields={
+                        "timestamp": datetime.now(UTC).isoformat(),
+                        "level": "Error",
+                        "trace": "worker.worker.Worker._process_notifications",
+                        "message": str(err),
+                    },
+                    maxlen=5000,
+                    approximate=True,
+                )
+        sys.stdout.write("Exiting Notification Stream...\n")
 
     @classmethod
     async def create_workflow(cls, name: str, version: str, payload: dict) -> str:
@@ -186,14 +262,14 @@ class Worker:
             except ValidationError as err:
                 return str(err)
 
-            redis = get_redis()
+            redis = cls._get_redis()
             await redis.set(name=event.redis_key, value=value.model_dump_json())
             await redis.xadd(
                 name=EventStreams.WORKFLOWS,
-                fields=event.model_dump(),
+                fields=event.model_dump(), # pyright: ignore[reportArgumentType]
                 maxlen=5000,
                 approximate=True,
-            )  # pyright: ignore[reportArgumentType]
+            )
             await redis.xadd(
                 name=EventStreams.SYSTEM_LOGS,
                 fields={
@@ -213,7 +289,8 @@ class Worker:
         """Start the worker event loop as an async context manager."""
         workflows = asyncio.create_task(self._process_workflows())
         events = asyncio.create_task(self._process_events())
+        notifications = asyncio.create_task(self._process_notifications())
         yield
         self._event.set()
-        await asyncio.gather(workflows, events)
+        await asyncio.gather(workflows, events, notifications)
         sys.stdout.write("Worker Exited.\n")

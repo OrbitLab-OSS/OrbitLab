@@ -6,14 +6,16 @@ import reflex as rx
 class PageHeader:
     """A page header component with title and action buttons."""
 
-    def __new__(cls, header: str, *actions: rx.Component) -> rx.Component:
+    def __new__(cls, header: str | rx.Component, *actions: rx.Component) -> rx.Component:
         """Create and return the page header component."""
+        if isinstance(header, str):
+            header = rx.el.h2(
+                header,
+                class_name="truncate text-2xl font-bold tracking-tight text-gray-900 dark:text-[#E8F1FF]",
+            )
         return rx.el.div(
             rx.el.div(
-                rx.el.h2(
-                    header,
-                    class_name=("truncate text-2xl font-bold tracking-tight text-gray-900 dark:text-[#E8F1FF]"),
-                ),
+                header,
                 class_name="min-w-0 flex-1",
             ),
             rx.el.div(

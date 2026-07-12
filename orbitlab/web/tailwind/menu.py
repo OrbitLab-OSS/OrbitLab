@@ -19,7 +19,7 @@ class ItemProps(TypedDict, total=False):
 class MenuItem:
     """A dropdown menu item component with hover effects and styling."""
 
-    def __new__(cls, text: str | rx.Component, **props: Unpack[ItemProps]) -> rx.Component:
+    def __new__(cls, text: str | rx.Var[str] | rx.Component, **props: Unpack[ItemProps]) -> rx.Component:
         """Create and return the menu item component."""
         danger = props.pop("danger", False)
         class_name = props.get("class_name", "")

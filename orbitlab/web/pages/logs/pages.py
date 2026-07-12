@@ -3,29 +3,10 @@ from typing import Literal
 
 import reflex as rx
 
-from orbitlab.constants import EventStreams
 from orbitlab.data_types import FrontendEvents
+from orbitlab.redis.clients import LogsClient
 from orbitlab.web import tailwind
-from orbitlab.web.utilities import get_redis
 from orbitlab.web.layout import orbitlab_page
-
-
-def _format_logs(redis_result: list[tuple]) -> tuple[str, list[str]]:
-    lines = []
-    last_id = ""
-    for event in redis_result:
-        range_id, data = event
-        if not last_id:
-            last_id = range_id.decode()
-        if b'trace' in data:
-            lines.append(
-                f"{data[b'timestamp'].decode()} - {data[b'level'].decode()} - {data[b'trace'].decode()} - {data[b'message'].decode()}"
-            )
-        else:
-            lines.append(
-                f"{data[b'timestamp'].decode()} - {data[b'level'].decode()} - {data[b'workflow'].decode()} - {data[b'message'].decode()}"
-            )
-    return last_id, lines
 
 
 class LogsState(rx.State):
@@ -81,18 +62,16 @@ class LogsState(rx.State):
 
     @rx.event
     async def manual_refresh(self) -> None:
-        redis = get_redis()
+        client = LogsClient()
         if self.current == "workflows":
-            last_id, workflow_logs = _format_logs(
-                await redis.xrevrange(name=EventStreams.WORKFLOW_LOGS, min=f"({self.workflow_logs_last_id}", max="+")
-            )
+            last_id, workflow_logs = await client.get_workflow_logs()
+            # if there's no new logs, it returns and empty string and empty list
             if last_id:
                 self.workflow_logs_last_id = last_id
             self.workflow_logs = workflow_logs + self.workflow_logs
         else:
-            last_id, system_logs = _format_logs(
-                await redis.xrevrange(name=EventStreams.SYSTEM_LOGS, min=f"({self.system_logs_last_id}", max="+")
-            )
+            last_id, system_logs = await client.get_system_logs()
+            # if there's no new logs, it returns and empty string and empty list
             if last_id:
                 self.system_logs_last_id = last_id
             self.system_logs = system_logs + self.system_logs
@@ -102,9 +81,10 @@ class LogsState(rx.State):
     async def on_load(self) -> FrontendEvents:
         self.auto_refresh = False
         self.countdown_refresh_seconds = 5
-        redis = get_redis()
-        self.system_logs_last_id, self.system_logs = _format_logs(await redis.xrevrange(name=EventStreams.SYSTEM_LOGS, count=50))
-        self.workflow_logs_last_id, self.workflow_logs = _format_logs(await redis.xrevrange(name=EventStreams.WORKFLOW_LOGS, count=50))
+        
+        client = LogsClient()
+        self.system_logs_last_id, self.system_logs = await client.get_system_logs()
+        self.workflow_logs_last_id, self.workflow_logs = await client.get_workflow_logs()
         self.current = "workflows"
 
 
@@ -172,5 +152,5 @@ def logs_dashboard() -> rx.Component:
             on_click=LogsState.stream_logs,
             data_active=LogsState.auto_refresh,
         ),
-        class_name="w-full h-5/6"
+        class_name="w-full min-h-fit max-h-5/6 h-fit"
     )

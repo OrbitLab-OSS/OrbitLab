@@ -7,9 +7,10 @@ import reflex as rx
 from orbitlab.data_types import FrontendEvents
 from orbitlab.redis.clients import SecretsClient
 from orbitlab.web import tailwind
+from orbitlab.web.global_state import OrbitLabState
 from orbitlab.web.utilities import EventGroup
 
-from .states import CreateSecretDialogState, DeleteSecretDialogState, SecretsState
+from .states import CreateSecretDialogState, DeleteSecretDialogState
 
 
 class CreateSecretDialog(EventGroup):
@@ -24,12 +25,12 @@ class CreateSecretDialog(EventGroup):
         )
         return [
             CreateSecretDialog.close,
-            SecretsState.cache_clear("secrets"),
+            OrbitLabState.cache_clear("secrets"),
         ]
 
     @staticmethod
     @rx.event
-    async def toggle_view_secret(state: CreateSecretDialogState) -> FrontendEvents:
+    async def toggle_view_secret(state: CreateSecretDialogState) -> None:
         state.view_secret_value = not state.view_secret_value
 
     @staticmethod
@@ -80,7 +81,7 @@ class CreateSecretDialog(EventGroup):
                         rx.el.div(
                             tailwind.Input(
                                 placeholder="My Secret Value",
-                                type=rx.cond(CreateSecretDialogState.view_secret_value, "text", "password"),
+                                type=rx.cond(CreateSecretDialogState.view_secret_value, "text", "password"), # pyright: ignore[reportArgumentType]
                                 form=cls.form_id,
                                 name="secret_value",
                                 required=True,
@@ -116,12 +117,12 @@ class DeleteSecretDialog(EventGroup):
     async def delete(state: DeleteSecretDialogState) -> FrontendEvents | None:
         """Delete the selected secret and close the dialog."""
         if state.secret:
-            await SecretsClient().delete(secret_name=state.secret.name)
+            await SecretsClient().delete(secret_name=state.secret)
             state.reset()
             return [
-                rx.toast.success(message=f"Deleted secret {state.secret.name}."),
+                rx.toast.success(message=f"Deleted secret {state.secret}."),
                 DeleteSecretDialog.close,
-                SecretsState.cache_clear("secrets"),
+                OrbitLabState.cache_clear("secrets"),
             ]
         return None
 
@@ -143,10 +144,10 @@ class DeleteSecretDialog(EventGroup):
     def __new__(cls) -> rx.Component:
         """Create and return dialog component."""
         return tailwind.Dialog(
-            f"Delete {DeleteSecretDialogState.secret.name}",
+            f"Delete {DeleteSecretDialogState.secret}",
             rx.el.div(
                 rx.text(
-                    f"You are about to delete secret `{DeleteSecretDialogState.secret.name}` and all of its versions. To "
+                    f"You are about to delete secret `{DeleteSecretDialogState.secret}` and all of its versions. To "
                     "confirm this action, type 'delete' in the text box below.",
                 ),
                 class_name="w-full flex-col space-y-6 my-8",

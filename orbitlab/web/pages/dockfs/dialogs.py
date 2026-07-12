@@ -5,7 +5,7 @@ from typing import Final
 import reflex as rx
 
 from orbitlab.data_types import FrontendEvents, StorageContentType
-from orbitlab.redis.clients import BackplaneClient, DockFSClient
+from orbitlab.redis.clients import DockFSClient, SectorClient
 from orbitlab.redis.models import DockFSConfig
 from orbitlab.web import tailwind
 from orbitlab.web.global_state import SelectOptions, SelectionDefaults
@@ -21,23 +21,22 @@ class CreateDockFSDialog(EventGroup):
     @rx.event
     async def submit(_: rx.State, form: dict) -> FrontendEvents:
         """Submit the DockFS creation form."""
-        dock_fs = await DockFSClient().set_dockfs(
-            config=DockFSConfig(
-                id=await DockFSClient().generate_cluster_id(),
-                name=form["name"],
-                virtual_router_id=await BackplaneClient().get_next_available_vrid(),
-                vip=await BackplaneClient().get_next_available_ip(),
-                memory_gb=int(form["memory"]),
-                sockets=int(form["sockets"]),
-                cores=int(form["cores"]),
-                capacity_gb=int(form["capacity_gb"]),
-                storage=form["storage"]
-            )
-        )
-        if error := await create_workflow(name="dockfs.create", version="v1", payload={"id": dock_fs.config.id}):
+        client = DockFSClient()
+        sector = SectorClient()
+        sector_vip = await sector.acquire_vip(id=form["sector"])
+
+        form["id"] = await client.generate_cluster_id()
+        form["sector_name"] = (await sector.get(id=form["sector"])).config.alias
+        form["virtual_router_id"] = sector_vip.virtual_router_id
+        form["vip"] = sector_vip.address
+        
+        config = DockFSConfig.model_validate(form)
+        await client.set_dockfs(config=config)
+        
+        if error := await create_workflow(name="dockfs.create", version="v1", payload={"id": config.id}):
             return rx.toast.error(error)
         return [
-            rx.toast.info(f"Creating {dock_fs.config.name}..."),
+            rx.toast.info(f"Creating {config.id}..."),
             tailwind.Dialog.close(CreateDockFSDialog.dialog_id),
         ]
 
@@ -78,6 +77,15 @@ class CreateDockFSDialog(EventGroup):
                             form=cls.form_id,
                             name="capacity_gb",
                             required=True,
+                        ),
+                    ),
+                    tailwind.FieldSet.Field(
+                        "Sector",
+                        tailwind.Select(
+                            SelectOptions.sector_options,
+                            name="sector",
+                            required=True,
+                            class_name="w-full",
                         ),
                     ),
                 ),
@@ -163,7 +171,7 @@ class DeleteDockFSDialog(EventGroup):
     @rx.event
     async def delete(state: DeleteDockFSDialogState) -> FrontendEvents:
         """Delete a custom appliance from Proxmox and remove its manifest."""
-        if error := await create_workflow(name="dockfs.delete", version="v1", payload={"manifest": state.name}):
+        if error := await create_workflow(name="dockfs.delete", version="v1", payload={"id": state.name}):
             return rx.toast.error(error)
         return [
             DeleteDockFSDialog.close,

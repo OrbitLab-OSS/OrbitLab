@@ -4,7 +4,7 @@ from typing import Literal
 import reflex as rx
 
 from orbitlab.data_types import StorageContentType
-from orbitlab.proxmox.compute_templates import ProxmoxComputeTemplates
+from orbitlab.proxmox import Proxmox
 from orbitlab.web.global_state import SelectOptions
 
 
@@ -25,17 +25,17 @@ class CreatePoolDialogState(rx.State):
             bases = await self.get_var_value(SelectOptions.custom_appliance_options)
         else:
             bases = await self.get_var_value(SelectOptions.custom_image_options)
-        return await bases
+        return bases
 
     @rx.var
     def available_storage(self) -> list[str]:
         """Get the available rootfs options for the selected node."""
         if self.node:
             if self.compute_type == "lxc":
-                return ProxmoxComputeTemplates().list_storages_for_node(
+                return Proxmox().list_storages_for_node(
                     node=self.node, content_type=StorageContentType.ROOTDIR,
                 )
-            return ProxmoxComputeTemplates().list_storages_for_node(
+            return Proxmox().list_storages_for_node(
                 node=self.node, content_type=StorageContentType.IMAGES,
             )
         return []

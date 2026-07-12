@@ -1,198 +1,112 @@
 > ⚠️ WARNING  
-> OrbitLab is under ***HEAVY*** active development and is considered **pre-alpha** software.  
-> Expect breaking changes, incomplete features, and sharp edges.  
+> OrbitLab is under ***HEAVY*** active development and is considered **pre-alpha** software. Expect breaking changes, incomplete features, and sharp edges.  
 > ***Do not run in production. Use at your own risk.***
-
-[Screenshots](/docs/orbitlab_screenshots.md)
 
 [Roadmap](/docs/roadmap.md)
 
 # OrbitLab
 
-OrbitLab is a **manifest-driven infrastructure orchestration layer for Proxmox VE**.  
-Its goal is to transform a Proxmox cluster into a **deterministic, cloud-inspired platform** for building fault-tolerant, scalable workloads *without abandoning Proxmox’s native primitives*.
+OrbitLab is an **infrastructure orchestration layer and control plane for Proxmox VE**. It utilizes Proxmox primitives for creating and managing a self-hosted lab environment in a "cloud-like" way in efforts to ensure a fault-tolerant and scalable architecture. OrbitLab is **not** a replacement for Proxmox. In fact, you wouldn't be able to use OrbitLab without Proxmox, as it requires to be installed inside the Proxmox node.
 
-OrbitLab is **not** a replacement for Proxmox.  
-It is a **control plane that formalizes cluster state**, networking, and lifecycle automation using declarative manifests stored directly in the Proxmox Cluster Filesystem (PMXCFS).
-
-This allows you to run OrbitLab on a single Proxmox node, a massive enterprise-grade cluster, or anywhere in-between. It's built for home-labbers, but designed to scale as you do.
-
-## What OrbitLab Is (and Is Not)
-
-I originally started building OrbitLab to help with my home lab in terms of DB resiliency (initially). I wanted to create an RDS-type service where I could spin up PostgreSQL/Patroni database clusters (usually 2 for failover) that was smart enough to
-check db status and reboot/replace if necessary. And then have automatic local DNS resolution within the same network so I can create one with a couple clicks and then use it for self-hosted services that require a DB. It branched out into wanting 
-auto-scaling pools of machines for other workloads (e.g. workers, Docker Swarm nodes, etc.) and being able to integrate local DNS and load balancing (HAproxy) with it as well. 
-
-**OrbitLab is:**
-- A **cluster-aware orchestration system** for Proxmox
-- Opinionated about networking, isolation, and determinism
-- Designed for **HA pools of VMs/LXCs**, not pets (although you can have your pets in OrbitLab).
-- Built to support higher-level services (databases, gateways, PKI, secrets)
-
-**OrbitLab is not:**
-- A generic “cloud abstraction layer”
-- A Kubernetes replacement
-- A dynamic routing playground
-- A multi-cloud control plane
-- A UI-only management tool
-
-If you want **predictable behavior, isolated networks and failure domains, and explicit opinionated control**, OrbitLab is designed for you.
+This screenshots below provide an overview of OrbitLab and some of the services via the UI. More documentation will come, but this has been a long haul project I've worked on off-and-on for over a year and some change now. A lot of the original architecture and methodology has changed, but the ethos remain the same: make home-labbing more fun, less stressful, more resilient, and self-healing (as best as I can).
 
 
-## Core Design Principles
 
-### Declarative Cluster State
+### Tech stack
 
-Everything OrbitLab manages is defined as a **typed manifest**:
-- Cluster
-- Nodes
-- Sectors (OrbitLab's version of a VPC)
-- LXCs
-- Appliances
-- Secrets, certificates, SSH keys
-- Global OrbitLab settings
+OrbitLab installs Redis and Redis Sentinel for configuration and state management. It also uses Reflex as the primary UI, which is essentially Python-wrapped React compiled to static HTML. The `*.deb` installed UI is pretty snappy, but the development leaves a lot to be desired. So, I'm debating about making the swich to NiceGUI, which uses Vue/Quasar but the dev experience is snappier and I can use more Python primitives and get out of a secondary Var management system. The event-driven mechanisms are Redis streams. The eventual goal is to use Redis Sentinel for full Proxmox cluster support.
 
-Manifests are:
-- Validated via Pydantic schemas
-- Stored in PMXCFS
-- Resolved via explicit references
-- Designed to be human-readable and auditable
 
-This makes OrbitLab inherently GitOps-friendly and cluster-aware without inventing a parallel state store.
+## System Initialization
 
-### Proxmox-Native First
+The initialization screen guides users through the initial setup process for OrbitLab.
 
-OrbitLab builds *on top of* Proxmox features instead of reimplementing them:
-- PMXCFS for shared state
-- Proxmox SDN (EVPN/VXLAN)
-- LXC appliances and templates
-- HA groups
-- Native storage backends
-- `pvesh` and API access
+![Initialize](/docs/screenshots/initialize.JPG)
 
-If Proxmox can already do something reliably, OrbitLab can orchestrate it. It doesn’t replace it.
 
-## Architecture Overview
 
-### Control Plane
+## Dashboard
 
-The OrbitLab control plane is responsible for:
-- Discovering cluster state
-- Validating manifests
-- Reconciling desired vs actual state
-- Coordinating actions across nodes
+***HEAVY WIP***
 
-There is no always-on “brain” process required for correctness.  
-State lives in manifests, not memory.
+The main dashboard provides an overview of OrbitLab's infrastructure health.
 
-### Manifest Engine
+![Dashboard](/docs/screenshots/dashboard.JPG)
 
-Manifests are:
-- Schema-driven
-- Strongly typed
-- Explicitly linked via references
-- Serialized back into YAML after validation
 
-This enables:
-- Safe refactoring
-- Dependency resolution
-- Partial reconciliation
-- Predictable upgrades
 
-See the manifest schema system for examples.
+## Sectors
 
-### Networking Model
+Sectors are isolated network segments connected by OrbitLab's Backplane, allowing for CIDR overlap between Sectors without conflict (as the Sector Gateway handles SNAT/DNAT).
+Each sector can also be configured with Conduit (Traefik) or WardLink (WireGuard) appliances. The Conduit appliance provides ingress and load balancing (and TLS), and the 
+WardLink appliance provides a WireGuard connection (in a similar fashion to Conduit) but provides a direct link to the Sector for SSH access. 
 
-All networking configurations managed by OrbitLab have an integrated IPAM for IPv4 allocation and tracking.
+The Sector Gateway uses `frr` and `nftables` to provide Sector routing and SNAT/DNAT with the Backplane. It uses CoreDNS as the primary DNS mechanism and is integrated with the primary Backplane DNS. Technically, all DNS records are stored in Redis. This is to allow Sector-isolated DNS configurations that can all be served from the Backplane. It also uses Dnsmasq as DHCP. 
 
-**Backplane**
-- Cluster-wide EVPN-backed network
-- Fixed CIDR set at initialization
-- Used for inter-node services and gateways
-- Cannot be reconfigured after creation
+> NOTE: SSH key integration is still not fully implemented, but it's on the Roadmap. The main chunks are there, they just need to be wired up correctly. 
 
-**Sectors**
-- Isolated VXLAN-backed L3 environments
-- Overlapping CIDRs allowed
-- Each Sector has:
-  - A Gateway (FRR + nftables)
-  - Internal DNS (***WIP***)
-- All ingress/egress is explicit
+![Sectors](/docs/screenshots/sectors.JPG)
 
-This mirrors cloud-style VPC isolation without requiring VRFs everywhere.
 
-**Future services**
+## Compute Instances
 
-None of these currently exist today, but they are on the roadmap for completion.
+Compute Instances are configured, allocated resources, and then attached to a given Sector. The Sector assigns IPv4 addresses via DHCP and tracks any integrations with other services, like Conduit Pools. All managed infrastructure and user-launched compute is assigned determinstic MAC addresses, which should help keep addressing stable, but it's not a guarantee.
 
-- Sector DNS (CoreDNS): Provides in-Sector hostname/FQDN resolution using `*.orbitlab.internal`.
-- Home LAN DNS (CoreDNS): Allow for local home LAN resolution of OrbitLab endpoints for service access (requires configuring your home router to forward specific zones to OrbitLab's resolver)
-- Database-as-a-Service (ETCD/Patroni/PostgreSQL): A few simple clicks and selections to create resilient databases.
-- Load Balancing (HAProxy): Load Balance across multiple compute instances in a pool using a VIP assigned by the integrated IPAM.
-- Auto-Scaling: Using VM/LXC templates, create pools of compute with configurable health checks to ensure your applications stay highly available.
-- Public Ingress (Cloudflared/Tailscale/Pangolin): User-configurable ingress integrations to provide public access to services within your private Sector.
+OrbitLab treats LXC and QEMU very similarly in a configuration sense, but is aware of the differences when it comes to management. I've also been toying
+with the idea of using customizable T-shirt sizes for faster and easier compute allocation and management.
 
-A key benefit of note here is that you can create multiple Sectors for various services/applications and keep them isolated networking-wise.
-You could use Cloudflare tunnels for HTTP(S) applications in one sector, and Tailscale/Pangolin in another for Jellyfin/Plex streaming with no risk of cross-contamination. Could you
-do this directly in Proxmox? Sure. But OrbitLab helps to make it faster and easier to manage instead of hand-tracking IPs (or integrating another service like Netbox) and compute resources.
+![Compute Instances](/docs/screenshots/compute.JPG)
 
-## Key Capabilities (Current & Near-Term)
 
-### Infrastructure
-- Proxmox cluster discovery
-- Node lifecycle awareness
-- Storage selection and safety checks
-- Appliance-backed LXC provisioning
 
-### Networking
-- Automated EVPN/VXLAN setup
-- Backplane initialization
-- Sector creation and teardown
-- Deterministic gateway behavior
-- In-Sector DNS (***WIP***)
+## LXC/QEMU Management and Customization
 
-### Security Foundations
-- Encrypted secret vault (AES-GCM)
-- Versioned secrets with rollback
-- Internal PKI:
-  - Root CAs
-  - Intermediate CAs
-  - Leaf certificates
-- SSH key lifecycle management
+Here you can download Proxmox's managed LXCs, or OrbitLab's managed QCOW2 images for your own use, and even customize them with workflows. 
 
-### Operational Safety
-- Strong validation before mutation
-- Explicit references instead of implicit discovery
-- Conservative defaults
-- No hidden automation
+![LXC Appliances](/docs/screenshots/custon_lxc.JPG)
 
-## Intended Use Cases
+![VM Appliances](/docs/screenshots/custon_qemu.JPG)
 
-OrbitLab is particularly well-suited for:
 
-- **Home labs that want cloud-like structure**
-- **Small clusters running HA workloads**
-- **Edge deployments with limited resources**
-- **Database-heavy environments**
-- **Infrastructure engineers who value clarity over magic**
 
-## Project Status
+## Secrets Management
 
-OrbitLab is:
-- Actively evolving
-- Opinionated by design
-- Built for correctness first
-- Not yet feature-complete
+Since OrbitLab manages certain infrastructure for you, and most of them require some sort of secret or credential, OrbitLab has built-in secrets management using `AESGCM` 
+encryption. It supports creation and even injection into LXC/QEMU workflow scripts. 
 
-Expect:
-- Schema changes
-- Networking refinements
-- Appliance evolution
-- Better reconciliation logic
+> NOTE: Documentation still needed on workflow scripts, but it's possible using `@OL_SECRET[/my/secret/name]@` where `/my/secret/name` is the name given to your secret in OrbitLab. If the secret is a JSON string, you can use `@OL_SECRET[/my/secret/name][/client_id]@` to access the `client_id` key.
+ 
+![Secrets](/docs/screenshots/secrets.JPG)
 
-## Philosophy
+The Public Key Infrastructure (PKI) management interface provides certificate lifecycle management, including certificate authority operations, certificate issuance, and renewal workflows.
 
-OrbitLab treats infrastructure as:
-> *A system of explicit contracts, not emergent behavior.*
 
-If that resonates with you, you’re the target audience.
+## Proxmox Integration
+
+There is not much here other than displaying the nodes OrbitLab is partnered with (read: *installed on*). Eventually, when cluster support is built, this will be updated to allow for HA group management and maintenance (enable/disable maintenance mode and updating Proxmox).
+
+![Proxmox](/docs/screenshots/proxmox_nodes.JPG)
+
+
+
+## DataCores
+
+DataCores are managed Patroni/PostgreSQL clusters. You can create them with a minimum of 1 replica and the endpooints are static by using VIPs with keepalived that is integrated with Patroni's control and state. This allows for DB failover and even replica termination and recreation. 
+
+![Secrets](/docs/screenshots/datacores.JPG)
+
+
+## DockFS
+
+DockFS is a network fileshare (NFS) active/passive cluster. It creates a simple VM (due to NFS kernel requirements) and attaches a data disk (SCSI1) that is your specified storage size. Upon active node failure, it is stopped, the data disk migrated to the passive node, passive node is flipped to active, and the old node it terminated and replaced. 
+
+![Secrets](/docs/screenshots/dock_fs.JPG)
+
+
+## Conduit
+
+Conduit is a managed Traefik LXC that bridges Proxmox's `vmbr0` with your specified Sector. Assuming `vmbr0` is on your same LAN network as your home and other machines, they should be able to access any service inside your Sector that you configure. Conduit Pools are Traefik Services, and Conduit Endpoints are Traefik Routers. You can also configure a Domain Provider (currently only Cloudflare) which will manage wildcard certificates for a given domain you own. 
+
+![Conduit](/docs/screenshots/conduit.JPG)
+
+![Domain Providers](/docs/screenshots/domain_providers.JPG)

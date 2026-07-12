@@ -2,14 +2,6 @@
 
 import reflex as rx
 
-from orbitlab.web.global_state import OrbitLabState
-
-
-class DataCoreServiceState(OrbitLabState):
-    """State for DataCore service management."""
-
-    confirm_delete_etcd: rx.Field[str] = rx.field(default="")
-
 
 class CreateDataCoreDialogState(rx.State):
     """State for DataCore Creation Dialog."""

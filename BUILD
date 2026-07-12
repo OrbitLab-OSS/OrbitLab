@@ -7,10 +7,6 @@ pex_binary(
     name="reflex",
     entry_point="reflex",
     dependencies=[":pyproject"],
-    env={
-        "REFLEX_BACKEND_PORT": "8081",
-        "REFLEX_FRONTEND_PORT": "8080",
-    },
 )
 
 files(name="assets", sources=["assets/*"])
@@ -21,13 +17,6 @@ resource(
 )
 
 pex_binary(
-    name="orbital-receiver",
-    entry_point="orbitlab.receiver:launch",
-    dependencies=[":pyproject"],
-    interpreter_constraints=[">=3.13"]
-)
-
-pex_binary(
     name="orbitlab-backend",
     entry_point="reflex",
     args=["run"],
@@ -35,9 +24,37 @@ pex_binary(
     interpreter_constraints=[">=3.13"],
     env={
         "REFLEX_BACKEND_ONLY": "True",
-        "REFLEX_BACKEND_PORT": "8081",
-        "REFLEX_FRONTEND_PORT": "8080",
+        "REFLEX_BACKEND_PORT": "8000",
         "REFLEX_ENV_MODE": "prod",
         "REFLEX_SKIP_COMPILE": "True",
     }
+)
+
+adhoc_tool(
+    name="static-html",
+    runnable=":reflex",
+    args=["export", "--frontend-only"],
+    execution_dependencies=[":rxconfig", "orbitlab:orbitlab", ":assets"],
+    output_files=["frontend.zip"],
+    log_output=True,
+)
+
+pex_binary(
+    name="orbitlab-frontend",
+    entry_point="scripts.static_webserver:main",
+    dependencies=["scripts:web-server"],
+    interpreter_constraints=[">=3.13"],
+)
+
+run_shell_command(
+    name="build",
+    command="bash scripts/build-deb.sh",
+    execution_dependencies=[
+        "resources:resources",
+        "scripts:scripts",
+        ":static-html",
+        ":orbitlab-backend",
+        ":orbitlab-frontend",
+        ":rxconfig",
+    ],
 )

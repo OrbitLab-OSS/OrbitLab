@@ -6,6 +6,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from orbitlab.data_types import WorkflowStepType
+from orbitlab.redis.models import File, FileStep, ScriptStep
 
 
 class FileConfig(BaseModel):
@@ -17,6 +18,11 @@ class FileConfig(BaseModel):
     def configured(self) -> bool:
         """Check if the file push operation is properly configured."""
         return bool(self.destination)
+
+    def to_file(self) -> File:
+        if not isinstance(self.destination, Path):
+            self.destination = Path(self.destination)
+        return File(source=self.source, destination=self.destination)
 
 
 class WorkflowStep(BaseModel):
@@ -46,3 +52,10 @@ class WorkflowStep(BaseModel):
         if self.type == WorkflowStepType.SCRIPT and not self.script:
             return "Script step has no configured shell script."
         return ""
+
+    def to_step(self) -> ScriptStep | FileStep:
+        if self.type == WorkflowStepType.FILES and self.files:
+            return FileStep(name=self.name, files=[config.to_file() for config in self.files])
+        if self.type == WorkflowStepType.SCRIPT and self.script:
+            return ScriptStep(name=self.name, script=self.script)
+        raise RuntimeError

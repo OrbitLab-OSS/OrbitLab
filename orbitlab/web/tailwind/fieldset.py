@@ -11,7 +11,7 @@ class FieldItem:
         return rx.el.div(
             rx.el.div(
                 rx.el.p(label),
-                rx.el.p(description, class_name="text-sm opacity-50"),
+                rx.el.p(description, class_name="text-xs opacity-50"),
                 class_name="w-1/3 mr-4 text-base font-semibold text-gray-900 dark:text-[#E8F1FF]",
             ),
             component,

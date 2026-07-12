@@ -4,13 +4,13 @@ from types import FunctionType
 from typing import TypedDict, Unpack
 
 import reflex as rx
-from reflex.components.el.elements.forms import HTMLInputTypeAttribute
+from reflex_components_core.el.elements.forms import HTMLInputTypeAttribute
 
 
 class Props(TypedDict, total=False):
     """Input Component Props."""
 
-    default_value: str | rx.Var[str]
+    default_value: str | rx.Var[str] | None
     on_change: rx.EventHandler[rx.event.input_event] | rx.event.EventCallback | FunctionType
     description: str
     placeholder: str | rx.Var[str]
@@ -40,6 +40,8 @@ class Input:
         error = props.pop("error", None)
         description = props.pop("description", None)
         class_name = props.pop("class_name", "")
+        if "default_value" in props and props["default_value"] is None:
+            props.pop("default_value")
 
         icon_component = (
             rx.el.div(

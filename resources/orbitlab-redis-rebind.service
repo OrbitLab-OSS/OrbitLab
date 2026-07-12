@@ -1,0 +1,7 @@
+[Unit]
+Description=OrbitLab Backplane Redis Socket Rebind
+
+[Service]
+Type=oneshot
+ExecStart=/opt/orbitlab/redis-socket-rebind.sh
+RemainAfterExist=yes

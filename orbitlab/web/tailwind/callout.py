@@ -65,5 +65,5 @@ class Callout:
                     f"data-[type=error]:**:text-red-400 {class_name}"
                 ),
             ),
-            class_name="w-full flex [&:has(input[value]:not([value='']))]:hidden",
+            class_name="w-full flex justify-center [&:has(input[value]:not([value='']))]:hidden",
         )
