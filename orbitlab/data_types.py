@@ -2,38 +2,62 @@
 
 from enum import StrEnum, auto
 from types import FunctionType
-from typing import Literal
+from typing import Literal, TypedDict
 
 from reflex.event import EventCallback, EventHandler, EventSpec
 
-type FrontendEvents = (
-    EventCallback | EventHandler | EventSpec | list[EventCallback | EventHandler | EventSpec] | FunctionType
-)
-type StreamEventData = tuple[bytes, dict[bytes, bytes]]
-type RedisStreamEvent = tuple[bytes, tuple[StreamEventData]]
-type OrbitLabApplianceType = Literal["backplane-dns", "gateway", "datacore", "dockfs", "etcd", "relay"]
+import base64
+import binascii
+from collections.abc import Callable
+from enum import StrEnum
+from ipaddress import IPv4Address
+from typing import Annotated, TypeVar
 
-class ManifestKind(StrEnum):
-    """Enumeration of possible manifest kinds in OrbitLab."""
+from pydantic import PlainSerializer, PlainValidator
 
-    BASE_APPLIANCE = auto()
-    CUSTOM_APPLIANCE = auto()
-    BASE_IMAGE = auto()
-    CUSTOM_IMAGE = auto()
-    CLUSTER = auto()
-    DOCK_FS = auto()
-    DATA_CORE = auto()
-    NODE = auto()
-    SECTOR = auto()
-    LXC = auto()
-    VM = auto()
-    SECRET = auto()
-    ROOT_CERTIFICATE = auto()
-    INTERMEDIATE_CERTIFICATE = auto()
-    LEAF_CERTIFICATE = auto()
-    CSR = auto()
-    SSH_KEY = auto()
-    AUTOSCALING = auto()
+
+T = TypeVar("T", bound=StrEnum)
+
+
+def _str_list_to_enum(enum: T) -> Callable[[T], list[T]]:
+    """Convert a list of strings to the specified Enums."""
+
+    def wrapped(string_list: str | list) -> list[T]:
+        if not isinstance(string_list, list):
+            string_list = string_list.split(",")
+        return [enum(i) for i in string_list]  # pyright: ignore[reportCallIssue]
+
+    return wrapped
+
+
+def _peer_list_str(peer_list: str) -> list[IPv4Address]:
+    """Convert a comma-separated string of IP addresses to a list of IPv4Address objects."""
+    return [IPv4Address(addr) for addr in peer_list.split(sep=",")]
+
+
+def _serialize_enum_list(enums: list[StrEnum]) -> list[str]:
+    """Serialize a list of Enums to list of strings."""
+    return [enum.value for enum in enums]
+
+
+def _base64_to_str(data: str) -> str:
+    """Decode a base64-encoded string to its original string value."""
+    try:
+        return base64.b64decode(data, validate=True).decode()
+    except binascii.Error:
+        return data
+
+
+def _to_base64(data: str) -> str:
+    """Encode a string to base64."""
+    return base64.b64encode(data.encode()).decode()
+
+
+SerializeEnum = PlainSerializer(lambda v: v.value)
+SerializeEnumList = PlainSerializer(_serialize_enum_list)
+SerializePath = PlainSerializer(lambda v: str(v))
+SerializeIP = PlainSerializer(lambda addr: str(addr))
+SerializeIPList = PlainSerializer(lambda addrs: [str(addr) for addr in addrs])
 
 
 class NodeStatus(StrEnum):
@@ -192,23 +216,66 @@ class ClusterMode(StrEnum):
 class InitializationStatus(StrEnum):
     """Enumeration of possible initialization states in OrbitLab."""
 
+    UNKNOWN = auto()
     NOT_STARTED = auto()
-    RUNNING = auto()
-    ABORTED = auto()
+    IN_PROGRESS = auto()
+    FAILED = auto()
     COMPLETE = auto()
 
 
-class SectorState(StrEnum):
+class BackplaneStatus(StrEnum):
+    """Enumeration of possible backplane states in OrbitLab."""
+
+    PENDING = auto()
+    UPDATING = auto()
+    AVAILABLE = auto()
+
+
+class SectorStatus(StrEnum):
     """Enumeration of possible sector states in OrbitLab."""
 
     PENDING = auto()
+    UPDATING = auto()
     AVAILABLE = auto()
     DELETING = auto()
 
 
-class WorkflowStatus(StrEnum):
+class ConduitStatus(StrEnum):
+    """Enumeration of possible sector conduit states in OrbitLab."""
+
+    ABSENT = auto()
+    PENDING = auto()
+    SYNCING = auto()
+    RUNNING = auto()
+    DELETING = auto()
+
+
+class WardLinkStatus(StrEnum):
+    """Enumeration of possible sector WardLink states in OrbitLab."""
+
+    ABSENT = auto()
+    PENDING = auto()
+    SYNCING = auto()
+    RUNNING = auto()
+    DELETING = auto()
+
+
+class ConduitPoolStatus(StrEnum):
+    """Enumeration of possible sector conduit states in OrbitLab."""
+
+    UNUSED = auto()
+    HEALTHY = auto()
+    UNHEALTHY = auto()
+
+
+class DomainValidationProviders(StrEnum):
+    CLOUDFLARE = auto()
+
+
+class TemplateWorkflowStatus(StrEnum):
     """Enumeration of possible workflow statuses for custom appliances in OrbitLab."""
 
+    NEVER_RAN = auto()
     PENDING = auto()
     STARTING = auto()
     RUNNING = auto()
@@ -217,9 +284,10 @@ class WorkflowStatus(StrEnum):
     FAILED = auto()
 
 
-class ComputeState(StrEnum):
+class ComputeStatus(StrEnum):
     """Enumeration of possible Compute States in OrbitLab."""
 
+    PENDING = auto()
     STARTING = auto()
     RUNNING = auto()
     STOPPING = auto()
@@ -228,7 +296,7 @@ class ComputeState(StrEnum):
     TERMINATING = auto()
 
 
-class ComputeStatus(StrEnum):
+class ProxmoxComputeStatus(StrEnum):
     """Enumeration of possible Compute Status requests for Proxmox."""
 
     REBOOT = auto()
@@ -238,29 +306,29 @@ class ComputeStatus(StrEnum):
     TERMINATE = auto()
 
     @classmethod
-    def get_state(cls, status: str | StrEnum) -> ComputeState:
+    def get_state(cls, status: str | StrEnum) -> ComputeStatus:
         """Return the ComputeState corresponding to the given ComputeStatus."""
         if isinstance(status, StrEnum):
             status = status.value
         match status:
             case "reboot":
-                return ComputeState.RESTARTING
+                return ComputeStatus.RESTARTING
             case "start":
-                return ComputeState.STARTING
+                return ComputeStatus.STARTING
             case "stop":
-                return ComputeState.STOPPING
+                return ComputeStatus.STOPPING
             case "shutdown":
-                return ComputeState.STOPPING
+                return ComputeStatus.STOPPING
             case "terminate":
-                return ComputeState.TERMINATING
+                return ComputeStatus.TERMINATING
         raise ValueError
 
 
 class HealthCheckProtocol(StrEnum):
     """Enumeration of possible Health Check Protocols in OrbitLab."""
 
+    AGENT = auto()
     HTTP = auto()
-    HTTPS = auto()
 
 
 class EventStatus(StrEnum):
@@ -269,7 +337,7 @@ class EventStatus(StrEnum):
     FAILED = "failed"
 
 
-class WorkflowState(StrEnum):
+class WorkflowStatus(StrEnum):
     PENDING = auto()
     VALIDATING = auto()
     PROVISIONING = auto()
@@ -280,14 +348,13 @@ class WorkflowState(StrEnum):
 
 
 class ETCDStatus(StrEnum):
-    ABSENT = auto()
     PENDING = auto()
     DEGRADED = auto()
     AVAILABLE = auto()
-    DELETING = auto()
+    UPGRADING = auto()
 
 
-class DockFSState(StrEnum):
+class DockFSStatus(StrEnum):
     PENDING = auto()
     DEGRADED = auto()
     AVAILABLE = auto()
@@ -298,6 +365,7 @@ class DataCoreStatus(StrEnum):
     PENDING = auto()
     DEGRADED = auto()
     AVAILABLE = auto()
+    UNHEALTHY = auto()
     DELETING = auto()
 
 
@@ -310,3 +378,92 @@ class DataCoreEvent(StrEnum):
 class DataCoreNodeRole(StrEnum):
     PRIMARY = auto()
     REPLICA = auto()
+
+
+class ConduitPoolBalanceOptions(StrEnum):
+    WEIGHTED_ROUND_ROBIN = "wrr"
+    POWER_OF_TWO_CHOICES = "p2c"
+    HIGHEST_RANDOM_WEIGHT = "hrw"
+    LEAST_TIME = "leasttime"
+    
+    @classmethod
+    def get_label(cls, option: str) -> str:
+        match option:
+            case "wrr":
+                return "Weighted Round Robin"
+            case "p2c":
+                return "Power of Two Choices"
+            case "hrw":
+                return "Highest Random Weight"
+            case "leasttime":
+                return "Least-Time"
+        raise ValueError                
+
+
+class ServiceType(StrEnum):
+    INSTANCE = auto()
+    DATACORE = auto()
+    DOCKFS = auto()
+    CONDUIT = auto()
+    WARDLINK = auto()
+    
+    @classmethod
+    def get_mac_byte(cls, service_type: "ServiceType") -> int:
+        return _SERVICE_TO_MAC_BYTE[service_type]
+    
+    @classmethod
+    def get_service_type_by_mac(cls, mac: str) -> "ServiceType | None":
+        parts = mac.split(":")
+        if len(parts) != 6:
+            return None
+        mac_bytes = [int(p, 16) for p in parts]
+        if mac_bytes[0] != 0x02:
+            return None
+        first_byte = mac_bytes[0]
+        is_local = bool(first_byte & 0b00000010)
+        is_unicast = not bool(first_byte & 0b00000001)
+        if not (is_local and is_unicast):
+            return None
+        service_byte = mac_bytes[1]
+        return _MAC_BYTE_TO_SERVICE.get(service_byte)
+
+
+_SERVICE_TO_MAC_BYTE = {
+    ServiceType.INSTANCE: 0x10,
+    ServiceType.DATACORE: 0x20,
+    ServiceType.DOCKFS: 0x30,
+    ServiceType.CONDUIT: 0x40,
+    ServiceType.WARDLINK: 0x41,
+}
+_MAC_BYTE_TO_SERVICE = {v: k for k, v in _SERVICE_TO_MAC_BYTE.items()}
+
+
+class WardLinkKeyPair(TypedDict):
+    private: str
+    public: str
+
+
+class WardLinkKeyPairs(TypedDict):
+    server: WardLinkKeyPair
+    client: WardLinkKeyPair
+
+
+type PveBool = Annotated[bool, PlainValidator(lambda v: v if isinstance(v, bool) else bool(v))]
+type PveContentList = Annotated[
+    list[StorageContentType],
+    PlainValidator(func=_str_list_to_enum(enum=StorageContentType)),
+    SerializeEnumList,
+]
+type PeerList = Annotated[list[IPv4Address], PlainValidator(func=_peer_list_str), SerializeIPList]
+type PveStorageType = Annotated[StorageType, SerializeEnum]
+type CertificateData = Annotated[str, PlainValidator(_base64_to_str), PlainSerializer(_to_base64)]
+type FrontendEvents = (
+    EventCallback | EventHandler | EventSpec | list[EventCallback | EventHandler | EventSpec] | FunctionType
+)
+type StreamEventData = tuple[bytes, dict[bytes, bytes]]
+type RedisStreamEvent = tuple[bytes, tuple[StreamEventData]]
+type EventReturn = EventHandler | EventSpec | list[EventHandler | EventSpec] | EventCallback
+type OrbitLabApplianceType = Literal["backplane", "gateway", "datacore", "dockfs", "etcd", "conduit", "wardlink"]
+type ZoneType = Literal["internal", "external"]
+type InstanceType = Literal["lxc", "qemu"]
+ConduitEndpointType = Literal["http", "https", "tcp", "udp"]

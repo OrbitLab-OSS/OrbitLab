@@ -1,5 +1,8 @@
 """OrbitLab utilities."""
 
+import asyncio
+from datetime import UTC, datetime
+import functools
 import importlib
 import inspect
 import os
@@ -10,6 +13,13 @@ from typing import TYPE_CHECKING, Any, TypeVar, get_type_hints
 import reflex as rx
 from redis.asyncio import Redis
 from reflex.utils.exceptions import StateValueError
+from starlette.endpoints import WebSocketEndpoint
+from starlette.exceptions import WebSocketException
+from starlette.websockets import WebSocket
+from websockets.asyncio import client as websocket
+
+from orbitlab.constants import EventStreams
+from orbitlab.proxmox import Proxmox
 
 if TYPE_CHECKING:
     from orbitlab.worker import Worker
@@ -68,32 +78,59 @@ class EventGroup:
             setattr(cls, event, getattr(state_cls, name))
 
 
-def get_worker() -> "Worker":
+class TerminalProxy(WebSocketEndpoint):
+    """WebSocket endpoint that proxies terminal connections between the browser and Proxmox."""
+
+    encoding = "text"
+    proxmox: websocket.ClientConnection | None = None
+    task: asyncio.Task | None = None
+    event: asyncio.Event = asyncio.Event()
+
+    async def proxmox_to_browser(self, websocket: WebSocket) -> None:
+        """Forward data from the Proxmox websocket to the browser websocket."""
+        if not self.proxmox:
+            raise WebSocketException(code=1)
+
+        while True:
+            if self.event.is_set():
+                await self.proxmox.close()
+                break
+            data = await self.proxmox.recv()
+            await websocket.send_bytes(data=data)
+
+    async def on_connect(self, websocket: WebSocket) -> None:
+        """Handle a new WebSocket connection from the browser and initialize the Proxmox terminal proxy."""
+        await websocket.accept()
+        vmid = int(websocket.path_params["vmid"])
+        self.proxmox = await Proxmox().get_terminal_websocket(vmid=vmid)
+        self.event = asyncio.Event()
+        if not await self.proxmox.recv(decode=True) == "OK":
+            raise WebSocketException(code=1)
+        self.task = asyncio.create_task(self.proxmox_to_browser(websocket=websocket))
+
+    async def on_receive(self, _: WebSocket, data: str) -> None:
+        """Handle data received from the browser and forward it to the Proxmox websocket."""
+        if self.proxmox:
+            await self.proxmox.send(data)
+
+    async def on_disconnect(self, websocket: WebSocket, _: int) -> None:
+        """Handle the disconnection of the WebSocket and clean up resources."""
+        self.event.set()
+        if self.task:
+            await asyncio.gather(self.task)
+        await websocket.close()
+
+
+@functools.lru_cache(maxsize=1)
+def _get_worker() -> "Worker":
     """Get the Worker module instance."""
     worker_module = importlib.import_module(name="orbitlab.worker.worker")
     return worker_module.Worker
 
 
-def get_redis() -> Redis:
-    """Get the Reflex Redis client."""
-    # manager: StateManagerRedis = rx.state.get_state_manager()
-    return Redis()
-
-
-async def get_redis_value(name: str, key: str, default: str = "") -> str:
-    """Retrieve a value from Redis for a given manifest and key."""
-    redis = get_redis()
-    try:
-        value = await redis.hget(name=name, key=key)
-    except Exception as err:  # noqa: BLE001
-        print(err)
-        return ""
-    else:
-        if value and isinstance(value, bytes):
-            value = value.decode()
-        if not value:
-            value = default
-        return value
+async def create_workflow(name: str, version: str, payload: dict) -> str:
+    worker = _get_worker()
+    return await worker.create_workflow(name=name, version=version, payload=payload)
 
 
 def custom_download(  # noqa: C901, PLR0912
@@ -117,7 +154,7 @@ def custom_download(  # noqa: C901, PLR0912
     Returns:
         EventSpec: An event to download the associated file.
     """
-    from reflex.components.core.cond import cond
+    from reflex_components_core.core.cond import cond
 
     if isinstance(url, str):
         if not url.startswith("/"):
@@ -174,7 +211,7 @@ def custom_download(  # noqa: C901, PLR0912
 
     return rx.event.server_side(
         "_download",
-        rx.event.get_fn_signature(custom_download),
+        inspect.signature(custom_download),
         url=url,
         filename=filename,
     )

@@ -5,11 +5,12 @@ from typing import Final
 import reflex as rx
 
 from orbitlab.data_types import FrontendEvents
-from orbitlab.manifest.secrets import SecretManifest
-from orbitlab.web import components
+from orbitlab.redis.clients import SecretsClient
+from orbitlab.web import tailwind
+from orbitlab.web.global_state import OrbitLabState
 from orbitlab.web.utilities import EventGroup
 
-from .states import CreateSecretDialogState, DeleteSecretDialogState, SecretsState
+from .states import CreateSecretDialogState, DeleteSecretDialogState
 
 
 class CreateSecretDialog(EventGroup):
@@ -17,19 +18,19 @@ class CreateSecretDialog(EventGroup):
     @staticmethod
     @rx.event
     async def create_secret(_: rx.State, form: dict) -> FrontendEvents:
-        SecretManifest.create(
+        await SecretsClient().create(
             secret_name=form["secret_name"],
-            secret_value=form["secret_value"],
-            description=form["description"],
+            value=form["secret_value"],
+            description=form.get("description", ""),
         )
         return [
             CreateSecretDialog.close,
-            SecretsState.cache_clear("secrets"),
+            OrbitLabState.cache_clear("secrets"),
         ]
 
     @staticmethod
     @rx.event
-    async def toggle_view_secret(state: CreateSecretDialogState) -> FrontendEvents:
+    async def toggle_view_secret(state: CreateSecretDialogState) -> None:
         state.view_secret_value = not state.view_secret_value
 
     @staticmethod
@@ -37,21 +38,21 @@ class CreateSecretDialog(EventGroup):
     async def close(state: CreateSecretDialogState) -> FrontendEvents:
         """Cancel the secret creation process and close the dialog."""
         state.reset()
-        return components.Dialog.close(CreateSecretDialog.dialog_id)
+        return tailwind.Dialog.close(CreateSecretDialog.dialog_id)
     
     dialog_id: Final = "create-secret-dialog"
     form_id: Final = "create-secret-form"
     
     def __new__(cls) -> rx.Component:
         """Create and return dialog component."""
-        return components.Dialog(
+        return tailwind.Dialog(
             "Create New Secret",
             rx.el.form(
-                components.FieldSet(
+                tailwind.FieldSet(
                     "Secret Configuration",
-                    components.FieldSet.Field(
+                    tailwind.FieldSet.Field(
                         "Secret Name: ",
-                        components.Input(
+                        tailwind.Input(
                             placeholder="my/secret-name or /my/super/secret_value/",
                             pattern=r"[A-Za-z0-9_\/\-]+",
                             error=(
@@ -65,9 +66,9 @@ class CreateSecretDialog(EventGroup):
                             class_name="w-full"
                         ),
                     ),
-                    components.FieldSet.Field(
+                    tailwind.FieldSet.Field(
                         "Description: ",
-                        components.Input(
+                        tailwind.Input(
                             placeholder="My description of my secret.",
                             auto_complete="off",
                             form=cls.form_id,
@@ -75,12 +76,12 @@ class CreateSecretDialog(EventGroup):
                             class_name="w-full"
                         ),
                     ),
-                    components.FieldSet.Field(
+                    tailwind.FieldSet.Field(
                         "Value: ",
                         rx.el.div(
-                            components.Input(
+                            tailwind.Input(
                                 placeholder="My Secret Value",
-                                type=rx.cond(CreateSecretDialogState.view_secret_value, "text", "password"),
+                                type=rx.cond(CreateSecretDialogState.view_secret_value, "text", "password"), # pyright: ignore[reportArgumentType]
                                 form=cls.form_id,
                                 name="secret_value",
                                 required=True,
@@ -88,8 +89,8 @@ class CreateSecretDialog(EventGroup):
                             ),
                             rx.cond(
                                 CreateSecretDialogState.view_secret_value,
-                                components.Buttons.Icon("eye-off", on_click=cls.toggle_view_secret, form=""),
-                                components.Buttons.Icon("eye", on_click=cls.toggle_view_secret, form=""),
+                                tailwind.Buttons.Icon("eye-off", on_click=cls.toggle_view_secret, form=""),
+                                tailwind.Buttons.Icon("eye", on_click=cls.toggle_view_secret, form=""),
                             ),
                             class_name="w-full flex space-x-4 items-center"
                         )
@@ -99,8 +100,8 @@ class CreateSecretDialog(EventGroup):
                 on_submit=cls.create_secret,
             ),
             rx.el.div(
-                components.Buttons.Secondary("Cancel", on_click=cls.close),
-                components.Buttons.Primary("Submit", form=cls.form_id),
+                tailwind.Buttons.Secondary("Cancel", on_click=cls.close),
+                tailwind.Buttons.Primary("Submit", form=cls.form_id),
                 class_name="w-full flex justify-end space-x-4",
             ),
             dialog_id=cls.dialog_id,
@@ -116,22 +117,21 @@ class DeleteSecretDialog(EventGroup):
     async def delete(state: DeleteSecretDialogState) -> FrontendEvents | None:
         """Delete the selected secret and close the dialog."""
         if state.secret:
-            secret_id = state.secret_id
-            state.secret.delete()
+            await SecretsClient().delete(secret_name=state.secret)
             state.reset()
             return [
-                rx.toast.success(message=f"Deleted secret {secret_id}."),
-                components.Dialog.close(DeleteSecretDialog.dialog_id),
-                SecretsState.cache_clear("secrets"),
+                rx.toast.success(message=f"Deleted secret {state.secret}."),
+                DeleteSecretDialog.close,
+                OrbitLabState.cache_clear("secrets"),
             ]
         return None
 
     @staticmethod
     @rx.event
-    async def cancel(state: DeleteSecretDialogState) -> FrontendEvents:
+    async def close(state: DeleteSecretDialogState) -> FrontendEvents:
         """Cancel the certificate authority revocation process."""
         state.reset()
-        return components.Dialog.close(DeleteSecretDialog.dialog_id)
+        return tailwind.Dialog.close(DeleteSecretDialog.dialog_id)
 
     @staticmethod
     @rx.event
@@ -143,22 +143,22 @@ class DeleteSecretDialog(EventGroup):
 
     def __new__(cls) -> rx.Component:
         """Create and return dialog component."""
-        return components.Dialog(
-            f"Delete {DeleteSecretDialogState.secret_id}",
+        return tailwind.Dialog(
+            f"Delete {DeleteSecretDialogState.secret}",
             rx.el.div(
                 rx.text(
-                    f"You are about to delete secret `{DeleteSecretDialogState.secret_id}` and all of its versions. To "
+                    f"You are about to delete secret `{DeleteSecretDialogState.secret}` and all of its versions. To "
                     "confirm this action, type 'delete' in the text box below.",
                 ),
                 class_name="w-full flex-col space-y-6 my-8",
             ),
-            components.Input(
+            tailwind.Input(
                 placeholder="delete",
                 on_change=cls.ensure_confirmation,
             ),
             rx.el.div(
-                components.Buttons.Secondary("Cancel", on_click=cls.cancel),
-                components.Buttons.Primary(
+                tailwind.Buttons.Secondary("Cancel", on_click=cls.close),
+                tailwind.Buttons.Primary(
                     "Delete",
                     disabled=DeleteSecretDialogState.delete_disabled,
                     on_click=cls.delete,

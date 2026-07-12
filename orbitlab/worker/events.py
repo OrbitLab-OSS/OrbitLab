@@ -2,7 +2,7 @@
 
 import json
 import uuid
-from typing import Annotated, Self
+from typing import Annotated, Literal, Self
 
 from pydantic import BaseModel, Field, PlainSerializer, field_validator
 from reflex.utils.serializers import serialize_uuid
@@ -49,3 +49,8 @@ class OrbitLabEvent(BaseModel):
         _event_data = event_data[0]
         _, emitted_event = _event_data
         return cls.model_validate({k.decode(): v.decode() for k,v in emitted_event.items()})
+
+
+class NotificationEvent(BaseModel):
+    level: Literal["INFO", "WARN", "ERROR"]
+    message: str

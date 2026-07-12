@@ -1,5 +1,7 @@
 """Reflex Config."""
 
+import os
+
 import reflex as rx
 from vite_config_plugin import ViteConfigPlugin
 
@@ -7,12 +9,11 @@ from vite_config_plugin import ViteConfigPlugin
 config = rx.Config(
     app_name="orbitlab",
     app_module_import="orbitlab.web",
-    backend_port=8081,
-    frontend_port=8080,
-    redis_url="redis://127.0.0.1:6379/10", # Set to a non-default DB
+    redis_url=os.environ.get("ORBITLAB_REDIS_URL", "redis://127.0.0.1:6379/11"), # Set to a non-default DB
     redis_lock_warning_threshold=2500,
     show_built_with_reflex=False,
     plugins=[
+        rx.plugins.RadixThemesPlugin(),
         rx.plugins.TailwindV4Plugin(
             {
                 "darkMode": "class",

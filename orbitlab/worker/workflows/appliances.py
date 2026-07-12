@@ -1,17 +1,14 @@
 """Appliance (CT Template) Workflows."""
 
-from datetime import UTC, datetime
+import asyncio
+import json
 from typing import Literal
 
-import reflex as rx
-
-from orbitlab.data_types import WorkflowStatus
-from orbitlab.manifest.compute_templates import BaseApplianceManifest, CustomApplianceManifest, FileStep, ScriptStep
-from orbitlab.web.pages.compute.lxc.appliances.states import (
-    BaseApplianceTableState,
-    CustomApplianceTableState,
-)
-from orbitlab.worker.workflows.utilities import LXCApplianceUtils, LXCUtils
+from orbitlab.data_types import TemplateWorkflowStatus
+from orbitlab.proxmox import Proxmox
+from orbitlab.redis.clients import ApplianceClient, SecretsClient, SectorClient
+from orbitlab.redis.models import FileStep, ScriptStep
+from orbitlab.web.global_state import OrbitLabState
 
 from .base import Workflow, WorkflowPayload
 
@@ -19,12 +16,7 @@ from .base import Workflow, WorkflowPayload
 class AppliancePayload(WorkflowPayload):
     """Payload for appliance workflows."""
 
-    manifest: str
-
-    @property
-    def redis_name(self) -> str:
-        """Custom Appliance Redis Key."""
-        return f"ol:appliance:{self.manifest}"
+    id: str # pyright: ignore[reportGeneralTypeIssues]
 
 
 class ApplianceDownloadPayload(AppliancePayload):
@@ -33,7 +25,7 @@ class ApplianceDownloadPayload(AppliancePayload):
     update: bool = False
 
 
-class ApplianceDownloadV1(Workflow, LXCApplianceUtils):
+class ApplianceDownloadV1(Workflow):
     """Workflow for changing the state of an LXC container."""
 
     TYPE: str = "appliance.download"
@@ -43,44 +35,33 @@ class ApplianceDownloadV1(Workflow, LXCApplianceUtils):
 
     async def validate(self) -> None:
         """Validate if appliance already exists and handle accordingly."""
-        if self.payload.manifest not in BaseApplianceManifest.get_existing():
-            await self.fail(f"Manifest for {self.payload.manifest} does not exist")
-        else:
-            manifest = BaseApplianceManifest.load(name=self.payload.manifest)
-            appliances = self.proxmox_compute_templates.list_stored_appliances(
-                node=manifest.spec.node,
-                storage=manifest.spec.storage,
-            )
-            if appliances.template_exists(template=manifest.spec.template) and not self.payload.update:
-                await self.succeed(f"Template {manifest.spec.template} and update not requested.")
+        client = ApplianceClient()
+        if not await client.appliance_exists(appliance_type="base", id=self.payload.id):
+            return await self.fail(f"Base Appliance {self.payload.id} does not exist")
+        
+        await self.emit_reflex_events(OrbitLabState.cache_clear("base_appliances"))
 
     async def provision(self) -> None:
         """Download the appliance."""
-        manifest = BaseApplianceManifest.load(name=self.payload.manifest)
-        await self.download(node=manifest.spec.node, storage=manifest.spec.storage, template=manifest.spec.template)
-        manifest.spec.volume_id = await self.get_volume_id(
-            node=manifest.spec.node, storage=manifest.spec.storage, filename=manifest.spec.template,
-        )
-        manifest.metadata.download_date = datetime.now(tz=UTC)
-        manifest.save()
-
-    async def on_succeed(self) -> None:
-        """Emit reflex events to notify of success."""
-        manifest = BaseApplianceManifest.load(name=self.payload.manifest)
-        message = f"Download of {manifest.spec.template} complete."
-        if self.payload.update:
-            message = f"Update of {manifest.spec.template} complete."
-        await self.emit_reflex_events(
-            events=[
-                BaseApplianceTableState.cache_clear("base_appliances"),
-                rx.toast.success(message=message),
-            ],
-        )
-
-    async def on_failure(self) -> None:
-        """Delete manifest if it exists and we're not updating."""
-        if self.payload.manifest in BaseApplianceManifest.get_existing() and not self.payload.update:
-            BaseApplianceManifest.load(name=self.payload.manifest).delete()
+        client = ApplianceClient()
+        proxmox = Proxmox()
+        appliance = await client.get_appliance(appliance_type="base", id=self.payload.id)
+        
+        if appliance.config.oci:
+            await self.log(f"Pulling {appliance.config.template} to {appliance.config.storage}@{appliance.config.node}")
+            volume_id = await proxmox.oci_registry_pull(
+                node=appliance.config.node, storage=appliance.config.storage, template=appliance.config.template,
+            )
+            
+        else:
+            await self.log(f"Downloading {appliance.config.template} to {appliance.config.storage}@{appliance.config.node}")
+            volume_id = await proxmox.download_proxmox_managed_appliance(
+                node=appliance.config.node, storage=appliance.config.storage, template=appliance.config.template,
+            )
+            
+        await client.set_appliance_downloaded(id=self.payload.id, volume_id=volume_id)
+        await self.emit_reflex_events(OrbitLabState.cache_clear("base_appliances"))
+        await self.succeed(f"Download of {self.payload.id} complete.")
 
 
 class ApplianceDeletePayload(AppliancePayload):
@@ -89,7 +70,7 @@ class ApplianceDeletePayload(AppliancePayload):
     appliance_type: Literal["custom", "base"]
 
 
-class ApplianceDeleteV1(Workflow, LXCApplianceUtils):
+class ApplianceDeleteV1(Workflow):
     """Workflow for changing the state of an LXC container."""
 
     TYPE: str = "appliance.delete"
@@ -99,54 +80,29 @@ class ApplianceDeleteV1(Workflow, LXCApplianceUtils):
 
     async def validate(self) -> None:
         """Validate if appliance already exists and handle accordingly."""
-        if self.payload.appliance_type == "base" and self.payload.manifest not in BaseApplianceManifest.get_existing():
-            await self.succeed(f"Base appliance {self.payload.manifest} doesn't exist or already deleted.")
-            return
-        if (
-            self.payload.appliance_type == "custom"
-            and self.payload.manifest not in CustomApplianceManifest.get_existing()
-        ):
-            await self.succeed(f"Custom appliance {self.payload.manifest} doesn't exist or already deleted.")
-            return
+        client = ApplianceClient()
 
-        if self.payload.appliance_type == "base":
-            manifest = BaseApplianceManifest.load(name=self.payload.manifest)
-        else:
-            manifest = CustomApplianceManifest.load(name=self.payload.manifest)
-
-        appliances = self.proxmox_compute_templates.list_stored_appliances(
-            node=manifest.spec.node,
-            storage=manifest.spec.storage,
-        )
-        template = manifest.spec.template if isinstance(manifest, BaseApplianceManifest) else manifest.name
-        if not appliances.template_exists(template=template):
-            await self.log(f"Template {template} does not exist in storage. Deleting manifest {manifest.name}.")
-            manifest.delete()
-            await self.succeed(
-                f"{self.payload.appliance_type.capitalize()} appliance {self.payload.manifest} deleted.",
-            )
+        if not await client.appliance_exists(appliance_type=self.payload.appliance_type, id=self.payload.id):
+            await self.succeed(f"{self.payload.appliance_type.capitalize()} appliance {self.payload.id} doesn't exist or already deleted.")
 
     async def provision(self) -> None:
         """Download the appliance."""
-        if self.payload.appliance_type == "base":
-            manifest = BaseApplianceManifest.load(name=self.payload.manifest)
-        else:
-            manifest = CustomApplianceManifest.load(name=self.payload.manifest)
-
-        await self.delete(node=manifest.spec.node, storage=manifest.spec.storage, volume_id=manifest.spec.volume_id)
-        if self.payload.appliance_type == "custom":
-            await self.log(f"Deleting redis logs and status data for {manifest.name}.")
-            await self.redis.hdel(self.payload.redis_name, "logs", "status")
-
-        manifest.delete()
-        await self.succeed(f"Deleted manifest {manifest.name}.")
+        client = ApplianceClient()
+        proxmox = Proxmox()
+        
+        appliance = await client.get_appliance(appliance_type=self.payload.appliance_type, id=self.payload.id)
+        await asyncio.gather(
+            self.log(f"Deleting {self.payload.appliance_type.capitalize()} appliance: {self.payload.id}"),
+            proxmox.delete_appliance(node=appliance.config.node, storage=appliance.config.storage, volume_id=appliance.state.volume_id),
+            client.delete_appliance(appliance_type=self.payload.appliance_type, id=self.payload.id),
+        )
+        await self.succeed(f"Deleted appliance {self.payload.id}.")
 
     async def on_succeed(self) -> None:
-        """Emit reflex events to notify of success."""
         if self.payload.appliance_type == "base":
-            await self.emit_reflex_events(events=[BaseApplianceTableState.cache_clear("base_appliances")])
+            await self.emit_reflex_events(OrbitLabState.cache_clear("base_appliances"))
         else:
-            await self.emit_reflex_events(events=[CustomApplianceTableState.cache_clear("custom_appliances")])
+            await self.emit_reflex_events(OrbitLabState.cache_clear("custom_appliances"))
 
 
 class CustomAppliancePayload(AppliancePayload):
@@ -155,7 +111,7 @@ class CustomAppliancePayload(AppliancePayload):
     vmid: int = 0
 
 
-class CreateCustomApplianceV1(Workflow, LXCApplianceUtils, LXCUtils):
+class CreateCustomApplianceV1(Workflow):
     """Create a custom LXC Appliance."""
 
     TYPE: str = "appliance.custom"
@@ -165,103 +121,136 @@ class CreateCustomApplianceV1(Workflow, LXCApplianceUtils, LXCUtils):
 
     async def validate(self) -> None:
         """Validate manifest exists and initialize Redis status and logs."""
-        if self.payload.manifest not in CustomApplianceManifest.get_existing():
-            await self.fail(f"Manifest for {self.payload.manifest} does not exist")
-            return
-        await self.redis.hset(name=self.payload.redis_name, key="status", value=WorkflowStatus.STARTING.value)
-        await self.redis.hset(name=self.payload.redis_name, key="logs", value="")
-        await self.emit_reflex_events(events=[CustomApplianceTableState.cache_clear("custom_appliances")])
+        client = ApplianceClient()
+        if not await client.appliance_exists(appliance_type="custom", id=self.payload.id):
+            return await self.fail(f"Custom Appliance {self.payload.id} does not exist")
+        
+        await client.set_workflow_status(id=self.payload.id, workflow_status=TemplateWorkflowStatus.PENDING)
+        await self.emit_reflex_events(OrbitLabState.cache_clear("custom_appliances"))
 
     async def provision(self) -> None:
         """Provision the LXC compute instance and ensure it's online."""
-        manifest = CustomApplianceManifest.load(name=self.payload.manifest)
-        self.payload.vmid = self.proxmox_compute_templates.get_next_vmid()
-        await self.__update_logs__(redis_name=self.payload.redis_name, lines=[f"Creating VMID {self.payload.vmid}"])
-        await self.create(params=manifest.workflow_params(vmid=self.payload.vmid), node=manifest.spec.node)
-        await self.start(vmid=self.payload.vmid)
+        client = ApplianceClient()
+        proxmox = Proxmox()
+        appliance = await client.get_appliance(appliance_type="custom", id=self.payload.id)
+        
+        self.payload.vmid = await proxmox.get_next_vmid()
+        await client.update_workflow_logs(id=self.payload.id, logs=[f"Creating VMID {self.payload.vmid}"], reset=True)
+        params = appliance.config.workflow_create_params(
+            vmid=self.payload.vmid,
+            password=SecretsClient.generate_random_password(),
+            sector_dns=(await SectorClient().get(id=appliance.config.sector)).config.dns_address.ip
+        )
+        
+        await asyncio.gather(
+            self.log(f"Creating {self.payload.vmid}@{appliance.config.node} with params: {params}"),
+            proxmox.create_instance(instance_type="lxc", params=params, node=appliance.config.node),
+        )
+        
+        await client.set_workflow_status(id=self.payload.id, workflow_status=TemplateWorkflowStatus.STARTING)
+        await asyncio.gather(
+            self.log(f"Starting {self.payload.vmid}@{appliance.config.node}"),
+            client.update_workflow_logs(id=self.payload.id, logs=[f"Starting {self.payload.vmid}"]),
+            self.emit_reflex_events(OrbitLabState.cache_clear("custom_appliances")),
+            proxmox.start(vmid=self.payload.vmid),
+        )
 
     async def configure(self) -> None:
         """Run custom appliance configuration steps, then stop the instance."""
-        manifest = CustomApplianceManifest.load(name=self.payload.manifest)
+        client = ApplianceClient()
+        proxmox = Proxmox()
+        appliance = await client.get_appliance(appliance_type="custom", id=self.payload.id)
 
-        await self.redis.hset(name=self.payload.redis_name, key="status", value=WorkflowStatus.RUNNING.value)
-        await self.emit_reflex_events(events=[CustomApplianceTableState.cache_clear("custom_appliances")])
+        await client.set_workflow_status(id=self.payload.id, workflow_status=TemplateWorkflowStatus.RUNNING)
+        await self.emit_reflex_events(OrbitLabState.cache_clear("custom_appliances"))
 
-        conn = self.proxmox_compute_templates.create_connection(node=manifest.spec.node)
-        for step in manifest.spec.steps:
-            await self.log(message=f"Running step {step.name}")
-            await self.__update_logs__(redis_name=self.payload.redis_name, lines=[f"Executing Step: {step.name}"])
-            if isinstance(step, FileStep):
-                for file in step.files:
-                    await self.__update_logs__(
-                        redis_name=self.payload.redis_name,
-                        lines=[f"Pushing File: {file.source} to {file.destination}"],
-                    )
-                    await self.log(message=f"Pushing source {file.source} to {file.destination} on {self.payload.vmid}")
-                    conn.lxc_push_file(vmid=self.payload.vmid, source=file.source, destination=file.destination)
-            elif isinstance(step, ScriptStep):
-                await self.log(message=f"Running script {step.name} on {self.payload.vmid}")
-                lines = conn.lxc_execute_script(vmid=self.payload.vmid, content=step.script)
-                await self.__update_logs__(redis_name=self.payload.redis_name, lines=lines)
+        async with await proxmox.create_connection() as connection:
+            for step in appliance.config.steps:
+                await client.update_workflow_logs(id=self.payload.id, logs=[f"Executing Step: {step.name}"])
+                
+                if isinstance(step, FileStep):
+                    for file in step.files:
+                        await asyncio.gather(
+                            client.update_workflow_logs(id=self.payload.id, logs=[f"Pushing File: {file.source} to {file.destination}"]),
+                            self.log(f"Pushing source {file.source} to {file.destination} on {self.payload.vmid}"),
+                            connection.lxc_push_file(vmid=self.payload.vmid, source=file.source, destination=file.destination)
+                        )
+                        
+                elif isinstance(step, ScriptStep):
+                    content = await self._inject_secrets(step=step)
+                    await self.log(f"Running script {step.name} on {self.payload.vmid}")
+                    logs = await connection.lxc_execute_script(vmid=self.payload.vmid, content=content)
+                    await client.update_workflow_logs(id=self.payload.id, logs=logs)
 
-        if not manifest.spec.steps:
-            await self.__update_logs__(redis_name=self.payload.redis_name, lines=["No steps to execute"])
+        if not appliance.config.steps:
+            await client.update_workflow_logs(id=self.payload.id, logs=["No steps to execute"])
 
-        await self.__update_logs__(
-            redis_name=self.payload.redis_name, lines=[f"Shutting Down VMID {self.payload.vmid}"],
+        await asyncio.gather(
+            client.update_workflow_logs(id=self.payload.id, logs=[f"Shutting Down VMID {self.payload.vmid}"]),
+            proxmox.shutdown(vmid=self.payload.vmid),
         )
-        await self.stop(vmid=self.payload.vmid, shutdown=True)
 
     async def finalize(self) -> None:
         """Convert the LXC instance to appliance tarball using vzdump, then terminate the instance."""
-        manifest = CustomApplianceManifest.load(name=self.payload.manifest)
+        client = ApplianceClient()
+        proxmox = Proxmox()
+        appliance = await client.get_appliance(appliance_type="custom", id=self.payload.id)
 
-        await self.redis.hset(name=self.payload.redis_name, key="status", value=WorkflowStatus.FINALIZING.value)
-        await self.emit_reflex_events(events=[CustomApplianceTableState.cache_clear("custom_appliances")])
+        await client.set_workflow_status(id=self.payload.id, workflow_status=TemplateWorkflowStatus.FINALIZING)
+        await asyncio.gather(
+            self.emit_reflex_events(OrbitLabState.cache_clear("custom_appliances")),
+            client.update_workflow_logs(id=self.payload.id, logs=[f"Converting LXC {self.payload.vmid} to appliance"]),
+        )
 
-        await self.__update_logs__(
-            redis_name=self.payload.redis_name, lines=[f"Converting LXC {self.payload.vmid} to appliance"],
+        volume_id = await proxmox.generate_appliance(
+            vmid=self.payload.vmid, appliance_id=self.payload.id, storage=appliance.config.storage,
         )
-        await self.generate_appliance(
-            vmid=self.payload.vmid,
-            node=manifest.spec.node,
-            storage=manifest.spec.storage,
-            name=manifest.name,
+        await asyncio.gather(
+            client.workflow_succeeded(id=self.payload.id, volume_id=volume_id),
+            proxmox.terminate(vmid=self.payload.vmid),
         )
-        if not manifest.spec.volume_id:
-            manifest.spec.volume_id = await self.get_volume_id(
-                node=manifest.spec.node, storage=manifest.spec.storage, filename=manifest.spec.template,
-            )
-        manifest.metadata.last_execution = datetime.now(UTC)
-        manifest.save()
 
     async def on_succeed(self) -> None:
-        """Set the status to SUCCEEDED and cleanup."""
-        await self.redis.hset(name=self.payload.redis_name, key="status", value=WorkflowStatus.SUCCEEDED.value)
-        await self.__cleanup__()
+        """Set the status to SUCCEEDED."""
+        await ApplianceClient().set_workflow_status(id=self.payload.id, workflow_status=TemplateWorkflowStatus.SUCCEEDED)
+        await self.emit_reflex_events(OrbitLabState.cache_clear("custom_appliances"))
 
     async def on_failure(self) -> None:
-        """Set the status to FAILED and cleanup."""
-        await self.redis.hset(name=self.payload.redis_name, key="status", value=WorkflowStatus.FAILED.value)
-        await self.__cleanup__()
+        """Set the status to FAILED."""
+        await ApplianceClient().set_workflow_status(id=self.payload.id, workflow_status=TemplateWorkflowStatus.FAILED)
+        await self.emit_reflex_events(OrbitLabState.cache_clear("custom_appliances"))
 
-    async def __update_logs__(self, redis_name: str, lines: list[str]) -> None:
-        """Update the workflow logs in redis."""
-        logs = await self.redis.hget(name=redis_name, key="logs")
-        if isinstance(logs, bytes):
-            logs = logs.decode()
+    async def _inject_secrets(self, step: ScriptStep) -> str:
+        def _resolve_json_value(secret_dict: dict, keys: list[str]) -> str:
+            last_key = keys.pop()
+            for key in keys:
+                secret_dict = secret_dict.get(key, {})
+            return secret_dict[last_key]
+        
+        content = ""
+        for match in step.secret_injection_pattern.finditer(step.script):
+            secret_name: str = match.group("name")
+            version = None
+            if _version := match.group("version"):
+                version = int(_version)
+            secret = await SecretsClient().get(secret_name=secret_name, version=version)
+            
+            secret_value = secret.secret_string.get_secret_value()
+            if pointer := match.group("pointer"):
+                secret_dict = json.loads(secret_value)
+                keys = [key for key in pointer.split("/") if key]
+                secret_value = _resolve_json_value(secret_dict=secret_dict, keys=keys)
+                _key = ".".join(keys)
+                await self.log(
+                    f"Injecting secret '{secret_name}' version '{version if version else 'latest'}' "
+                    f"from nested key: '.{_key}'"
+                )
+            else:
+                await self.log(
+                    f"Injecting secret '{secret_name}' version '{version if version else 'latest'}'"
+                )
+            
+            placeholder = step.script[match.start():match.end()]
+            content = step.script.replace(placeholder, secret_value)
 
-        appended = "\n".join(lines)
-        if logs:
-            logs += f"\n{appended}"
-        else:
-            logs = appended
-
-        await self.redis.hset(name=redis_name, key="logs", value=logs)
-        await self.emit_reflex_events(events=[CustomApplianceTableState.cache_clear("logs")])
-
-    async def __cleanup__(self) -> None:
-        """Cleanup workflow resources and update manifest metadata."""        
-        if self.payload.vmid:
-            await self.terminate(vmid=self.payload.vmid)
-        await self.emit_reflex_events(events=[CustomApplianceTableState.cache_clear("custom_appliances")])
+        return content

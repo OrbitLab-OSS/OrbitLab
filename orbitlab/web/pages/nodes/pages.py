@@ -2,29 +2,28 @@
 
 import reflex as rx
 
-from orbitlab.manifest.nodes import NodeManifest
-from orbitlab.web import components
+from orbitlab.redis.models import Node
+from orbitlab.web import tailwind
+from orbitlab.web.global_state import OrbitLabState
 from orbitlab.web.utilities import EventGroup
 from orbitlab.web.layout import orbitlab_page
-
-from .states import ProxmoxState
 
 
 class NodeRow(EventGroup):
     """Factory class for creating table row components for Proxmox nodes."""
 
-    def __new__(cls, node: NodeManifest) -> rx.Component:
+    def __new__(cls, node: Node) -> rx.Component:
         """Create and return the table row component."""
         return rx.el.tr(
             rx.el.td(
-                node.name,
+                node.config.name,
                 class_name="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-800 dark:text-gray-200",
             ),
             rx.el.td(
                 rx.cond(
-                    node.metadata.online,
+                    node.state.online,
                     rx.cond(
-                        node.metadata.maintenance_mode,
+                        node.state.maintenance_mode,
                         rx.badge("Maintenance", color_scheme="yellow"),
                         rx.badge("Online", color_scheme="green"),
                     ),
@@ -33,7 +32,7 @@ class NodeRow(EventGroup):
                 class_name="px-6 py-4 whitespace-nowrap",
             ),
             rx.el.td(
-                node.metadata.ip,
+                node.config.address,
                 class_name="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-800 dark:text-gray-200",
             ),
             rx.el.td(
@@ -53,7 +52,7 @@ class NodeRow(EventGroup):
 def nodes_dashboard() -> rx.Component:
     """Proxmox Nodes Page."""
     return rx.el.div(
-        components.Card(
+        tailwind.Card(
             rx.el.div(
                 rx.el.table(
                     # === Table Header ===
@@ -91,7 +90,7 @@ def nodes_dashboard() -> rx.Component:
                         class_name="bg-white/60 dark:bg-white/[0.03] backdrop-blur-sm",
                     ),
                     rx.el.tbody(
-                        rx.foreach(ProxmoxState.nodes, lambda node: NodeRow(node)),
+                        rx.foreach(OrbitLabState.nodes, lambda node: NodeRow(node)),
                         class_name=(
                             "divide-y divide-gray-200 dark:divide-white/[0.08] "
                             "bg-white/70 dark:bg-[#0E1015]/60 backdrop-blur-sm"
@@ -111,11 +110,11 @@ def nodes_dashboard() -> rx.Component:
                     "transition-all duration-200"
                 ),
             ),
-            header=components.Card.Header(
+            header=tailwind.Card.Header(
                 rx.el.div(
                     rx.el.h3("Proxmox Nodes"),
                     rx.el.div(
-                        components.Buttons.Icon("refresh-ccw", on_click=ProxmoxState.cache_clear("nodes")),
+                        tailwind.Buttons.Icon("refresh-ccw", on_click=OrbitLabState.cache_clear("nodes")),
                         class_name="flex space-x-4",
                     ),
                     class_name="w-full flex justify-between",

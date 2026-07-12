@@ -2,208 +2,28 @@
 
 import asyncio
 from ipaddress import IPv4Interface
+import json
 from typing import Annotated
 
-from orbitlab.data_types import DataCoreStatus, DataCoreEvent, DataCoreNodeRole, ETCDStatus
-from orbitlab.manifest.cluster import ClusterManifest
-from orbitlab.manifest.datacore import DataCoreManifest
-from orbitlab.manifest.serialization import SerializeIP
-from orbitlab.web.defaults import ClusterDefaults
-from orbitlab.web.pages.datacore.states import DataCoreServiceState
-from orbitlab.worker.workflows.utilities import DataCoreUtils
+import backoff
+
+from orbitlab.data_types import DataCoreStatus, DataCoreEvent, DataCoreNodeRole, ETCDStatus, SerializeIP
+from orbitlab.proxmox import Proxmox
+from orbitlab.proxmox.exceptions import PctExecError
+from orbitlab.redis.clients import ClusterClient, DNSClient, DataCoreClient, ETCDClient, SectorClient
+from orbitlab.redis.models import ARecord
+from orbitlab.web.global_state import OrbitLabState
 
 from .base import Workflow, WorkflowPayload
-
-ETCD_SERVICE_NAME = "ol:service:datacore-etcd"
-
-class EtcdPayload(WorkflowPayload):
-    """Default ETCD Payload."""
-
-    redis_name: str = "ol:datacore:etcd:cluster"
-
-
-class CreateETCDClusterV1(Workflow, DataCoreUtils):
-    """Workflow for creating an ETCD cluster."""
-
-    TYPE: str = "datacore.etcd.create"
-    SCHEMA: str = "v1"
-    PAYLOAD_TYPE: type[EtcdPayload] = EtcdPayload
-    IDP_TOKEN: str = ETCD_SERVICE_NAME
-    payload: EtcdPayload
-
-    async def validate(self) -> None:
-        """Validate ETCD cluster configuration."""
-        cluster_manifest = ClusterManifest.load(name=next(iter(ClusterManifest.get_existing())))
-        if cluster_manifest.spec.etcd is not None:
-            await self.succeed("ETCD cluster already created")
-            return
-        await self.set_redis_hash_value(name=self.payload.redis_name, key="status", value=ETCDStatus.PENDING)
-        await self.emit_reflex_events(events=[DataCoreServiceState.cache_clear("etcd_cluster_status")])
-
-    async def provision(self) -> None:
-        """Provision ETCD cluster members."""
-        cluster_manifest = ClusterManifest.load(name=next(iter(ClusterManifest.get_existing())))
-
-        vmids = await self.get_available_vmids(count=4)
-        addresses = cluster_manifest.get_next_available_ip(count=4)
-        names = [cluster_manifest.generate_etcd_member_name() for _ in range(4)]
-
-        etcd = cluster_manifest.generate_empty_etcd()
-        members = await asyncio.gather(
-            *(
-                self.create_etcd_member(vmid=vmid, name=name, address=address, cluster_manifest=cluster_manifest)
-                for vmid, name, address in zip(vmids, names, addresses, strict=False)
-            ),
-        )
-        etcd.members = members
-        cluster_manifest.spec.etcd = etcd
-        cluster_manifest.save()
-
-    async def configure(self) -> None:
-        """Configure ETCD cluster discovery records."""
-        cluster_manifest = ClusterManifest.load(name=next(iter(ClusterManifest.get_existing())))
-        for member in cluster_manifest.spec.etcd.members:
-            await self.create_etcd_discovery_records(name=member.name, address=member.address)
-        await self.restart_dns()
-
-    async def finalize(self) -> None:
-        """Start all ETCD cluster members."""
-        cluster_manifest = ClusterManifest.load(name=next(iter(ClusterManifest.get_existing())))
-        await asyncio.gather(*(self.start(vmid=member.vmid) for member in cluster_manifest.spec.etcd.members))
-
-    async def on_succeed(self) -> None:
-        await self.set_redis_hash_value(name=self.payload.redis_name, key="status", value=ETCDStatus.AVAILABLE)
-        await self.emit_reflex_events(events=[DataCoreServiceState.cache_clear("etcd_cluster_status")])
-        await self.emit_reflex_events(events=[ClusterDefaults.cache_clear("_cluster")])
-    
-    async def on_failure(self) -> None:
-        await self._create_new_workflow(
-            workflow=DeleteETCDClusterV1,
-            payload=DeleteETCDClusterV1.PAYLOAD_TYPE.model_validate({}),
-        )
-
-
-class FailoverPayload(EtcdPayload):
-    """Payload for ETCD member failover."""
-
-    name: str
-    address: Annotated[IPv4Interface, SerializeIP]
-
-
-class ETCDMemberFailoverV1(Workflow, DataCoreUtils):
-    """Workflow for creating an ETCD cluster."""
-
-    TYPE: str = "datacore.etcd.failover"
-    SCHEMA: str = "v1"
-    PAYLOAD_TYPE: type[FailoverPayload] = FailoverPayload
-    IDP_TOKEN: str = ETCD_SERVICE_NAME
-    payload: FailoverPayload
-
-    async def validate(self) -> None:
-        """Validate ETCD cluster exists for failover."""
-        manifest = ClusterManifest.load(name=next(iter(ClusterManifest.get_existing())))
-        if manifest.spec.etcd is None:
-            await self.fail("No ETCD Cluster configured.")
-        await self.set_redis_hash_value(name=self.payload.redis_name, key="status", value=ETCDStatus.DEGRADED)
-        await self.emit_reflex_events(events=[DataCoreServiceState.cache_clear("etcd_cluster_status")])
-
-    async def provision(self) -> None:
-        """Provision replacement ETCD member."""
-        cluster_manifest = ClusterManifest.load(name=next(iter(ClusterManifest.get_existing())))
-        vmid = self.proxmox.get_next_vmid()
-        address = cluster_manifest.get_next_available_ip()
-        name = cluster_manifest.generate_etcd_member_name()
-        await self.create_etcd_discovery_records(name=name, address=address)
-        new_member = await self.create_etcd_member(
-            vmid=vmid, name=name, address=address, cluster_manifest=cluster_manifest,
-        )
-        # When new members are created, they automatically add themselves to the cluster
-        cluster_manifest.spec.etcd.members.append(new_member)
-        cluster_manifest.save()
-
-    async def configure(self) -> None:
-        """Remove failing ETCD member from cluster."""
-        cluster_manifest = ClusterManifest.load(name=next(iter(ClusterManifest.get_existing())))
-        failing_member = cluster_manifest.spec.etcd.get_member(member_name=self.payload.name)
-        if not failing_member:
-            await self.succeed(f"ETCD member {failing_member} does not exist or already deleted.")
-            return
-
-        active_member = cluster_manifest.spec.etcd.get_active_member(failing_member=failing_member.name)
-        await asyncio.gather(
-            self.remove_etcd_member(vmid=active_member.vmid, name=failing_member.name),
-            self.delete_etcd_member(
-                vmid=failing_member.vmid,
-                name=failing_member.name,
-                address=failing_member.address,
-                cluster_manifest=cluster_manifest,
-            ),
-        )
-
-        cluster_manifest.spec.etcd.members.remove(failing_member)
-        cluster_manifest.save()
-
-    async def on_succeed(self) -> None:
-        await self.set_redis_hash_value(name=self.payload.redis_name, key="status", value=ETCDStatus.AVAILABLE)
-        await self.emit_reflex_events(events=[DataCoreServiceState.cache_clear("etcd_cluster_status")])
-
-
-class DeleteETCDClusterV1(Workflow, DataCoreUtils):
-    """Workflow for deleting an ETCD cluster."""
-
-    TYPE: str = "datacore.etcd.delete"
-    SCHEMA: str = "v1"
-    PAYLOAD_TYPE: type[EtcdPayload] = EtcdPayload
-    IDP_TOKEN: str = ETCD_SERVICE_NAME
-    payload: EtcdPayload
-
-    async def validate(self) -> None:
-        """Validate ETCD cluster exists for deletion."""
-        cluster_manifest = ClusterManifest.load(name=next(iter(ClusterManifest.get_existing())))
-        if cluster_manifest.spec.etcd is None:
-            await self.succeed("ETCD cluster doesn't exist")
-            return
-        await self.set_redis_hash_value(name=self.payload.redis_name, key="status", value=ETCDStatus.DELETING)
-        await self.emit_reflex_events(events=[DataCoreServiceState.cache_clear("etcd_cluster_status")])
-
-    async def provision(self) -> None:
-        """Delete ETCD cluster members."""
-        cluster_manifest = ClusterManifest.load(name=next(iter(ClusterManifest.get_existing())))
-        await asyncio.gather(
-            *(
-                self.delete_etcd_member(
-                    vmid=member.vmid, name=member.name, address=member.address, cluster_manifest=cluster_manifest,
-                )
-                for member in cluster_manifest.spec.etcd.members
-            ),
-        )
-        cluster_manifest.spec.etcd = None
-        cluster_manifest.save()
-
-    async def configure(self) -> None:
-        """Clean up ETCD cluster configuration."""
-        cluster_manifest = ClusterManifest.load(name=next(iter(ClusterManifest.get_existing())))
-        cluster_manifest.spec.etcd = None
-        cluster_manifest.save()
-
-    async def on_succeed(self) -> None:
-        await self.set_redis_hash_value(name=self.payload.redis_name, key="status", value=ETCDStatus.ABSENT)
-        await self.emit_reflex_events(events=[DataCoreServiceState.cache_clear("etcd_cluster_status")])
-        await self.emit_reflex_events(events=[ClusterDefaults.cache_clear("_cluster")])
 
 
 class DataCorePayload(WorkflowPayload):
     """Payload for DataCore cluster creation."""
 
-    manifest: str
-    
-    @property
-    def redis_name(self) -> str:
-        """DataCore Workflow Redis Key."""
-        return f"ol:datacore:{self.manifest}"
+    id: str
 
 
-class CreateDataCoreCluster(Workflow, DataCoreUtils):
+class CreateDataCoreCluster(Workflow):
     """Workflow for creating a DataCore cluster."""
 
     TYPE: str = "datacore.cluster.create"
@@ -213,59 +33,71 @@ class CreateDataCoreCluster(Workflow, DataCoreUtils):
 
     async def validate(self) -> None:
         """Validate DataCore cluster manifest exists."""
-        if self.payload.manifest not in DataCoreManifest.get_existing():
-            await self.fail(f"DataCore cluster {self.payload.manifest} doesn't exist")
-        await self.set_redis_hash_value(name=self.payload.redis_name, key="state", value=DataCoreStatus.PENDING)
-        await self.emit_reflex_events(events=[DataCoreServiceState.cache_clear("clusters")])
+        client = DataCoreClient()
+        if not await client.datacore_exists(id=self.payload.id):
+            return await self.fail(f"DataCore cluster {self.payload.id} does not exist")
+        
+        await DataCoreClient().set_cluster_status(id=self.payload.id, status=DataCoreStatus.PENDING)
+        await self.emit_reflex_events(OrbitLabState.cache_clear("datacores"))
 
     async def provision(self) -> None:
         """Provision DataCore cluster nodes and configuration."""
-        manifest = DataCoreManifest.load(name=self.payload.manifest)
-        cluster_manifest = ClusterManifest.load(name=next(iter(ClusterManifest.get_existing())))
+        client = DataCoreClient()
+        proxmox = Proxmox()
+        dns = DNSClient()
+        datacore = await client.get_datacore(id=self.payload.id)
 
-        await self.create_datacore_config(name=manifest.name, config=manifest.generate_cluster_config())
-
-        vmid = self.proxmox.get_next_vmid()
-        await self.create_datacore_node(
-            params=manifest.generate_node_params(
-                vmid=vmid,
-                volume_id=cluster_manifest.metadata.infrastructure_appliances["datacore"].volume_id,
-            ),
+        await asyncio.gather(
+            self.log(f"Creating pool {datacore.config.id} with alias {datacore.config.name}"),
+            proxmox.create_pool(pool_id=datacore.config.id, alias=datacore.config.name)
+        )
+        
+        await asyncio.gather(
+            self.log(f"Creating DataCore {datacore.config.id} sector DNS records."),
+            dns.add_sector_a_records(datacore.config.sector, datacore.config.id, ARecord(ip=datacore.config.rw_vip.ip)),
+            dns.add_sector_a_records(datacore.config.sector, f"{datacore.config.id}-ro", ARecord(ip=datacore.config.ro_vip.ip)),
         )
 
-        for i in range(manifest.spec.replicas):
-            await self.log(f"Creating DataCore replica {i + 1}")
-            vmid = self.proxmox.get_next_vmid()
-            await self.create_datacore_node(
-                params=manifest.generate_node_params(
-                    vmid=vmid,
-                    volume_id=cluster_manifest.metadata.infrastructure_appliances["datacore"].volume_id,
-                ),
+        await self.log(f"Creating DataCore {datacore.config.id} Configuration")
+        etcd_member = await ETCDClient().get_random_member()
+        async with await proxmox.create_connection() as connection:
+            config = await client.generate_cluster_config(id=self.payload.id)
+            redacted_config = {k: '*****' if 'password' in k else v for k, v in config.items()}
+            await self.log(
+                f"Using VMID {etcd_member.vmid} to create {datacore.config.id} config {redacted_config}.",
             )
+            await connection.lxc_execute_script(vmid=etcd_member.vmid, content=f"etcd-mgr create-datacore {datacore.config.id} '{json.dumps(config)}'")
+
+        vmid = await proxmox.get_next_vmid()
+        params = await client.generate_node_params(id=self.payload.id, vmid=vmid)
+        await self.log(f"Creating DataCore node VMID {vmid} with params: {self._redact_params(params=params)}.")
+        await proxmox.create_instance(instance_type="lxc", params=params)
+        await proxmox.start(vmid=vmid)
+
+        for i in range(datacore.config.replicas):
+            await self.log(f"Creating DataCore replica {i + 1}")
+            vmid = await proxmox.get_next_vmid()
+            params = await client.generate_node_params(id=self.payload.id, vmid=vmid)
+            await self.log(f"Creating DataCore node VMID {vmid} with params: {self._redact_params(params=params)}.")
+            await proxmox.create_instance(instance_type="lxc", params=params)
+            await proxmox.start(vmid=vmid)
 
     async def configure(self) -> None:
-        """Configure DataCore cluster sector records."""
-        manifest = DataCoreManifest.load(name=self.payload.manifest)
-        await self.create_datacore_sector_record(
-            sector=manifest.spec.sector, address=manifest.spec.rw_vip, name=manifest.name,
-        )
-        await self.create_datacore_sector_record(
-            sector=manifest.spec.sector, address=manifest.spec.ro_vip, name=f"{manifest.name}-ro",
-        )
-        await self.succeed(f"Created DataCore {manifest.name}")
+        await asyncio.gather(self.log("Starting 60 second cluster warmup..."), asyncio.sleep(60))
+        await self._wait_for_node_health()
+        await self.succeed(f"Created DataCore {self.payload.id}")
+
+    @backoff.on_predicate(lambda: backoff.fibo(max_value=30), max_time=300, on_backoff=lambda x: print("backoff: ", x), on_giveup=lambda x: print("giveup: ", x))
+    async def _wait_for_node_health(self) -> None:
+        datacore = await DataCoreClient().get_datacore(id=self.payload.id)
+        return datacore.state.nodes.healthy
 
     async def on_succeed(self) -> None:
-        return await self.emit_reflex_events(events=[DataCoreServiceState.cache_clear("clusters")])
-
-    async def on_failure(self) -> None:
-        """Clean up DataCore cluster on creation failure."""
-        await self._create_new_workflow(
-            workflow=DeleteDataCoreCluster,
-            payload=DeleteDataCoreCluster.PAYLOAD_TYPE.model_validate({"manifest": self.payload.manifest}),
-        )
+        await DataCoreClient().set_cluster_status(id=self.payload.id, status=DataCoreStatus.AVAILABLE)
+        await self.emit_reflex_events(OrbitLabState.cache_clear("datacores"))
 
 
-class DeleteDataCoreCluster(Workflow, DataCoreUtils):
+class DeleteDataCoreCluster(Workflow):
     """Workflow for deleting a DataCore cluster."""
 
     TYPE: str = "datacore.cluster.delete"
@@ -275,40 +107,56 @@ class DeleteDataCoreCluster(Workflow, DataCoreUtils):
 
     async def validate(self) -> None:
         """Validate DataCore cluster manifest exists."""
-        if self.payload.manifest not in DataCoreManifest.get_existing():
-            await self.fail(f"DataCore cluster {self.payload.manifest} doesn't exist")
-            return
-        await self.set_redis_hash_value(name=self.payload.redis_name, key="state", value=DataCoreStatus.DELETING)
-        await self.emit_reflex_events(events=[DataCoreServiceState.cache_clear("clusters")])
+        client = DataCoreClient()
+        if not await client.datacore_exists(id=self.payload.id):
+            return await self.succeed(f"DataCore cluster {self.payload.id} doesn't exist")
+        
+        await DataCoreClient().set_cluster_status(id=self.payload.id, status=DataCoreStatus.DELETING)
+        await self.emit_reflex_events(OrbitLabState.cache_clear("datacores"))
 
     async def provision(self) -> None:
         """Delete DataCore cluster nodes and configuration."""
-        manifest = DataCoreManifest.load(name=self.payload.manifest)
+        client = DataCoreClient()
+        proxmox = Proxmox()
+        dns = DNSClient()
+        datacore = await client.get_datacore(id=self.payload.id)
 
-        await self.log(f"Deleting {manifest.name} config and nodes")
+        await self.log(f"Deleting {self.payload.id} config and nodes")
+        
         await asyncio.gather(
-            self.delete_datacore_config(name=manifest.name),
-            *[self.terminate(vmid=node.vmid) for node in manifest.metadata.nodes],
+            self.log(f"Deleting DataCore {datacore.config.id} sector DNS records and stopping nodes."),
+            dns.remove_sector_a_records(datacore.config.sector, datacore.config.id, ARecord(ip=datacore.config.rw_vip.ip)),
+            dns.remove_sector_a_records(datacore.config.sector, f"{datacore.config.id}-ro", ARecord(ip=datacore.config.ro_vip.ip)),
+            *[proxmox.stop(vmid=node.vmid) for node in datacore.state.nodes.root],
         )
-
-    async def configure(self) -> None:
-        """Delete DataCore cluster DNS VIP records."""
-        manifest = DataCoreManifest.load(name=self.payload.manifest)
-
-        await self.log(f"Deleting {manifest.name} writer DNS VIP record in sector {manifest.spec.sector}")
-        await self.delete_datacore_sector_record(
-            sector=manifest.spec.sector, virtual_router_id=manifest.spec.rw_virtual_router_id,
+        
+        await self.log(f"Deleting DataCore {datacore.config.id} Configuration")
+        etcd_member = await ETCDClient().get_random_member()
+        async with await proxmox.create_connection() as connection:
+            await self.log(f"Using VMID {etcd_member.vmid} to delete DataCore {datacore.config.id}.")
+            await connection.lxc_execute_script(vmid=etcd_member.vmid, content=f"etcd-mgr delete-datacore {datacore.config.id}")
+        
+        await self.log(f"Terminating DataCore {datacore.config.id} nodes")
+        await asyncio.gather(
+            *[proxmox.terminate(vmid=node.vmid) for node in datacore.state.nodes.root],
         )
-        await self.log(f"Deleting {manifest.name} reader DNS VIP record in sector {manifest.spec.sector}")
-        await self.delete_datacore_sector_record(
-            sector=manifest.spec.sector, virtual_router_id=manifest.spec.ro_virtual_router_id,
+        
+        await self.log(f"Deleting DataCore {datacore.config.id}, VIPs, and pool")
+        await asyncio.gather(
+            client.delete(id=self.payload.id),
+            proxmox.delete_pool(pool_id=self.payload.id),
+            SectorClient().release_vips(
+                datacore.config.rw_virtual_router_id,
+                datacore.config.ro_virtual_router_id,
+                id=datacore.config.sector,
+            ),
         )
-        manifest.delete()
-        await self.succeed(f"Deleted DataCore {self.payload.manifest}")
+        
+        await self.succeed(f"Deleted DataCore {self.payload.id}")
 
     async def on_succeed(self) -> None:
         """Emit cache clear event on successful cluster deletion."""
-        return await self.emit_reflex_events(events=[DataCoreServiceState.cache_clear("clusters")])
+        return await self.emit_reflex_events(OrbitLabState.cache_clear("datacores"))
 
 
 class DataCoreEventPayload(DataCorePayload):
@@ -319,32 +167,44 @@ class DataCoreEventPayload(DataCorePayload):
     event: DataCoreEvent
 
 
-class DataCoreClusterEvent(Workflow, DataCoreUtils):
+class DataCoreClusterEvent(Workflow):
     TYPE: str = "datacore.cluster.event"
     SCHEMA: str = "v1"
     PAYLOAD_TYPE: type[DataCoreEventPayload] = DataCoreEventPayload
     payload: DataCoreEventPayload
 
     async def validate(self) -> None:
-        current_status = await self.get_redis_hash_value(name=self.payload.redis_name, key="state", value_type=DataCoreStatus)
-        await self.log(f"Current {self.payload.manifest} status: {current_status}")
+        if not await DataCoreClient().datacore_exists(id=self.payload.id):
+            return await self.fail(f"DataCore {self.payload.id} does not exist")
 
-        if self.payload.role == DataCoreNodeRole.PRIMARY:
-            # Handle Primary Node events
-            if current_status == DataCoreStatus.PENDING and self.payload.event == DataCoreEvent.ON_START:
-                await self.set_redis_hash_value(name=self.payload.redis_name, key="state", value=DataCoreStatus.DEGRADED)
-                await self.emit_reflex_events(events=[DataCoreServiceState.cache_clear("clusters")])
-                await self.succeed(f"Primary node for {self.payload.manifest} online.")
-            else:
-                print(self.payload)
-                await self.fail(f"{current_status}")
+    async def provision(self) -> None:
+        client = DataCoreClient()
+        
+        datacore = await client.get_datacore(id=self.payload.id)
+        
+        if self.payload.event == DataCoreEvent.ON_START:
+            datacore.state.nodes.set_node_online(name=self.payload.node, role=self.payload.role)
+            await client.update_nodes(id=self.payload.id, nodes=datacore.state.nodes)
+            await self.log(
+                f"DataCore {self.payload.id} node {self.payload.node} online as {self.payload.role}.",
+            )
+
+        if self.payload.event == DataCoreEvent.ON_STOP:
+            datacore.state.nodes.set_node_offline(name=self.payload.node, role=self.payload.role)
+            await client.update_nodes(id=self.payload.id, nodes=datacore.state.nodes)
+            await self.log(
+                f"DataCore {self.payload.id} {self.payload.role} node {self.payload.node} offline.",
+            )
 
         else:
-            # Handle replica node events
-            if current_status == DataCoreStatus.DEGRADED and self.payload.event == DataCoreEvent.ON_START:
-                await self.set_redis_hash_value(name=self.payload.redis_name, key="state", value=DataCoreStatus.AVAILABLE)
-                await self.emit_reflex_events(events=[DataCoreServiceState.cache_clear("clusters")])
-                await self.succeed(f"Replica node for {self.payload.manifest} online.")
-            else:
-                print(self.payload)
-                await self.fail(f"{current_status}")
+            datacore.state.nodes.set_node_role(name=self.payload.node, role=self.payload.role)
+            await client.update_nodes(id=self.payload.id, nodes=datacore.state.nodes)
+            await self.log(
+                f"DataCore {self.payload.id} node {self.payload.node} role changed to {self.payload.role}.",
+            )
+        
+        datacore = await client.get_datacore(id=self.payload.id)
+        await self.succeed(f"DataCore {self.payload.id} is {datacore.state.status}", notify=False)
+
+    async def on_succeed(self) -> None:
+        await self.emit_reflex_events(OrbitLabState.cache_clear("datacores"))

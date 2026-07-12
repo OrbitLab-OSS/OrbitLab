@@ -1,85 +1,7 @@
 """Constants for OrbitLab."""
 
-import os
-from pathlib import Path
 from types import SimpleNamespace
-from typing import Final, LiteralString
-
-
-class Directories(SimpleNamespace):
-    """Directory paths for OrbitLab file system structure."""
-
-    ORBITLAB_ROOT: Final = (
-        Path().cwd() / "TEST_ROOT" if bool(os.environ.get("ORBITLAB_DEV")) else Path("/etc/pve/orbitlab")
-    )
-    MANIFEST_ROOT: Final = ORBITLAB_ROOT / "manifests"
-    WORKFLOW_FILES_ROOT: Final = ORBITLAB_ROOT / "workflow-files"
-
-    CUSTOM_APPLIANCES: Final = WORKFLOW_FILES_ROOT / "custom_appliances"
-
-    DNS_ROOT: Final = ORBITLAB_ROOT / "dns"
-    DNS_ZONE_ROOT: Final = DNS_ROOT / "zones"
-
-    SECRETS_ROOT: Final = ORBITLAB_ROOT / "secrets"
-    VAULT: Final = SECRETS_ROOT / "vault"
-    PKI_ROOT: Final = SECRETS_ROOT / "pki"
-
-    def make_dirs(self) -> None:
-        """Create all directories defined in this class."""
-        if os.environ.get("__REFLEX_COMPILE_CONTEXT") == "run": 
-            for attr in self.__annotations__:
-                directory: Path = getattr(self, attr)
-                directory.mkdir(parents=True, exist_ok=True)
-
-
-class PKI(SimpleNamespace):
-    """Constants related to Public Key Infrastructure (PKI) settings."""
-
-    RSA_PUBLIC_EXPONENT: Final = 65537
-    RSA_KEY_SIZE: Final = 4096
-
-    ROOT_CA_DAYS_VALID: Final = 20 * 365  # 356 days a year for 20 years
-    INTERMEDIATE_CA_DAYS_VALID: Final = 5 * 365  # 356 days a year for 5 years
-    LEAF_CA_DAYS_VALID: Final = 365  # 1 year
-
-
-class Backplane(SimpleNamespace):
-    """Constants for the OrbitLab backplane network configuration."""
-
-    NAME: Final = "bckplane"
-    ALIAS: Final = "OrbitLab Backplane"
-    ASN: Final = 65001
-    ZONE_TAG: Final = 10
-    VNET_TAG: Final = 100
-    DEFAULT_CIDR: Final = "100.96.0.0/16"
-    DEFAULT_GATEWAY: Final = "100.96.0.1"
-    NETWORK_REGEX_PATTERN: Final = (
-        r"^(?:(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\.){3}(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\/(?:[89]|1\d|2[0-4])$"
-    )
-
-
-class NetworkSettings(SimpleNamespace):
-    """Constants for OrbitLab's networking settings."""
-
-    BACKPLANE = Backplane
-    RESERVED_INFRA_IPS: Final = 10
-    RESERVED_BROADCAST_IPS: Final = -5
-    RESERVED_SECTOR_IPS = 50
-
-
-SCRIPT = """cat <<EOF > {filename}
-#!/bin/bash
-set -euo pipefail
-{content}
-rm -f {filename}
-EOF
-"""
-
-
-class ProxmoxRE(SimpleNamespace):
-    """Constants for Proxmox-related remote execution operations."""
-
-    SCRIPT: LiteralString = SCRIPT
+from typing import Final
 
 
 class EventStreams(SimpleNamespace):
@@ -87,3 +9,29 @@ class EventStreams(SimpleNamespace):
 
     WORKFLOWS = "ol:workflows"
     EVENTS = "ol:events"
+    NOTIFICATIONS = "ol:notifications"
+    WORKFLOW_LOGS = "ol:logs:workflows"
+    SYSTEM_LOGS = "ol:logs:system"
+
+
+USER_ACKNOWLEDGEMENT: Final = """
+Before OrbitLab can be used, it needs to prepare a small amount of infrastructure inside your Proxmox environment.
+
+OrbitLab will configure a Backplane network using a Proxmox EVPN/BGP VXLAN SDN, create one lightweight OrbitLab 
+Backplane LXC, and a 3-node ETCD cluster. The Backplane LXC provides both central DNS for all networks (the backplane 
+network and all user-created Sectors) and an HTTP relay used by OrbitLab-managed resources to communicate with the 
+OrbitLab. The ETCD Cluster provides central configuration management for OrbitLab-managed resources.
+
+Each LXC is intended to use minimal resources: **1 Core**, **512 MiB** Memory, **512 MiB** Swap, and **8 GiB** of 
+disk. For a grand total of **2 GiB** Memory, **2 GiB** Swap, and **32 GiB** of disk space, with the CPU usage being 
+distributed across **4 individual CPU Cores**.
+
+You will be required to configure a few cluster defaults, such as which node and storage locations should be used for 
+its infrastructure, which can be reconfigured any time after initialization.
+
+OrbitLab touches Proxmox networking and installs packages, such as `frr`, on the Proxmox nodes. So, make sure you are 
+comfortable with OrbitLab managing that baseline configuration before continuing.
+
+Review the selected CIDR, ASN, node, and storage settings carefully before continuing, because some Backplane settings 
+may not be re-configurable after initialization.
+"""

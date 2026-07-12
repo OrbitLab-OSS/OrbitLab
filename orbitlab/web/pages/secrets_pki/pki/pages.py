@@ -3,8 +3,8 @@ from typing import Final, Literal
 
 import reflex as rx
 
-from orbitlab.manifest.pki import IntermediateCertificateManifest, LeafCertificateManifest, RootCertificateManifest
-from orbitlab.web import components
+from orbitlab.redis.models import IntermediateCert, LeafCert, RootCert
+from orbitlab.web import tailwind
 from orbitlab.web.layout import orbitlab_page
 from orbitlab.web.utilities import EventGroup
 
@@ -31,27 +31,27 @@ type CertFilter = Literal["All", "Valid", "Warning", "Expired"]
 class CertificateAuthority:
     """A component for displaying root certificate authority information."""
 
-    def __new__(cls, manifest: RootCertificateManifest) -> rx.Component:
+    def __new__(cls, root_cert: RootCert) -> rx.Component:
         """Create and return the GridList item component."""
-        return components.GridList.Item(
+        return tailwind.GridList.Item(
             rx.el.div(
                 rx.el.div(
                     rx.icon("shield-check", size=24, class_name="text-sky-500"),
                     rx.match(
-                        manifest.status,
-                        ("warning", components.Badge("Expiring", color_scheme="orange")),
-                        ("expired", components.Badge("Expired", color_scheme="red")),
-                        components.Badge("Valid", color_scheme="green"),
+                        root_cert.status,
+                        ("warning", tailwind.Badge("Expiring", color_scheme="orange")),
+                        ("expired", tailwind.Badge("Expired", color_scheme="red")),
+                        tailwind.Badge("Valid", color_scheme="green"),
                     ),
                     class_name="flex justify-between items-start",
                 ),
                 rx.el.div(
                     rx.el.h3(
-                        manifest.spec.subject.common_name,
+                        root_cert.subject.common_name,
                         class_name="text-lg font-semibold text-gray-800 dark:text-gray-100",
                     ),
                     rx.el.p(
-                        f"Issued by {manifest.spec.issued.issuer}",
+                        f"Issued by {root_cert.issuer}",
                         class_name="text-sm text-gray-500 dark:text-gray-400",
                     ),
                     class_name="mt-4",
@@ -66,7 +66,7 @@ class CertificateAuthority:
                             class_name="text-xs text-gray-500 dark:text-gray-400",
                         ),
                         rx.el.p(
-                            rx.moment(manifest.spec.issued.not_before, format="YYYY-MM-DD"),
+                            rx.moment(root_cert.not_before, format="YYYY-MM-DD"),
                             class_name="text-sm font-medium text-gray-800 dark:text-gray-200",
                         ),
                         class_name="flex-1 text-left",
@@ -78,9 +78,9 @@ class CertificateAuthority:
                         ),
                         rx.el.p(
                             rx.cond(
-                                manifest.status == "expired",
-                                rx.moment(manifest.spec.issued.not_after, to_now=True),
-                                rx.moment(manifest.spec.issued.not_after, from_now=True),
+                                root_cert.status == "expired",
+                                rx.moment(root_cert.not_after, to_now=True),
+                                rx.moment(root_cert.not_after, from_now=True),
                             ),
                             class_name="text-sm font-medium text-gray-800 dark:text-gray-200",
                         ),
@@ -89,7 +89,7 @@ class CertificateAuthority:
                     class_name="flex justify-between mt-6 pt-4 border-t border-gray-200 dark:border-gray-700",
                 ),
             ),
-            on_click=ManageRootCertificateDialog.manage(manifest.name),
+            on_click=ManageRootCertificateDialog.manage(root_cert.subject.common_name),
             class_name="cursor-pointer",
         )
 
@@ -97,27 +97,27 @@ class CertificateAuthority:
 class IntermediateCertificate:
     """A component for displaying intermediate certificate authority information."""
 
-    def __new__(cls, manifest: IntermediateCertificateManifest) -> rx.Component:
+    def __new__(cls, intermediate_cert: IntermediateCert) -> rx.Component:
         """Create and return the GridList item component."""
-        return components.GridList.Item(
+        return tailwind.GridList.Item(
             rx.el.div(
                 rx.el.div(
                     rx.icon("shield-check", size=24, class_name="text-sky-500"),
                     rx.match(
-                        manifest.status,
-                        ("warning", components.Badge("Expiring", color_scheme="orange")),
-                        ("expired", components.Badge("Expired", color_scheme="red")),
-                        components.Badge("Valid", color_scheme="green"),
+                        intermediate_cert.status,
+                        ("warning", tailwind.Badge("Expiring", color_scheme="orange")),
+                        ("expired", tailwind.Badge("Expired", color_scheme="red")),
+                        tailwind.Badge("Valid", color_scheme="green"),
                     ),
                     class_name="flex justify-between items-start",
                 ),
                 rx.el.div(
                     rx.el.h3(
-                        manifest.spec.subject.common_name,
+                        intermediate_cert.subject.common_name,
                         class_name="text-lg font-semibold text-gray-800 dark:text-gray-100",
                     ),
                     rx.el.p(
-                        f"Issued by {manifest.spec.issued.issuer}",
+                        f"Issued by {intermediate_cert.issuer}",
                         class_name="text-sm text-gray-500 dark:text-gray-400",
                     ),
                     class_name="mt-4",
@@ -126,7 +126,7 @@ class IntermediateCertificate:
             ),
             rx.el.div(
                 rx.el.p(
-                    f"*.{manifest.metadata.domain_constraint}",
+                    f"*.{intermediate_cert.domain_constraint}",
                     class_name=(
                         "text-sm text-gray-500 dark:text-gray-400 mt-4 pt-2 border-t border-gray-200 "
                         "dark:border-gray-700"
@@ -141,7 +141,7 @@ class IntermediateCertificate:
                             class_name="text-xs text-gray-500 dark:text-gray-400",
                         ),
                         rx.el.p(
-                            rx.moment(manifest.spec.issued.not_before, format="YYYY-MM-DD"),
+                            rx.moment(intermediate_cert.not_before, format="YYYY-MM-DD"),
                             class_name="text-sm font-medium text-gray-800 dark:text-gray-200",
                         ),
                         class_name="flex-1 text-left",
@@ -153,9 +153,9 @@ class IntermediateCertificate:
                         ),
                         rx.el.p(
                             rx.cond(
-                                manifest.status == "expired",
-                                rx.moment(manifest.spec.issued.not_after, to_now=True),
-                                rx.moment(manifest.spec.issued.not_after, from_now=True),
+                                intermediate_cert.status == "expired",
+                                rx.moment(intermediate_cert.not_after, to_now=True),
+                                rx.moment(intermediate_cert.not_after, from_now=True),
                             ),
                             class_name="text-sm font-medium text-gray-800 dark:text-gray-200",
                         ),
@@ -164,7 +164,7 @@ class IntermediateCertificate:
                     class_name="flex justify-between mt-2 pt-4 border-t border-gray-200 dark:border-gray-700",
                 ),
             ),
-            on_click=ManageIntermediateCertDialog.manage(manifest.name),
+            on_click=ManageIntermediateCertDialog.manage(intermediate_cert.subject.common_name),
             class_name="cursor-pointer",
         )
 
@@ -172,29 +172,27 @@ class IntermediateCertificate:
 class LeafCertificate:
     """A component for displaying leaf certificate information."""
 
-    def __new__(cls, manifest: LeafCertificateManifest) -> rx.Component:
+    def __new__(cls, leaf_cert: LeafCert) -> rx.Component:
         """Create and return the GridList item component."""
-        dns_sans = rx.Var.create(manifest.metadata.san_dns).to(list[str])
-        ip_sans = rx.Var.create(manifest.metadata.san_ips).to(list[str])
-        return components.GridList.Item(
+        return tailwind.GridList.Item(
             rx.el.div(
                 rx.el.div(
                     rx.icon("shield-check", size=24, class_name="text-sky-500"),
                     rx.match(
-                        manifest.status,
-                        ("warning", components.Badge("Expiring", color_scheme="orange")),
-                        ("expired", components.Badge("Expired", color_scheme="red")),
-                        components.Badge("Valid", color_scheme="green"),
+                        leaf_cert.status,
+                        ("warning", tailwind.Badge("Expiring", color_scheme="orange")),
+                        ("expired", tailwind.Badge("Expired", color_scheme="red")),
+                        tailwind.Badge("Valid", color_scheme="green"),
                     ),
                     class_name="flex justify-between items-start",
                 ),
                 rx.el.div(
                     rx.el.h3(
-                        manifest.spec.subject.common_name,
+                        leaf_cert.subject.common_name,
                         class_name="text-lg font-semibold text-gray-800 dark:text-gray-100",
                     ),
                     rx.el.p(
-                        f"Issued by {manifest.spec.issued.issuer}",
+                        f"Issued by {leaf_cert.issuer}",
                         class_name="text-sm text-gray-500 dark:text-gray-400",
                     ),
                     class_name="mt-4",
@@ -204,13 +202,13 @@ class LeafCertificate:
             rx.el.div(
                 rx.el.p(
                     rx.cond(
-                        dns_sans.is_not_none(),
-                        rx.foreach(dns_sans, lambda san: rx.text(san)),
+                        rx.Var.create(leaf_cert.san_dns).to(list[str]).length() > 0,
+                        rx.foreach(leaf_cert.san_dns, lambda san: rx.text(san)),
                         rx.fragment(),
                     ),
                     rx.cond(
-                        ip_sans.is_not_none(),
-                        rx.foreach(ip_sans, lambda san: rx.text(san)),
+                        rx.Var.create(leaf_cert.san_ips).to(list[str]).length() > 0,
+                        rx.foreach(leaf_cert.san_ips, lambda san: rx.text(san)),
                         rx.fragment(),
                     ),
                     class_name=(
@@ -227,7 +225,7 @@ class LeafCertificate:
                             class_name="text-xs text-gray-500 dark:text-gray-400",
                         ),
                         rx.el.p(
-                            rx.moment(manifest.spec.issued.not_before, format="YYYY-MM-DD"),
+                            rx.moment(leaf_cert.not_before, format="YYYY-MM-DD"),
                             class_name="text-sm font-medium text-gray-800 dark:text-gray-200",
                         ),
                         class_name="flex-1 text-left",
@@ -239,9 +237,9 @@ class LeafCertificate:
                         ),
                         rx.el.p(
                             rx.cond(
-                                manifest.status == "expired",
-                                rx.moment(manifest.spec.issued.not_after, to_now=True),
-                                rx.moment(manifest.spec.issued.not_after, from_now=True),
+                                leaf_cert.status == "expired",
+                                rx.moment(leaf_cert.not_after, to_now=True),
+                                rx.moment(leaf_cert.not_after, from_now=True),
                             ),
                             class_name="text-sm font-medium text-gray-800 dark:text-gray-200",
                         ),
@@ -250,7 +248,7 @@ class LeafCertificate:
                     class_name="flex justify-between mt-2 pt-4 border-t border-gray-200 dark:border-gray-700",
                 ),
             ),
-            on_click=ManageLeafCertDialog.manage(manifest.name),
+            on_click=ManageLeafCertDialog.manage(leaf_cert.subject.common_name),
             class_name="cursor-pointer",
         )
 
@@ -317,17 +315,17 @@ class FilterButton(EventGroup):
 def certificate_authorities_page() -> rx.Component:
     """Render the certificate authorities management page."""
     return rx.el.div(
-        components.PageHeader(
+        tailwind.PageHeader(
             "Certificate Authority Management",
-            components.Buttons.Secondary(
+            tailwind.Buttons.Secondary(
                 "Refresh",
                 icon="refresh-ccw",
                 on_click=RootCertificatesState.cache_clear("all"),
             ),
-            components.Buttons.Primary(
+            tailwind.Buttons.Primary(
                 "Create CA",
                 icon="plus",
-                on_click=components.Dialog.open(CreateRootCertificateDialog.dialog_id),
+                on_click=tailwind.Dialog.open(CreateRootCertificateDialog.dialog_id),
             ),
         ),
         CreateRootCertificateDialog(),
@@ -340,7 +338,7 @@ def certificate_authorities_page() -> rx.Component:
             FilterButton(RootCertificatesState, "Expired"),
             class_name="flex items-center gap-2 mb-8",
         ),
-        components.GridList(
+        tailwind.GridList(
             rx.foreach(RootCertificatesState.filtered, lambda ca: CertificateAuthority(ca)),
         ),
         class_name="w-full h-full",
@@ -352,17 +350,17 @@ def certificate_authorities_page() -> rx.Component:
 def intermediate_certificates_page() -> rx.Component:
     """Render the intermediate certificates management page."""
     return rx.el.div(
-        components.PageHeader(
+        tailwind.PageHeader(
             "Intermediate Signing Certificates",
-            components.Buttons.Secondary(
+            tailwind.Buttons.Secondary(
                 "Refresh",
                 icon="refresh-ccw",
                 on_click=IntermediateCertificatesState.cache_clear("all"),
             ),
-            components.Buttons.Primary(
+            tailwind.Buttons.Primary(
                 "Create Signing CA",
                 icon="plus",
-                on_click=components.Dialog.open(CreateIntermediateCADialog.dialog_id),
+                on_click=tailwind.Dialog.open(CreateIntermediateCADialog.dialog_id),
             ),
         ),
         CreateIntermediateCADialog(),
@@ -375,7 +373,7 @@ def intermediate_certificates_page() -> rx.Component:
             FilterButton(IntermediateCertificatesState, "Expired"),
             class_name="flex items-center gap-2 mb-8",
         ),
-        components.GridList(
+        tailwind.GridList(
             rx.foreach(IntermediateCertificatesState.filtered, lambda ca: IntermediateCertificate(ca)),
         ),
         class_name="w-full h-full",
@@ -387,17 +385,17 @@ def intermediate_certificates_page() -> rx.Component:
 def leaf_certificates_page() -> rx.Component:
     """Render the leaf certificates management page."""
     return rx.el.div(
-        components.PageHeader(
+        tailwind.PageHeader(
             "Leaf Certificates",
-            components.Buttons.Secondary(
+            tailwind.Buttons.Secondary(
                 "Refresh",
                 icon="refresh-ccw",
                 on_click=LeafCertificatesState.cache_clear("all"),
             ),
-            components.Buttons.Primary(
+            tailwind.Buttons.Primary(
                 "Create Leaf Certificate",
                 icon="plus",
-                on_click=components.Dialog.open(CreateLeafCertificateDialog.dialog_id),
+                on_click=tailwind.Dialog.open(CreateLeafCertificateDialog.dialog_id),
             ),
         ),
         CreateLeafCertificateDialog(),
@@ -410,7 +408,7 @@ def leaf_certificates_page() -> rx.Component:
             FilterButton(LeafCertificatesState, "Expired"),
             class_name="flex items-center gap-2 mb-8",
         ),
-        components.GridList(
+        tailwind.GridList(
             rx.foreach(LeafCertificatesState.filtered, lambda ca: LeafCertificate(ca)),
         ),
         class_name="w-full h-full",

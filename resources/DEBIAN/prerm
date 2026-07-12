@@ -16,6 +16,12 @@ if [ -f /usr/lib/systemd/system/orbitlab-backend.service ]; then
     rm -f /usr/lib/systemd/system/orbitlab-backend.service
     journalctl -eau orbitlab-backend --vacuum-time=1s
 fi
+if [ -f /usr/lib/systemd/system/orbital-receiver.service ]; then
+    systemctl stop orbital-receiver.service
+    systemctl disable orbital-receiver.service
+    rm -f /usr/lib/systemd/system/orbital-receiver.service
+    journalctl -eau orbital-receiver --vacuum-time=1s
+fi
 systemctl daemon-reload
 rm -rf /opt/orbitlab/
 if [ "$OPERATION" == "remove" ]; then
