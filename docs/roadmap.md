@@ -78,6 +78,8 @@ another compatible mechanism.
 
 # Phase 4
 
+- [ ] Compute Instance Sizes (T-Shirt sizes)
+
 - [ ] Built-in Markdown documentation 
 
 - [ ] Self updating mechanism (user-triggered)

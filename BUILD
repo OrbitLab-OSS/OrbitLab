@@ -46,9 +46,10 @@ pex_binary(
     interpreter_constraints=[">=3.13"],
 )
 
-run_shell_command(
-    name="build",
-    command="bash scripts/build-deb.sh",
+package_shell_command(
+    name="orbitlab",
+    command="ls -latr",
+    tools=["ls"],
     execution_dependencies=[
         "resources:resources",
         "scripts:scripts",
@@ -57,4 +58,5 @@ run_shell_command(
         ":orbitlab-frontend",
         ":rxconfig",
     ],
+    output_files=["orbitlab.deb"],
 )

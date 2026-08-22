@@ -12,10 +12,8 @@ dependencies = [
     "pydantic==2.12.3",
     "pydantic-settings==2.11.0",
     "PyYAML==6.0.3",
-    "reflex==0.9.3",
+    "reflex==0.9.6",
     "reflex-vite-config-plugin==0.0.4",
-    "redis", # Let reflex set the version
-    "starlette", # Let reflex set the version
     "uvicorn==0.40.0",
     "websockets==16.0"
 ]
@@ -27,9 +25,9 @@ dev = [
 ]
 
 [tool.ruff]
-src = [ ".",]
+src = ["."]
 line-length = 120
-target-version = "py312"
+target-version = "py314"
 extend-exclude = ["tests"]
 output-format = "grouped"
 
@@ -45,7 +43,7 @@ convention = "google"
 
 [tool.pytest.ini_options]
 pythonpath = "."
-addopts = "--capture=no --cov=orbitlab --cov-report=term-missing"
+addopts = "--cov=orbitlab --capture=no --cov-report=term-missing"
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_functions = ["test_*"]
