@@ -146,6 +146,44 @@ class RedisClient:
         if isawaitable(_res):
             await _res
 
+    async def _reserve_set_values(self, index: str, candidates: Sequence[str], *, count: int = 1) -> list[str]:
+        """Atomically reserve the first requested values that are absent from a Redis set.
+
+        Allocation is deliberately a compare-and-set operation. A read followed
+        by ``SADD`` lets concurrent workers return the same VLAN, VRID, or IP
+        address even though Redis itself de-duplicates the stored value.
+        """
+        if count < 1:
+            raise ValueError("count must be at least one")
+
+        for attempt in range(1, self._cas_max_retries + 1):
+            async with self.client.pipeline(transaction=True) as pipeline:
+                try:
+                    await pipeline.watch(index)
+                    raw_existing = await pipeline.smembers(index)
+                    existing = {
+                        value.decode() if isinstance(value, bytes) else str(value)
+                        for value in raw_existing
+                    }
+                    reserved = [candidate for candidate in candidates if candidate not in existing][:count]
+                    if len(reserved) != count:
+                        await pipeline.unwatch()
+                        return []
+
+                    pipeline.multi()
+                    result = pipeline.sadd(index, *reserved)
+                    if isawaitable(result):
+                        await result
+                    await pipeline.execute()
+                    return reserved
+                except WatchError:
+                    await self.log(
+                        f"{index} reservation attempt #{attempt} conflicted; retrying.",
+                        level="Warning",
+                    )
+
+        raise RuntimeError(f"Could not reserve values from {index} after {self._cas_max_retries} attempts")
+
     async def _hset(self, name: str, key: str, value: bytes | str | int) -> None:
         _res = self.client.hset(
             name=name,
@@ -187,6 +225,7 @@ class ClusterClient(RedisClient):
     NAME: Final = "ol:cluster"
     INDEX: Final = "ol:cluster:nodes"
     DOMAIN_PROVIDERS: Final = "ol:cluster:domain_providers"
+    APPLIANCES_BRANCH: Final = "appliances_branch"
 
     def _get_node_redis_name(self, node: str) -> str:
         return f"{self.INDEX}:{node}"
@@ -244,6 +283,14 @@ class ClusterClient(RedisClient):
     
     async def set_infra_appliances(self, appliances: models.InfraAppliances) -> None:
         await self._hset(name=self.NAME, key="appliances", value=appliances.model_dump_json())
+
+    async def get_appliances_branch(self) -> str:
+        """Return the selected Appliances source branch, defaulting to main."""
+        return await self._get_decoded(name=self.NAME, key=self.APPLIANCES_BRANCH) or "main"
+
+    async def set_appliances_branch(self, branch: str) -> None:
+        """Persist a branch only after its metadata has been validated."""
+        await self._hset(name=self.NAME, key=self.APPLIANCES_BRANCH, value=branch)
 
     async def set_node(self, node: models.NodeConfig) -> None:
         name = self._get_node_redis_name(node=node.name)
@@ -327,17 +374,19 @@ class BackplaneClient(RedisClient):
     async def set_appliance_version(self, version: str) -> None:
         await self._hset(name=self.NAME, key="version", value=version)
 
+    async def set_status(self, status: data_types.BackplaneStatus) -> None:
+        """Record the desired Backplane lifecycle status after a durable step commits."""
+        await self._hset(name=self.NAME, key="status", value=status)
+
     async def get_appliance_version(self) -> str:
         if version := await self._get_decoded(name=self.NAME, key="version"):
             return version
         return ""
 
     async def get_next_vlan_tag(self, start: int = 1000, end: int = 9999) -> int | None:
-        existing_tags = [int(tag) for tag in await self._list_set_members(index=self.TAGS_INDEX)]
-        if tag := next((i for i in range(start, end + 1) if i not in existing_tags), None):
-            await self.add_used_vlan_tags(tags=[tag])
-            return tag
-        return None
+        candidates = [str(tag) for tag in range(start, end + 1)]
+        reserved = await self._reserve_set_values(self.TAGS_INDEX, candidates)
+        return int(reserved[0]) if reserved else None
 
     async def add_used_vlan_tags(self, tags: list[int]) -> None:
         if tags:
@@ -369,32 +418,26 @@ class BackplaneClient(RedisClient):
     async def get_next_available_ip(self, *, count: int) -> list[IPv4Interface]: ...
 
     async def get_next_available_ip(self, *, count: int | None = None) -> IPv4Interface | list[IPv4Interface]:
-        """Get the next available IP address in the subnet."""
+        """Atomically reserve one or more usable Backplane addresses."""
         backplane = await self.get()
-        assigned = [IPv4Interface(address).ip for address in await self._list_set_members(index=self.ASSIGNMENTS_INDEX)]
         hosts = list(backplane.config.cidr_block.hosts())
         usable = hosts[self.RESERVED_INFRA_IPS:self.RESERVED_BROADCAST_IPS]
-        if count:
-            available_generator = iter(
-                IPv4Interface(f"{ip}/{backplane.config.cidr_block.prefixlen}") for ip in usable if ip not in assigned
-            )
-            assigned = [next(available_generator) for _ in range(count)]
-            await self._set_add(self.ASSIGNMENTS_INDEX, *[str(ip) for ip in assigned])
-            return assigned
-        assigned = next(iter(
-            IPv4Interface(f"{ip}/{backplane.config.cidr_block.prefixlen}") for ip in usable if ip not in assigned
-        ))
-        await self._set_add(self.ASSIGNMENTS_INDEX, str(assigned))
-        return assigned
+        requested = count or 1
+        candidates = [str(IPv4Interface(f"{ip}/{backplane.config.cidr_block.prefixlen}")) for ip in usable]
+        reserved = await self._reserve_set_values(self.ASSIGNMENTS_INDEX, candidates, count=requested)
+        if not reserved:
+            raise ValueError("No Backplane IP addresses are available")
+        addresses = [IPv4Interface(address) for address in reserved]
+        return addresses if count is not None else addresses[0]
 
     async def release_assigned_ips(self, *addresses: IPv4Interface) -> None:
         await self._set_rem(self.ASSIGNMENTS_INDEX, *[str(address) for address in addresses])
 
     async def get_next_available_vrid(self) -> int:
-        assigned = [int(vrid) for vrid in await self._list_set_members(index=self.VRID_INDEX)]
-        vrid = next(iter([vrid for vrid in range(1, 256) if vrid not in assigned]))
-        await self._set_add(self.VRID_INDEX, str(vrid))
-        return vrid
+        reserved = await self._reserve_set_values(self.VRID_INDEX, [str(vrid) for vrid in range(1, 256)])
+        if not reserved:
+            raise ValueError("No VRIDs are available")
+        return int(reserved[0])
 
     async def release_assigned_vrids(self, *vrids: int) -> None:
         await self._set_rem(self.VRID_INDEX, *[str(vrid) for vrid in vrids])
@@ -463,8 +506,12 @@ class ETCDClient(RedisClient):
         if member := next(iter(member for member in members if member.vmid == vmid), None):
             return member
         raise exceptions.ResourceNotFoundError(name=f"{self.MEMBER_INDEX}:{vmid}")
+
+    async def add_member(self, member: models.ETCDMember) -> None:
+        """Commit a member only after its Proxmox guest exists."""
+        await self._set_add(self.MEMBER_INDEX, member.model_dump_json())
     
-    async def generate_create_params(self, vmid: int) -> dict:
+    async def generate_create_params(self, vmid: int) -> tuple[models.ETCDMember, dict]:
         cluster = ClusterClient()
         
         infra = await cluster.get_infra_appliances()
@@ -478,8 +525,7 @@ class ETCDClient(RedisClient):
             ),
             address=await BackplaneClient().get_next_available_ip()
         )
-        await self._set_add(self.MEMBER_INDEX, member.model_dump_json())
-        return {
+        return member, {
             "pool": "orbitlab-etcd",
             "features": "nesting=1",
             "ostemplate": infra.appliances["etcd"].volume_id,
@@ -704,6 +750,84 @@ class SectorClient(RedisClient):
         await self._mutate_object(name=name, submitted=config)
         await self._set_add(self.INDEX, config.id)
 
+    async def create_with_backplane_allocation(
+        self,
+        *,
+        alias: str,
+        cidr_block: IPv4Network,
+        storage: str,
+        tag_start: int = 1000,
+        tag_end: int = 9999,
+    ) -> models.SectorConfiguration:
+        """Atomically reserve a Sector's VLAN/IP pair and persist its manifest.
+
+        The manifest is committed in the same Redis transaction as its network
+        allocations.  A worker crash can therefore never leave an unowned tag
+        or address that makes a later Sector appear to be in use.
+        """
+        backplane = await BackplaneClient().get()
+        if cidr_block.overlaps(backplane.config.cidr_block):
+            raise ValueError(f"Sector CIDR {cidr_block} overlaps the Backplane network.")
+        address_candidates = [
+            str(IPv4Interface(f"{ip}/{backplane.config.cidr_block.prefixlen}"))
+            for ip in list(backplane.config.cidr_block.hosts())[BackplaneClient.RESERVED_INFRA_IPS:BackplaneClient.RESERVED_BROADCAST_IPS]
+        ]
+
+        for attempt in range(1, self._cas_max_retries + 1):
+            async with self.client.pipeline(transaction=True) as pipeline:
+                try:
+                    await pipeline.watch(BackplaneClient.TAGS_INDEX, BackplaneClient.ASSIGNMENTS_INDEX, self.INDEX)
+                    raw_tags = await pipeline.smembers(BackplaneClient.TAGS_INDEX)
+                    raw_addresses = await pipeline.smembers(BackplaneClient.ASSIGNMENTS_INDEX)
+                    sector_ids = await pipeline.smembers(self.INDEX)
+                    used_tags = {int(tag.decode() if isinstance(tag, bytes) else tag) for tag in raw_tags}
+                    used_addresses = {
+                        address.decode() if isinstance(address, bytes) else str(address)
+                        for address in raw_addresses
+                    }
+                    tag = next((candidate for candidate in range(tag_start, tag_end + 1) if candidate not in used_tags), None)
+                    address = next((candidate for candidate in address_candidates if candidate not in used_addresses), None)
+                    if tag is None or address is None:
+                        await pipeline.unwatch()
+                        raise ValueError("No Backplane VLAN tags or IP addresses are available for a new Sector.")
+
+                    for raw_id in sector_ids:
+                        sector_id = raw_id.decode() if isinstance(raw_id, bytes) else str(raw_id)
+                        raw_config = await pipeline.hget(self._get_name(sector_id), "config")
+                        if raw_config is None:
+                            continue
+                        configured = models.SectorConfiguration.model_validate_json(raw_config)
+                        if cidr_block.overlaps(configured.cidr_block):
+                            await pipeline.unwatch()
+                            raise ValueError(f"Sector CIDR {cidr_block} overlaps existing Sector {configured.id}.")
+
+                    config = models.SectorConfiguration(
+                        alias=alias,
+                        cidr_block=cidr_block,
+                        tag=tag,
+                        backplane_address=IPv4Interface(address),
+                        storage=storage,
+                        version=1,
+                        last_update=int(time.time()),
+                    )
+                    name = self._get_name(config.id)
+                    await pipeline.watch(name)
+                    if await pipeline.hget(name, "config"):
+                        continue
+                    pipeline.multi()
+                    pipeline.hset(name, "config", config.model_dump_json())
+                    pipeline.sadd(self.INDEX, config.id)
+                    pipeline.sadd(BackplaneClient.TAGS_INDEX, str(config.tag))
+                    pipeline.sadd(BackplaneClient.ASSIGNMENTS_INDEX, str(config.backplane_address))
+                    await pipeline.execute()
+                    return config
+                except WatchError:
+                    await self.log(
+                        f"Sector allocation attempt #{attempt} conflicted; retrying.",
+                        level="Warning",
+                    )
+        raise RuntimeError("Could not atomically allocate a Sector after repeated contention")
+
     async def update(self, config: models.SectorConfiguration) -> None:
         return await self.create(config=config)
 
@@ -816,32 +940,78 @@ class SectorClient(RedisClient):
         await self._hset(name=self._get_name(id=id), key="wardlink_clients", value=json.dumps(state_dict["wardlink_clients"]))
         return client
     
-    async def acquire_vip(self, id: str) -> models.SectorVIP:
+    async def acquire_vips(self, id: str, *, count: int) -> list[models.SectorVIP]:
+        """Atomically assign one or more VIPs from a Sector's reserved range."""
+        if count < 1:
+            raise ValueError("count must be at least one")
         name = self._get_name(id=id)
-        sector = await self.get(id=id)
-        vip = sector.get_available_vip()
-        sector.state.vips[vip.virtual_router_id] = vip.address
-        serialized = sector.state.model_dump()
-        await self._hset(name=name, key="vips", value=json.dumps(serialized["vips"]))
-        return vip
+        for attempt in range(1, self._cas_max_retries + 1):
+            async with self.client.pipeline(transaction=True) as pipeline:
+                try:
+                    await pipeline.watch(name)
+                    raw_config = await self._get_decoded(name=name, key="config", pipeline=pipeline)
+                    if raw_config is None:
+                        await pipeline.unwatch()
+                        raise exceptions.ResourceNotFoundError(name=name)
+                    raw_vips = await self._get_decoded(name=name, key="vips", pipeline=pipeline)
+                    sector = models.Sector(
+                        config=models.SectorConfiguration.model_validate_json(raw_config),
+                        state=models.SectorState.model_validate({"vips": raw_vips}),
+                    )
+                    vips: list[models.SectorVIP] = []
+                    for _ in range(count):
+                        vip = sector.get_available_vip()
+                        sector.state.vips[vip.virtual_router_id] = vip.address
+                        vips.append(vip)
+                    serialized = sector.state.model_dump()
+                    pipeline.multi()
+                    result = pipeline.hset(name=name, key="vips", value=json.dumps(serialized["vips"]))
+                    if isawaitable(result):
+                        await result
+                    await pipeline.execute()
+                    return vips
+                except WatchError:
+                    await self.log(
+                        f"{name} VIP reservation attempt #{attempt} conflicted; retrying.",
+                        level="Warning",
+                    )
+        raise RuntimeError(f"Could not reserve VIPs for {id} after {self._cas_max_retries} attempts")
+
+    async def acquire_vip(self, id: str) -> models.SectorVIP:
+        """Atomically assign a single VIP from a Sector's reserved range."""
+        return (await self.acquire_vips(id, count=1))[0]
 
     async def release_vips(self, *virtual_router_ids: int, id: str) -> None:
         name = self._get_name(id=id)
-        sector = await self.get(id=id)
-        sector.state.vips = {vrid: vip for vrid, vip in sector.state.vips.items() if vrid not in virtual_router_ids}
-        if sector.state.vips:
-            serialized = sector.state.model_dump()
-            await self._hset(name=name, key="vips", value=json.dumps(serialized["vips"]))
-        else:
-            await self._hdel(name, "vips")
+        for attempt in range(1, self._cas_max_retries + 1):
+            async with self.client.pipeline(transaction=True) as pipeline:
+                try:
+                    await pipeline.watch(name)
+                    raw_vips = await self._get_decoded(name=name, key="vips", pipeline=pipeline)
+                    state = models.SectorState.model_validate({"vips": raw_vips})
+                    state.vips = {vrid: vip for vrid, vip in state.vips.items() if vrid not in virtual_router_ids}
+                    pipeline.multi()
+                    if state.vips:
+                        result = pipeline.hset(name=name, key="vips", value=json.dumps(state.model_dump()["vips"]))
+                    else:
+                        result = pipeline.hdel(name, "vips")
+                    if isawaitable(result):
+                        await result
+                    await pipeline.execute()
+                    return
+                except WatchError:
+                    await self.log(f"{name} VIP release attempt #{attempt} conflicted; retrying.", level="Warning")
+        raise RuntimeError(f"Could not release VIPs for {id} after {self._cas_max_retries} attempts")
 
     async def delete(self, id: str) -> None:
         name = self._get_name(id=id)
         if config := await self._get_config(name=name, model=models.SectorConfiguration):
-            await BackplaneClient().release_vlan_tag(tag=config.tag)
-            await BackplaneClient().release_assigned_ips(config.backplane_address)             
-            await self.client.delete(name)
-            await self._set_rem(self.INDEX, id)
+            async with self.client.pipeline(transaction=True) as pipeline:
+                pipeline.srem(BackplaneClient.TAGS_INDEX, str(config.tag))
+                pipeline.srem(BackplaneClient.ASSIGNMENTS_INDEX, str(config.backplane_address))
+                pipeline.delete(name)
+                pipeline.srem(self.INDEX, id)
+                await pipeline.execute()
 
 
 class SecretsClient(RedisClient):
@@ -989,7 +1159,7 @@ class SecretsClient(RedisClient):
     async def store_private_key(self, cert_common_name: str, key_pem: str, *, ssh: bool = False) -> None:
         secret_name = f"/orbitlab/ssh/key/{cert_common_name}" if ssh else f"/orbitlab/pki/key/{cert_common_name}"
         name = f"{self.PKI_KEY_INDEX}:{secret_name}"
-        if await self.secret_exists(secret_name=secret_name):
+        if await self.client.hget(name=name, key="current-version"):
             raise exceptions.ResourceAlreadyExistsError(name=name)
         secret = models.Secret.create(
             secret_name=secret_name,
@@ -1002,16 +1172,19 @@ class SecretsClient(RedisClient):
 
     async def get_private_key(self, cert_common_name: str, *, ssh: bool = False) -> str:
         secret_name = f"/orbitlab/ssh/key/{cert_common_name}" if ssh else f"/orbitlab/pki/key/{cert_common_name}"
-        name = self._get_name(secret_name=secret_name)
-        version = await self.get_current_version(secret_name=secret_name)
+        name = f"{self.PKI_KEY_INDEX}:{secret_name}"
+        version_data = await self._get_decoded(name=name, key="current-version")
+        if not version_data:
+            raise exceptions.ResourceNotFoundError(name=name, key="current-version")
+        version = int(version_data)
         key = f"v{version}"
         if data := await self._get_decoded(name=name, key=key):
-            return models.Secret.model_validate_json(data).secret_string.get_secret_value()
+            return self._decrypt(data).secret_string.get_secret_value()
         raise exceptions.ResourceNotFoundError(name=name, key=key)
 
     async def delete_private_key(self, cert_common_name: str, *, ssh: bool = False) -> None:
         secret_name = f"/orbitlab/ssh/key/{cert_common_name}" if ssh else f"/orbitlab/pki/key/{cert_common_name}"
-        name = self._get_name(secret_name=secret_name)
+        name = f"{self.PKI_KEY_INDEX}:{secret_name}"
         await self.client.delete(name)
         await self._set_rem(self.PKI_KEY_INDEX, secret_name)
 
@@ -1344,7 +1517,7 @@ class PKIClient(RedisClient):
 
 
 class SSHKeyClient(PKIClient):
-    INDEX: Final = "ol:pki:root"
+    INDEX: Final = "ol:sshkeys"
     
     def _get_name(self, key_pair_name: str) -> str:
         return f"ol:sshkey:{key_pair_name}"
@@ -1354,6 +1527,11 @@ class SSHKeyClient(PKIClient):
             await self.get_key_pair(key_pair_name=key_pair_name)
             for key_pair_name in await self._list_set_members(index=self.INDEX)
         ]
+
+    async def list_named_key_pairs(self) -> list[tuple[str, models.SSHKey]]:
+        """Return SSH keys with their durable names for operator-facing views."""
+        key_names = await self._list_set_members(index=self.INDEX)
+        return [(key_name, await self.get_key_pair(key_pair_name=key_name)) for key_name in key_names]
     
     async def key_pair_exists(self, key_pair_name: str) -> bool:
         return key_pair_name in await self._list_set_members(index=self.INDEX)
@@ -1787,6 +1965,10 @@ class DataCoreClient(RedisClient):
     async def remove_node(self, id: str, node: models.DataCoreNode) -> None:
         await self._mutate_nodes(id=id, node=node, remove=True)
 
+    async def add_node(self, id: str, node: models.DataCoreNode) -> None:
+        """Commit a DataCore member after Proxmox has created its guest."""
+        await self._mutate_nodes(id=id, node=node)
+
     async def update_nodes(self, id: str, nodes: models.DataCoreNodes) -> None:
         name = self._cluster_name(id=id)
         await self._hset(name=name, key="nodes", value=nodes.model_dump_json())
@@ -1824,7 +2006,7 @@ class DataCoreClient(RedisClient):
             }
         raise exceptions.ResourceNotFoundError(name=name)
 
-    async def generate_node_params(self, id: str, vmid: int) -> dict:
+    async def generate_node_params(self, id: str, vmid: int) -> tuple[models.DataCoreNode, dict]:
         name = self._cluster_name(id=id)
         if config := await self._get_config(name=name, model=models.DataCoreConfig):
             state = await self._get_state(name=name, model=models.DataCoreState)
@@ -1834,8 +2016,7 @@ class DataCoreClient(RedisClient):
                 vmid=vmid,
                 name=await self._generate_unique_id(prefix=config.id, count=6, existing=[node.name for node in state.nodes.root]),
             )
-            await self._mutate_nodes(id=id, node=node) # Adds the node to the index
-            return {
+            return node, {
                 "pool": config.id,
                 "features": "nesting=1",
                 "ostemplate": infra.appliances["datacore"].volume_id,

@@ -7,8 +7,8 @@ from datetime import UTC, datetime
 from functools import cached_property
 import os
 import sys
+from uuid import uuid4
 
-import reflex as rx
 from pydantic import ValidationError
 from redis.asyncio import Redis
 from redis.exceptions import ResponseError
@@ -17,7 +17,9 @@ from orbitlab.constants import EventStreams
 from orbitlab.data_types import EventStatus
 from orbitlab.proxmox import Proxmox
 from orbitlab.worker import workflows
-from orbitlab.worker.events import NotificationEvent, OrbitLabEvent, WorkflowEvent
+from orbitlab.worker.events import OrbitLabEvent, WorkflowEvent
+from orbitlab.worker.jobs import JobStore
+from orbitlab.worker.reconciler import ValidationWorker
 
 
 class WorkflowRegistry:
@@ -65,7 +67,6 @@ class Worker:
         """Initialize the worker."""
         self.task: asyncio.Task | None = None
         self._event = asyncio.Event()
-        self._workflows = set()
         self.redis = self._get_redis()
 
     @classmethod
@@ -133,12 +134,14 @@ class Worker:
         )
 
     async def _handle_workflow_event(self, event: WorkflowEvent) -> None:
+        """Execute a workflow step before the stream entry is acknowledged."""
+        jobs = JobStore(self.redis)
         if event.status in (EventStatus.SUCCEEDED, EventStatus.FAILED):
             await self.redis.delete(event.redis_key)
+            await jobs.set_status(str(event.job_id), "succeeded" if event.status == EventStatus.SUCCEEDED else "failed")
         elif workflow_cls := self.registry.resolve(event=event):
-            workflow = asyncio.create_task(workflow_cls(redis=self.redis, event=event).run_once())
-            self._workflows.add(workflow)
-            workflow.add_done_callback(self._workflows.discard)
+            await jobs.set_status(str(event.job_id), "running")
+            await workflow_cls(redis=self.redis, event=event).run_once()
         else:
             await self.redis.xadd(
                 name=EventStreams.SYSTEM_LOGS,
@@ -220,39 +223,31 @@ class Worker:
                 )
         sys.stdout.write("Exiting Event Stream...\n")
 
-    async def _process_notifications(self) -> None:
-        consumer = self.node
-        await self._ensure_group(group=self.GROUP_NAME, stream=EventStreams.NOTIFICATIONS)
+    async def _validate_resources(self) -> None:
+        """Continuously record observed state without mutating Proxmox."""
+        validator = ValidationWorker(self.redis)
         while not self._event.is_set():
             try:
-                stream_events = await self._read_stream_events(stream=EventStreams.NOTIFICATIONS, consumer=consumer)
-                for event_id, payload in stream_events:
-                    notification = NotificationEvent.model_validate(payload)
-                    if notification.level == "INFO":
-                        event = rx.toast.info(notification.message)
-                    if notification.level == "WARN":
-                        event = rx.toast.warning(notification.message)
-                    else:
-                        event = rx.toast.error(notification.message)
-                    await workflows.Workflow.emit_reflex_events(event)
-                    await self.redis.xack(EventStreams.NOTIFICATIONS, self.GROUP_NAME, event_id)
-                    
+                await validator.run_once()
             except Exception as err:  # noqa: BLE001
                 await self.redis.xadd(
                     name=EventStreams.SYSTEM_LOGS,
                     fields={
                         "timestamp": datetime.now(UTC).isoformat(),
                         "level": "Error",
-                        "trace": "worker.worker.Worker._process_notifications",
+                        "trace": "worker.worker.Worker._validate_resources",
                         "message": str(err),
                     },
                     maxlen=5000,
                     approximate=True,
                 )
-        sys.stdout.write("Exiting Notification Stream...\n")
+            try:
+                await asyncio.wait_for(self._event.wait(), timeout=ValidationWorker.INTERVAL_SECONDS)
+            except TimeoutError:
+                continue
 
     @classmethod
-    async def create_workflow(cls, name: str, version: str, payload: dict) -> str:
+    async def create_workflow(cls, name: str, version: str, payload: dict, *, idempotency_key: str | None = None) -> str:
         """Create and enqueue a new workflow event in Redis."""
         event = WorkflowEvent(name=name, version=version)
         if workflow_cls := cls.registry.resolve(event=event):
@@ -263,20 +258,19 @@ class Worker:
                 return str(err)
 
             redis = cls._get_redis()
-            await redis.set(name=event.redis_key, value=value.model_dump_json())
-            await redis.xadd(
-                name=EventStreams.WORKFLOWS,
-                fields=event.model_dump(), # pyright: ignore[reportArgumentType]
-                maxlen=5000,
-                approximate=True,
+            job = await JobStore(redis).enqueue(
+                name=name,
+                version=version,
+                payload=value.model_dump(mode="json"),
+                idempotency_key=idempotency_key or str(uuid4()),
             )
             await redis.xadd(
                 name=EventStreams.SYSTEM_LOGS,
                 fields={
                     "timestamp": datetime.now(UTC).isoformat(),
                     "level": "Info",
-                    "trace": "web.utilities.get_redis_value",
-                    "message": f"Creating workflow {event.redis_key}",
+                    "trace": "worker.worker.Worker.create_workflow",
+                    "message": f"Created job {job.id} for {job.name}",
                 },
                 maxlen=5000,
                 approximate=True,
@@ -289,8 +283,8 @@ class Worker:
         """Start the worker event loop as an async context manager."""
         workflows = asyncio.create_task(self._process_workflows())
         events = asyncio.create_task(self._process_events())
-        notifications = asyncio.create_task(self._process_notifications())
+        validator = asyncio.create_task(self._validate_resources())
         yield
         self._event.set()
-        await asyncio.gather(workflows, events, notifications)
+        await asyncio.gather(workflows, events, validator)
         sys.stdout.write("Worker Exited.\n")

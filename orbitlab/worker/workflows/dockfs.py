@@ -6,11 +6,9 @@ import json
 from typing import Annotated
 
 from orbitlab.data_types import DockFSStatus, SerializeIP
-from orbitlab.proxmox import Proxmox
+from orbitlab.proxmox import Proxmox, ProxmoxAdapter
 from orbitlab.redis.clients import DNSClient, DockFSClient, ETCDClient, SectorClient
 from orbitlab.redis.models import ARecord, DockFSNode
-from orbitlab.web.global_state import OrbitLabState
-
 from .base import Workflow, WorkflowPayload
 
 
@@ -36,12 +34,12 @@ class CreateDockFsV1(Workflow):
             return await self.fail(f"DockFS {self.payload.id} does not exist")
         
         await client.set_cluster_status(id=self.payload.id, status=DockFSStatus.PENDING)
-        await self.emit_reflex_events(OrbitLabState.cache_clear("dockfs_clusters"))
 
     async def provision(self) -> None:
         """Provision the active and passive DockFS nodes."""
         client = DockFSClient()
         proxmox = Proxmox()
+        adapter = ProxmoxAdapter(proxmox)
         
         cluster = await client.get_dockfs(id=self.payload.id)
         
@@ -61,24 +59,29 @@ class CreateDockFsV1(Workflow):
             )
         
         for node_type in ("active", "passive"):
-            vmid = await proxmox.get_next_vmid()
-            mac, params = await client.generate_node_params(id=cluster.config.id, vmid=vmid, node_type=node_type)
-            await asyncio.gather(
-                self.log(
-                    f"Creating {node_type.capitalize()} Node {vmid} for {cluster.config.id} with params: "
-                    f" {self._redact_params(params)}"
-                ),
-                proxmox.create_instance(instance_type="qemu", params=params),
+            prepared: dict[str, object] = {}
+
+            async def parameters(vmid: int) -> dict:
+                mac, params = await client.generate_node_params(id=cluster.config.id, vmid=vmid, node_type=node_type)
+                prepared["mac"] = mac
+                prepared["params"] = params
+                return params
+
+            guest = await adapter.create_managed_guest(
+                resource_id=f"{cluster.config.id}:dockfs:{node_type}",
+                instance_type="qemu",
+                node="",
+                parameters=parameters,
             )
-            
-            await asyncio.gather(
-                self.log(f"Starting {node_type.capitalize()} Node {vmid}"),
-                proxmox.start(vmid=vmid),
-            )
+            vmid = guest.vmid
+            params = prepared["params"]
+            mac = prepared["mac"]
+            await self.log(f"Starting {node_type.capitalize()} Node {vmid}")
+            await proxmox.start(vmid=vmid)
 
             await client.set_node(
                 id=cluster.config.id,
-                node=DockFSNode(name=params["name"], mac=mac, address=None, vmid=vmid),  # We'll start with None and let DHCP fill it later
+                node=DockFSNode(name=params["name"], mac=mac, address=None, vmid=vmid),  # type: ignore[index,arg-type]
                 node_type=node_type,
             )
         
@@ -87,7 +90,6 @@ class CreateDockFsV1(Workflow):
     async def on_succeed(self) -> None:
         """Success."""
         await DockFSClient().set_cluster_status(id=self.payload.id, status=DockFSStatus.AVAILABLE)
-        await self.emit_reflex_events(OrbitLabState.cache_clear("dockfs_clusters"))
 
 
 class ReconcilePayload(DockFsPayload):
@@ -119,56 +121,13 @@ class FailoverDockFsV1(Workflow):
         await proxmox.wait_for_agent(vmid=cluster.state.active.vmid)
         status = await proxmox.agent_execute_script(vmid=cluster.state.active.vmid, script="/usr/bin/dockfs-check")
         if status.exitcode == 0:
-            return await self.succeed(f"Aassive node {cluster.state.active} healthy.", notify=False)
+            return await self.succeed(f"Active node {cluster.state.active} is healthy.", notify=False)
         
         await DockFSClient().set_cluster_status(id=self.payload.id, status=DockFSStatus.DEGRADED)
-        await self.emit_reflex_events(OrbitLabState.cache_clear("dockfs_clusters"))
-
-    async def provision(self) -> None:
-        """Promote passive node to active and create new passive node."""
-        client = DockFSClient()
-        proxmox = Proxmox()
-        cluster = await client.get_dockfs(id=self.payload.id)
-        
-        await proxmox.stop(vmid=cluster.state.active.vmid)
-        await asyncio.gather(
-            self.log(f"Moving SCSI1 disk from {cluster.state.active} to {cluster.state.passive}"),
-            proxmox.move_disk(from_vmid=cluster.state.active.vmid, to_vmid=cluster.state.passive.vmid, disk_id="scsi1"),
+        await self.succeed(
+            f"DockFS {self.payload.id} is degraded. Automatic promotion is disabled until fencing is explicit.",
+            notify=False,
         )
-        
-        await asyncio.gather(
-            self.log(f"Promoting {cluster.state.passive} to Active and terminating previous active."),
-            client.set_node(id=cluster.config.id, node=cluster.state.passive, node_type="active"),
-            self.log(f"Terminating failed active node {cluster.state.active}."),
-            proxmox.terminate(vmid=cluster.state.active.vmid),
-            client.delete_node(id=cluster.config.id, node=cluster.state.active),
-        )
-
-    async def configure(self) -> ReconcilePayload:
-        """Configure the new passive DockFS node."""
-        client = DockFSClient()
-        proxmox = Proxmox()
-        
-        vmid = await proxmox.get_next_vmid()
-        mac, params = await client.generate_node_params(id=self.payload.id, vmid=vmid, node_type="passive")
-        await self.log(f"Creating Passive Node {vmid} for {self.payload.id} with params: {self._redact_params(params)}")
-        await proxmox.create_instance(instance_type="qemu", params=params)
-        await proxmox.start(vmid=vmid)
-        address = await proxmox.get_ipv4_address(vmid=vmid)
-        if not address:
-            return await self.fail(f"Node {vmid} for {self.payload.id} failed to acquire IP")
-        await client.set_node(
-            id=self.payload.id,
-            node=DockFSNode(name=params["name"], mac=mac, address=address, vmid=vmid),
-            node_type="passive",
-        )
-        
-        await self.succeed("Passive node created.", notify=False)
-
-    async def on_succeed(self) -> None:
-        """Success."""
-        await DockFSClient().set_cluster_status(id=self.payload.id, status=DockFSStatus.AVAILABLE)
-        await self.emit_reflex_events(OrbitLabState.cache_clear("dockfs_clusters"))
 
 
 # class FailoverDockFsV1(Workflow):
@@ -200,7 +159,6 @@ class DeleteDockFsV1(Workflow):
             return await self.fail(f"DockFS {self.payload.id} does not exist")
 
         await client.set_cluster_status(id=self.payload.id, status=DockFSStatus.DELETING)
-        await self.emit_reflex_events(OrbitLabState.cache_clear("dockfs_clusters"))
 
     async def provision(self) -> None:
         """Delete the active and passive DockFS nodes."""
@@ -238,7 +196,3 @@ class DeleteDockFsV1(Workflow):
         )
 
         await self.succeed(f"DockFS {self.payload.id} deleted.")
-
-    async def on_succeed(self) -> None:
-        """Success."""
-        await self.emit_reflex_events(OrbitLabState.cache_clear("dockfs_clusters"))

@@ -1,6 +1,7 @@
 """Instance Workflows."""
 
 import asyncio
+from collections.abc import Awaitable, Callable
 from ipaddress import IPv4Address, IPv4Interface
 from typing import Annotated, Literal
 
@@ -8,11 +9,32 @@ from pydantic import computed_field
 
 from orbitlab import data_types
 from orbitlab.data_types import ComputeStatus, ProxmoxComputeStatus, SerializeIP, ServiceType
-from orbitlab.proxmox import Proxmox
+from orbitlab.proxmox import Proxmox, ProxmoxAdapter
 from orbitlab.redis.clients import DNSClient, DockFSClient, InstanceClient, SectorClient
-from orbitlab.web.global_state import OrbitLabState
-
 from .base import Workflow, WorkflowPayload
+
+
+async def _assign_instance_address(
+    instance_id: str,
+    *,
+    log: Callable[..., Awaitable[None]],
+    timeout: int = 120,
+) -> bool:
+    """Discover and atomically persist an instance address before the deadline."""
+    client = InstanceClient()
+    proxmox = Proxmox()
+    instance = await client.get_instance(id=instance_id)
+    deadline = asyncio.get_running_loop().time() + timeout
+    while asyncio.get_running_loop().time() < deadline:
+        if address := await proxmox.get_ipv4_address(vmid=instance.state.vmid):
+            await asyncio.gather(
+                client.set_instance_address(id=instance_id, address=address.ip),
+                DNSClient().add_instance_dhcp_record(sector_id=instance.config.sector, address=address.ip),
+            )
+            return True
+        await log(level="Debug", message=f"Waiting for an IPv4 address on {instance_id}")
+        await asyncio.sleep(2)
+    return False
 
 
 class InstancePayload(WorkflowPayload):
@@ -32,42 +54,38 @@ class InstanceCreateV1(Workflow):
         """Validate the LXC manifest and ensure it is not already assigned a VMID."""
         if not await InstanceClient().instance_exists(id=self.payload.id):
             return await self.fail(f"Instance {self.payload.id} does not exist")
-        await self.emit_reflex_events(OrbitLabState.cache_clear("instances"))
 
     async def provision(self) -> None:
         """Provision the LXC container."""
         client = InstanceClient()
         proxmox = Proxmox()
+        adapter = ProxmoxAdapter(proxmox)
         instance = await client.get_instance(id=self.payload.id)
-        vmid = await proxmox.get_next_vmid()
-        params = await client.generate_create_params(id=self.payload.id, vmid=vmid)
-        
-        await asyncio.gather(
-            self.log(f"Creating {self.payload.id} {vmid}@{instance.config.node} with params: {self._redact_params(params)}"),
-            proxmox.create_instance(instance_type=instance.config.type, params=params, node=instance.config.node),
+        guest = await adapter.create_managed_guest(
+            resource_id=self.payload.id,
+            instance_type=instance.config.type,
+            node=instance.config.node,
+            parameters=lambda vmid: client.generate_create_params(id=self.payload.id, vmid=vmid),
         )
+        vmid = guest.vmid
+        await self.log(f"Created {self.payload.id} {vmid}@{instance.config.node}.")
         await client.set_instance_vmid(id=self.payload.id, vmid=vmid)
         
         if instance.config.type == "qemu":
             await self.log(message=f"Resizing scsi0 on {vmid}@{instance.config.node} to: {instance.config.disk_size}G")
-            await asyncio.sleep(1)  # Take a beat so Proxmox doesn't panic when trying to resize the disk after creation
             await proxmox.resize_disk(vmid=vmid, disk_size=instance.config.disk_size, disk_id="scsi0")
         
-        # Set the status now, so we can be sure it's set before we emit the Reflex update event.
         await client.set_instance_status(id=self.payload.id, status=ComputeStatus.STARTING)
         await asyncio.gather(
             self.log(f"Starting {self.payload.id} {vmid}@{instance.config.node}"),
-            self.emit_reflex_events(OrbitLabState.cache_clear("instances")),
             proxmox.start(vmid=vmid),
         )
 
     async def finalize(self) -> None:
-        """Finalize the LXC container creation by retrieving and storing its IPv4 address."""
-        await asyncio.gather(
-            InstanceClient().set_instance_status(id=self.payload.id, status=ComputeStatus.RUNNING),
-            self._create_new_workflow(workflow=AquireInstanceIpAddress, payload=self.payload.copy_payload()),
-        )
-        await self.emit_reflex_events(OrbitLabState.cache_clear("instances"))
+        """Retrieve the guest address before exposing the created instance as running."""
+        if not await _assign_instance_address(self.payload.id, log=self.log):
+            return await self.fail(f"Timed out waiting for an IPv4 address on {self.payload.id}")
+        await InstanceClient().set_instance_status(id=self.payload.id, status=ComputeStatus.RUNNING)
 
 
 class AquireInstanceIpAddress(Workflow):
@@ -90,26 +108,8 @@ class AquireInstanceIpAddress(Workflow):
             await self.fail(error=f"Guest Agent not enabled for {self.payload.id}")
 
     async def provision(self) -> None:
-        client = InstanceClient()
-        proxmox = Proxmox()
-        
-        instance = await client.get_instance(id=self.payload.id)
-        max_retries = 3
-        retries = 0
-        while retries < max_retries:
-            if address := await proxmox.get_ipv4_address(vmid=instance.state.vmid):
-                await asyncio.gather(
-                    client.set_instance_address(id=self.payload.id, address=address.ip),
-                    DNSClient().add_instance_dhcp_record(sector_id=instance.config.sector, address=address.ip),
-                )
-                return 
-            retries += 1
-            await self.log(level="Info", message=f"Acquiring IPv4 address for {self.payload.id} retry {retries}")
-        await self.fail(error=f"Max retries exceeded attempting to aquire IPv4 address for {self.payload.id}")
-
-    async def on_succeed(self) -> None:
-        """Handle actions to perform when the workflow succeeds."""
-        await self.emit_reflex_events(OrbitLabState.cache_clear("instances"))
+        if not await _assign_instance_address(self.payload.id, log=self.log):
+            await self.fail(error=f"Timed out waiting for an IPv4 address on {self.payload.id}")
 
 
 class InstanceStateChangePayload(InstancePayload):
@@ -137,16 +137,13 @@ class InstanceStateChangeV1(Workflow):
         status = await Proxmox().get_status(vmid=instance.state.vmid)
         if self.payload.desired_status in (ProxmoxComputeStatus.STOP, ProxmoxComputeStatus.SHUTDOWN) and status == "stopped":
             await client.set_instance_status(id=self.payload.id, status=ComputeStatus.STOPPED)
-            await self.emit_reflex_events(OrbitLabState.cache_clear("instances"))
             return await self.succeed(f"VMID {instance.state.vmid} already stopped.")
             
         if self.payload.desired_status == ProxmoxComputeStatus.START and status == "running":
             await client.set_instance_status(id=self.payload.id, status=ComputeStatus.RUNNING)
-            await self.emit_reflex_events(OrbitLabState.cache_clear("instances"))
             return await self.succeed(f"VMID {instance.state.vmid} already running.")
         
         await client.set_instance_status(id=self.payload.id, status=ProxmoxComputeStatus.get_state(status=self.payload.desired_status))
-        await self.emit_reflex_events(OrbitLabState.cache_clear("instances"))
 
     async def provision(self) -> None:
         """Change the state of the LXC container to the desired state."""
@@ -175,7 +172,6 @@ class InstanceStateChangeV1(Workflow):
                 InstanceClient().delete_instance(id=self.payload.id),
                 DNSClient().delete_instance_dhcp_record(sector_id=instance.config.sector, address=instance.state.address),
             )
-        await self.emit_reflex_events(OrbitLabState.cache_clear("instances"))
 
 
 class DHCPPayload(WorkflowPayload):
@@ -219,7 +215,6 @@ class InstanceDHCPChange(Workflow):
                 DNSClient().add_instance_dhcp_record(sector_id=self.payload.sector, address=self.payload.address),
                 InstanceClient().set_instance_address(id=instance.config.id, address=self.payload.address),
             )
-            await self.emit_reflex_events(OrbitLabState.cache_clear("instances"))
         elif self.payload.service_type == ServiceType.DOCKFS:
             dockfs = DockFSClient()
             cluster_id = await dockfs.get_cluster_id_by_mac(mac=self.payload.mac)

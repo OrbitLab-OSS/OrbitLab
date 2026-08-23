@@ -7,8 +7,6 @@ from pydantic import BaseModel
 from orbitlab.proxmox import Proxmox
 from orbitlab.redis.clients import ConduitClient, DNSClient, ETCDClient, InstanceClient, SectorClient
 from orbitlab.redis.models import ARecord
-from orbitlab.web.global_state import OrbitLabState
-
 from .base import Workflow, WorkflowPayload
 
 
@@ -32,8 +30,6 @@ class ConduitPoolCreateV1(Workflow):
         if not await client.pool_exists(pool_id=self.payload.id):
             return await self.fail(f"Conduit Pool {self.payload.id} does not exist")
         
-        await self.emit_reflex_events(OrbitLabState.cache_clear("conduit_pools"))
-
     async def provision(self) -> None:
         client = ConduitClient()
         dns = DNSClient()
@@ -76,8 +72,6 @@ class ConduitEndpointCreateV1(Workflow):
         if not await client.endpoint_exists(endpoint_id=self.payload.id):
             return await self.fail(f"Conduit Endpoint {self.payload.id} does not exist")
         
-        await self.emit_reflex_events(OrbitLabState.cache_clear("conduit_endpoints"))
-
     async def provision(self) -> None:
         client = ConduitClient()
         proxmox = Proxmox()
@@ -96,13 +90,6 @@ class ConduitEndpointCreateV1(Workflow):
             )
         
         await client.add_endpoint_association(endpoint_id=self.payload.id)
-
-    async def on_succeed(self) -> None:
-        await self.emit_reflex_events(
-            OrbitLabState.cache_clear("conduit_endpoints"),
-            OrbitLabState.cache_clear("conduit_pools"),
-        )
-
 
 class Target(BaseModel):
     service: str
@@ -144,7 +131,6 @@ class ConduitHealthV1(Workflow):
             await self.log(f"Conduit {self.payload.id} target {target.name} -> {target.status}")
             await client.set_target_health(pool_id=target.pool_id, target_id=target.name, status=target.status)
 
-        await self.emit_reflex_events(OrbitLabState.cache_clear("conduit_pools"))
         return await self.succeed(f"Updated target health statuses for {self.payload.id}", notify=False)
 
 
@@ -195,11 +181,6 @@ class ConduitPoolDeleteV1(Workflow):
 
         await self.succeed(f"Deleted Conduit {pool.config.id}")
 
-    async def on_succeed(self) -> None:
-        """Update sector in frontend."""
-        await self.emit_reflex_events(OrbitLabState.cache_clear("conduit_pools"))
-
-
 class ConduitDeleteV1(Workflow):
     """Workflow for deleting a Conduit Endpoint (Traefik Router)."""
 
@@ -232,6 +213,3 @@ class ConduitDeleteV1(Workflow):
             )
         
         await client.delete_endpoint(endpoint_id=self.payload.id)
-
-    async def on_succeed(self) -> None:
-        await self.emit_reflex_events(OrbitLabState.cache_clear("conduit_endpoints"))

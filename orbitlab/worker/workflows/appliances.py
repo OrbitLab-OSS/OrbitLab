@@ -5,11 +5,9 @@ import json
 from typing import Literal
 
 from orbitlab.data_types import TemplateWorkflowStatus
-from orbitlab.proxmox import Proxmox
+from orbitlab.proxmox import Proxmox, ProxmoxAdapter
 from orbitlab.redis.clients import ApplianceClient, SecretsClient, SectorClient
 from orbitlab.redis.models import FileStep, ScriptStep
-from orbitlab.web.global_state import OrbitLabState
-
 from .base import Workflow, WorkflowPayload
 
 
@@ -38,15 +36,13 @@ class ApplianceDownloadV1(Workflow):
         client = ApplianceClient()
         if not await client.appliance_exists(appliance_type="base", id=self.payload.id):
             return await self.fail(f"Base Appliance {self.payload.id} does not exist")
-        
-        await self.emit_reflex_events(OrbitLabState.cache_clear("base_appliances"))
 
     async def provision(self) -> None:
         """Download the appliance."""
         client = ApplianceClient()
         proxmox = Proxmox()
         appliance = await client.get_appliance(appliance_type="base", id=self.payload.id)
-        
+
         if appliance.config.oci:
             await self.log(f"Pulling {appliance.config.template} to {appliance.config.storage}@{appliance.config.node}")
             volume_id = await proxmox.oci_registry_pull(
@@ -58,9 +54,8 @@ class ApplianceDownloadV1(Workflow):
             volume_id = await proxmox.download_proxmox_managed_appliance(
                 node=appliance.config.node, storage=appliance.config.storage, template=appliance.config.template,
             )
-            
+
         await client.set_appliance_downloaded(id=self.payload.id, volume_id=volume_id)
-        await self.emit_reflex_events(OrbitLabState.cache_clear("base_appliances"))
         await self.succeed(f"Download of {self.payload.id} complete.")
 
 
@@ -98,13 +93,6 @@ class ApplianceDeleteV1(Workflow):
         )
         await self.succeed(f"Deleted appliance {self.payload.id}.")
 
-    async def on_succeed(self) -> None:
-        if self.payload.appliance_type == "base":
-            await self.emit_reflex_events(OrbitLabState.cache_clear("base_appliances"))
-        else:
-            await self.emit_reflex_events(OrbitLabState.cache_clear("custom_appliances"))
-
-
 class CustomAppliancePayload(AppliancePayload):
     """Payload for LXC workflows."""
 
@@ -126,32 +114,37 @@ class CreateCustomApplianceV1(Workflow):
             return await self.fail(f"Custom Appliance {self.payload.id} does not exist")
         
         await client.set_workflow_status(id=self.payload.id, workflow_status=TemplateWorkflowStatus.PENDING)
-        await self.emit_reflex_events(OrbitLabState.cache_clear("custom_appliances"))
 
     async def provision(self) -> None:
         """Provision the LXC compute instance and ensure it's online."""
         client = ApplianceClient()
         proxmox = Proxmox()
+        adapter = ProxmoxAdapter(proxmox)
         appliance = await client.get_appliance(appliance_type="custom", id=self.payload.id)
-        
-        self.payload.vmid = await proxmox.get_next_vmid()
-        await client.update_workflow_logs(id=self.payload.id, logs=[f"Creating VMID {self.payload.vmid}"], reset=True)
-        params = appliance.config.workflow_create_params(
-            vmid=self.payload.vmid,
-            password=SecretsClient.generate_random_password(),
-            sector_dns=(await SectorClient().get(id=appliance.config.sector)).config.dns_address.ip
+        sector_dns = (await SectorClient().get(id=appliance.config.sector)).config.dns_address.ip
+
+        async def parameters(vmid: int) -> dict:
+            params = appliance.config.workflow_create_params(
+                vmid=vmid,
+                password=SecretsClient.generate_random_password(),
+                sector_dns=sector_dns,
+            )
+            await self.log(f"Creating custom appliance candidate VMID {vmid}@{appliance.config.node} with params: {self._redact_params(params)}")
+            return params
+
+        guest = await adapter.create_managed_guest(
+            resource_id=f"appliance:{self.payload.id}:builder",
+            instance_type="lxc",
+            node=appliance.config.node,
+            parameters=parameters,
         )
-        
-        await asyncio.gather(
-            self.log(f"Creating {self.payload.vmid}@{appliance.config.node} with params: {params}"),
-            proxmox.create_instance(instance_type="lxc", params=params, node=appliance.config.node),
-        )
+        self.payload.vmid = guest.vmid
+        await client.update_workflow_logs(id=self.payload.id, logs=[f"Created VMID {self.payload.vmid}"], reset=True)
         
         await client.set_workflow_status(id=self.payload.id, workflow_status=TemplateWorkflowStatus.STARTING)
         await asyncio.gather(
             self.log(f"Starting {self.payload.vmid}@{appliance.config.node}"),
             client.update_workflow_logs(id=self.payload.id, logs=[f"Starting {self.payload.vmid}"]),
-            self.emit_reflex_events(OrbitLabState.cache_clear("custom_appliances")),
             proxmox.start(vmid=self.payload.vmid),
         )
 
@@ -162,7 +155,6 @@ class CreateCustomApplianceV1(Workflow):
         appliance = await client.get_appliance(appliance_type="custom", id=self.payload.id)
 
         await client.set_workflow_status(id=self.payload.id, workflow_status=TemplateWorkflowStatus.RUNNING)
-        await self.emit_reflex_events(OrbitLabState.cache_clear("custom_appliances"))
 
         async with await proxmox.create_connection() as connection:
             for step in appliance.config.steps:
@@ -198,7 +190,6 @@ class CreateCustomApplianceV1(Workflow):
 
         await client.set_workflow_status(id=self.payload.id, workflow_status=TemplateWorkflowStatus.FINALIZING)
         await asyncio.gather(
-            self.emit_reflex_events(OrbitLabState.cache_clear("custom_appliances")),
             client.update_workflow_logs(id=self.payload.id, logs=[f"Converting LXC {self.payload.vmid} to appliance"]),
         )
 
@@ -213,12 +204,10 @@ class CreateCustomApplianceV1(Workflow):
     async def on_succeed(self) -> None:
         """Set the status to SUCCEEDED."""
         await ApplianceClient().set_workflow_status(id=self.payload.id, workflow_status=TemplateWorkflowStatus.SUCCEEDED)
-        await self.emit_reflex_events(OrbitLabState.cache_clear("custom_appliances"))
 
     async def on_failure(self) -> None:
         """Set the status to FAILED."""
         await ApplianceClient().set_workflow_status(id=self.payload.id, workflow_status=TemplateWorkflowStatus.FAILED)
-        await self.emit_reflex_events(OrbitLabState.cache_clear("custom_appliances"))
 
     async def _inject_secrets(self, step: ScriptStep) -> str:
         def _resolve_json_value(secret_dict: dict, keys: list[str]) -> str:

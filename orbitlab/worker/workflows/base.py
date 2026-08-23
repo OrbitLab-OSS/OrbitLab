@@ -1,58 +1,62 @@
 """Workflow Base."""
 
-import asyncio
-import hashlib
-import json
 from datetime import UTC, datetime
 import os
-from typing import Literal, Self, TypeVar
+from typing import Literal
 
-import reflex as rx
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 from redis.asyncio import Redis
-from reflex.utils.prerequisites import get_app
 
 from orbitlab.constants import EventStreams
-from orbitlab.data_types import EventReturn, EventStatus, WorkflowStatus
+from orbitlab.data_types import EventStatus, WorkflowStatus
 from orbitlab.worker.events import WorkflowEvent
 
 
-class DuplicateWorkflowError(Exception):
-    """Exception raised when attempting to create a duplicate workflow."""
-
-    def __init__(self, lock_id: str) -> None:
-        """Initialize the DuplicateWorkflowError with a lock ID."""
-        super().__init__(f"Duplicate workflow: {lock_id}")
-        self.lock_id = lock_id
-
-
 class WorkflowPayload(BaseModel):
-    """Payload base model for workflow state management."""
+    """Payload base for a durable work/commit event chain.
 
-    state: WorkflowStatus = WorkflowStatus.PENDING
-    lock_id: str = ""
+    ``step`` names the unit of work and ``phase`` makes its external work and
+    Redis commit separate stream events.  This intentionally replaces the
+    former workflow-status state machine: a worker never advances a workflow
+    in memory across a boundary that has not been committed and re-enqueued.
+    """
+
+    step: Literal["validate", "provision", "configure", "finalize", "succeeded", "failed"] = "validate"
+    phase: Literal["work", "commit"] = "work"
+    result: EventStatus | None = None
     id: str | None = None
 
-    def copy_payload(self) -> Self:
-        new = self.model_copy()
-        new.lock_id = ""
-        new.state = WorkflowStatus.PENDING
-        return new
-
-
-_PL = TypeVar("_PL", bound=WorkflowPayload)
-_DT = TypeVar("_DT")
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate_status_payload(cls, value: object) -> object:
+        """Read state-machine payloads left by an interrupted prior release."""
+        if not isinstance(value, dict) or "step" in value:
+            return value
+        state = str(value.pop("state", WorkflowStatus.PENDING)).lower()
+        steps = {
+            "pending": "validate",
+            "validating": "validate",
+            "provisioning": "provision",
+            "configuring": "configure",
+            "finalizing": "finalize",
+            "succeeded": "succeeded",
+            "failed": "failed",
+        }
+        value["step"] = steps.get(state, "validate")
+        value["phase"] = "work"
+        if state == "succeeded":
+            value["result"] = EventStatus.SUCCEEDED
+        elif state == "failed":
+            value["result"] = EventStatus.FAILED
+        return value
 
 class Workflow:
-    """Base class for workflow implementations, providing state management and event handling."""
+    """Base class for workflows composed as explicit Redis work/commit events."""
 
     TYPE: str
     SCHEMA: str
     PAYLOAD_TYPE: type[WorkflowPayload]
     payload: WorkflowPayload
-
-    TTL: int = 300
-    IDP_TOKEN: str = ""
 
     def __init__(self, redis: Redis, event: "WorkflowEvent") -> None:
         """Initialize the workflow."""
@@ -66,165 +70,112 @@ class Workflow:
             raise ValueError
         return self.PAYLOAD_TYPE.model_validate_json(data.decode())
 
-    async def _aquire_lock(self) -> None:
-        if self.IDP_TOKEN:
-            while not bool(await self.redis.set(name=self.IDP_TOKEN, value="1", nx=True, ex=self.TTL)):
-                await self.log(level="Debug", message=f"Waiting for {self.IDP_TOKEN} lock...")
-                await asyncio.sleep(5)
-            self.payload.lock_id = self.IDP_TOKEN
-            return
-
-        if self.payload.id:
-            self.payload.lock_id = hashlib.sha256(self.payload.id.encode()).hexdigest()
-            while not bool(await self.redis.set(name=self.payload.lock_id, value="1", nx=True, ex=self.TTL)):
-                await self.log(f"Waiting for {self.payload.lock_id} lock...")
-                await asyncio.sleep(5)
-        else:
-            data = self.payload.model_dump(exclude_none=True, exclude={"state", "lock_id"})
-            canonical = json.dumps(
-                {
-                    "name": self.TYPE,
-                    "version": self.SCHEMA,
-                    "payload": json.dumps(data, sort_keys=True, separators=(",", ":")),
-                },
-                sort_keys=True,
-                separators=(",", ":"),
-            )
-            self.payload.lock_id = hashlib.sha256(canonical.encode()).hexdigest()
-            await self.log(level="Debug", message=f"Acquiring Lock: {self.payload.lock_id}")
-            if not bool(await self.redis.set(name=self.payload.lock_id, value="1", nx=True, ex=self.TTL)):
-                raise DuplicateWorkflowError(lock_id=self.payload.lock_id)
-
-    async def _release_lock(self, lock_id: str) -> None:
-        if lock_id:
-            await self.log(level="Debug", message=f"Releasing Lock: {lock_id}")
-            await self.redis.delete(lock_id)
-
     def _redact_params(self, params: dict) -> dict:
         redactable = ("cipassword", "password", "ssh-public-keys")
         return {k: "*****" if k in redactable else v for k, v in params.items()}
 
-    async def _create_new_workflow(self, workflow: type["Workflow"], payload: WorkflowPayload) -> None:
-        """Create a new workflow instance with the given payload and emit a creation event."""
-        event = WorkflowEvent(name=workflow.TYPE, version=workflow.SCHEMA)
-        await self.redis.set(name=event.redis_key, value=payload.model_dump_json())
-        await self.log(f"Creating workflow {event.workflow_id}")
-        await self.redis.xadd(
-            name=EventStreams.WORKFLOWS,
-            fields=event.model_dump(), # pyright: ignore[reportArgumentType]
-            maxlen=5000,
-            approximate=True,
-        )
+    def _event_for_payload(self) -> WorkflowEvent:
+        """Annotate stream messages with the durable step they represent."""
+        return self.event.model_copy(update={"step": self.payload.step, "phase": self.payload.phase})
 
     async def _transition(self) -> None:
-        """Log the state transition, update the workflow payload in Redis, and emit an event."""
-        await self.log(level="Debug", message=f"Transitioning {self.event.redis_key} to {self.payload.state}")
-        await self.redis.set(name=self.event.redis_key, value=self.payload.model_dump_json())
-        await self.redis.xadd(
-            name=EventStreams.WORKFLOWS,
-            fields=self.event.model_dump(), # pyright: ignore[reportArgumentType]
-            maxlen=5000,
-            approximate=True,
-        )
+        """Commit a phase result and emit exactly one next workflow event."""
+        await self.log(level="Debug", message=f"Committing {self.event.redis_key}: {self.payload.step}/{self.payload.phase}")
+        event = self._event_for_payload()
+        async with self.redis.pipeline(transaction=True) as pipeline:
+            pipeline.set(name=self.event.redis_key, value=self.payload.model_dump_json())
+            pipeline.xadd(
+                name=EventStreams.WORKFLOWS,
+                fields=event.model_dump(), # pyright: ignore[reportArgumentType]
+                maxlen=5000,
+                approximate=True,
+            )
+            await pipeline.execute()
 
     async def _end_transition(self) -> None:
-        """Delete the workflow payload from Redis and emit a final workflow event."""
-        await self.redis.delete(self.event.redis_key)
-        await self.redis.xadd(
-            name=EventStreams.WORKFLOWS,
-            fields=self.event.model_dump(), # pyright: ignore[reportArgumentType]
-            maxlen=5000,
-            approximate=True,
-        )
+        """Commit terminal job status and retire its transient payload."""
+        event = self._event_for_payload()
+        async with self.redis.pipeline(transaction=True) as pipeline:
+            pipeline.delete(self.event.redis_key)
+            pipeline.xadd(
+                name=EventStreams.WORKFLOWS,
+                fields=event.model_dump(), # pyright: ignore[reportArgumentType]
+                maxlen=5000,
+                approximate=True,
+            )
+            await pipeline.execute()
 
-    @classmethod
-    async def emit_reflex_events(cls, *events: EventReturn) -> None:
-        """Emit events from any async function, not necessarily an event handler."""
-        app: rx.App = get_app().app
-        if app.event_namespace:
-            async for token in app.event_namespace._token_manager.enumerate_tokens(): # noqa: SLF001
-                await app.event_namespace.emit_update(
-                    update=rx.state.StateUpdate(
-                        events=rx.event.Event.from_event_type(events=list(events)), # pyright: ignore[reportArgumentType]
-                        final=None,
-                    ),
-                    token=token,
-                )
-
-    async def run_once(self) -> None:  # noqa: C901, PLR0912
-        """Run a single workflow step based on the current payload state, handling transitions and exceptions."""
+    async def run_once(self) -> None:
+        """Run one durable work or commit phase and never chain phases in memory."""
         try:
             self.payload = await self._get_payload()
-            match self.payload.state:
-                case WorkflowStatus.PENDING:
-                    await self._aquire_lock()
-                    self.payload.state = WorkflowStatus.VALIDATING
-                    await self._transition()
-                    return
-
-                case WorkflowStatus.VALIDATING:
-                    await self.validate()
-                    if self.payload.state == WorkflowStatus.VALIDATING:
-                        self.payload.state = WorkflowStatus.PROVISIONING
-                    await self._transition()
-                    return
-
-                case WorkflowStatus.PROVISIONING:
-                    await self.provision()
-                    if self.payload.state == WorkflowStatus.PROVISIONING:
-                        self.payload.state = WorkflowStatus.CONFIGURING
-                    await self._transition()
-                    return
-
-                case WorkflowStatus.CONFIGURING:
-                    await self.configure()
-                    if self.payload.state == WorkflowStatus.CONFIGURING:
-                        self.payload.state = WorkflowStatus.FINALIZING
-                    await self._transition()
-                    return
-
-                case WorkflowStatus.FINALIZING:
-                    await self.finalize()
-                    if self.payload.state == WorkflowStatus.FINALIZING:
-                        self.payload.state = WorkflowStatus.SUCCEEDED
-                    await self._transition()
-                    return
-
-                case WorkflowStatus.SUCCEEDED:
-                    await self.on_succeed()
-                    self.event.status = EventStatus.SUCCEEDED
-
-                case WorkflowStatus.FAILED:
-                    await self.on_failure()
-                    self.event.status = EventStatus.FAILED
-
-        except DuplicateWorkflowError as err:
-            await self.log(f"Duplicate Workflow: {err.lock_id}")
-            self.event.status = EventStatus.FAILED
-            await self._end_transition()
+            if self.payload.phase == "work":
+                await self._work()
+            else:
+                await self._commit()
 
         except Exception as err:  # noqa: BLE001
             print(self, err)
-            if not self.event.status == EventStatus.FAILED:
+            if self.event.status != EventStatus.FAILED:
                 await self.fail(f"Encountered unexpected error: {err}")
+                self.payload.phase = "commit"
                 await self._transition()
         
         finally:
             if self.event.status in (EventStatus.FAILED, EventStatus.SUCCEEDED):
-                await self._release_lock(lock_id=self.payload.lock_id)
                 await self._end_transition()
 
+    async def _work(self) -> None:
+        """Execute one side-effecting step, then enqueue its commit phase."""
+        match self.payload.step:
+            case "validate":
+                await self.validate()
+            case "provision":
+                await self.provision()
+            case "configure":
+                await self.configure()
+            case "finalize":
+                await self.finalize()
+            case "succeeded":
+                await self.on_succeed()
+            case "failed":
+                await self.on_failure()
+        self.payload.phase = "commit"
+        await self._transition()
+
+    async def _commit(self) -> None:
+        """Persist a work result and emit the next work event or final job event."""
+        if self.payload.step == "succeeded" and self.payload.result == EventStatus.SUCCEEDED:
+            self.event.status = EventStatus.SUCCEEDED
+            return
+        if self.payload.step == "failed" and self.payload.result == EventStatus.FAILED:
+            self.event.status = EventStatus.FAILED
+            return
+
+        if self.payload.result == EventStatus.FAILED:
+            self.payload.step = "failed"
+        elif self.payload.result == EventStatus.SUCCEEDED:
+            self.payload.step = "succeeded"
+        else:
+            steps: dict[str, str] = {
+                "validate": "provision",
+                "provision": "configure",
+                "configure": "finalize",
+                "finalize": "succeeded",
+            }
+            self.payload.step = steps[self.payload.step]
+        self.payload.phase = "work"
+        await self._transition()
+
     async def fail(self, error: str) -> None:
-        """Handle workflow failure by logging the error and updating the payload state to FAILED."""
+        """Record a failed work result; the following commit emits failure work."""
         await self.log(level="Error", message=error)
-        self.payload.state = WorkflowStatus.FAILED
+        self.payload.result = EventStatus.FAILED
 
     async def succeed(self, message: str, *, notify: bool = True) -> None:
-        """Handle workflow success by logging the message and updating the payload state to SUCCEEDED."""
+        """Record a successful short-circuit result for the following commit."""
         await self.log(message=message)
-        if notify:
-            await self.emit_reflex_events(rx.toast.success(message=message))
-        self.payload.state = WorkflowStatus.SUCCEEDED
+        self.payload.result = EventStatus.SUCCEEDED
 
     async def log(self, message: str, level: Literal["Debug", "Info", "Warning", "Error"] = "Info") -> None:
         """Log a message with a specified level and message content."""

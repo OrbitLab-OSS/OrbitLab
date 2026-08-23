@@ -51,8 +51,22 @@ class HTTPConfig(BaseSettings):
     """Configuration for HTTP API access to Proxmox."""
 
     node: str
-    verify_ssl: bool = False
+    ca_file: str = "/etc/pve/pve-root-ca.pem"
     timeout: int = 10
+
+    @property
+    def verify_ssl(self) -> str | bool:
+        """Return the pinned PVE cluster CA, never an implicit insecure mode."""
+        if os.environ.get("ORBITLAB_PVE_INSECURE_DEV") == "1":
+            return False
+        configured_ca = Path(os.environ.get("ORBITLAB_PVE_CA_FILE", self.ca_file))
+        if not configured_ca.is_file():
+            msg = (
+                f"Proxmox CA file not found: {configured_ca}. Set ORBITLAB_PVE_CA_FILE "
+                "or explicitly opt into ORBITLAB_PVE_INSECURE_DEV=1 for development only."
+            )
+            raise exceptions.HTTPConfigError(msg)
+        return str(configured_ca)
 
     @cached_property
     def api_url(self) -> str:
@@ -76,9 +90,17 @@ class HTTPConfig(BaseSettings):
 
     def get_session_params(self) -> dict:
         """Generate and return HTTP session parameters for connecting to the Proxmox API."""
+        if api_token := os.environ.get("ORBITLAB_PROXMOX_API_TOKEN"):
+            token_id = os.environ.get("ORBITLAB_PROXMOX_API_TOKEN_ID", PROXMOX_USER)
+            return {
+                "base_url": self.api_url,
+                "headers": {"Authorization": f"PVEAPIToken={token_id}={api_token}"},
+                "verify": self.verify_ssl,
+                "timeout": self.timeout,
+            }
         username = os.environ.get("PROXMOX_USER", PROXMOX_USER)
-        password = os.environ["ORBITLAB_VAULT_KEY"] if username == PROXMOX_USER else os.environ["PROXMOX_PASSWORD"]
-        with httpx.Client(verify=False) as client:  # noqa: S501
+        password = os.environ["PROXMOX_PASSWORD"]
+        with httpx.Client(verify=self.verify_ssl, timeout=self.timeout) as client:
             resp = client.post(
                 url=f"{self.api_url}/api2/json/access/ticket",
                 data={"username": username, "password": password},
@@ -153,10 +175,13 @@ class RemoteExecution:
 
     @classmethod
     async def create_default_context(cls) -> ssl.SSLContext:
-        ssl_context = ssl.create_default_context()
-        ssl_context.check_hostname = False
-        ssl_context.verify_mode = ssl.CERT_NONE
-        return ssl_context
+        """Create the verified TLS context used by PVE terminal WebSockets."""
+        if os.environ.get("ORBITLAB_PVE_INSECURE_DEV") == "1":
+            return ssl._create_unverified_context()  # noqa: SLF001
+        ca_file = Path(os.environ.get("ORBITLAB_PVE_CA_FILE", "/etc/pve/pve-root-ca.pem"))
+        if not ca_file.is_file():
+            raise exceptions.HTTPConfigError(f"Proxmox CA file not found: {ca_file}")
+        return ssl.create_default_context(cafile=str(ca_file))
 
     async def connect(self) -> None:
         """Establish WebSocket connection to the remote Proxmox node if remote config is available."""
@@ -545,6 +570,21 @@ class Proxmox(ProxmoxBase):
                 else:
                     break
 
+    async def wait_for_lxc_services(self, vmid: int, commands: list[str], *, timeout: int = 300) -> None:
+        """Wait for named LXC services using bounded probes instead of fixed sleeps."""
+        deadline = time.monotonic() + timeout
+        last_error = "service probe did not run"
+        while time.monotonic() < deadline:
+            try:
+                async with await self.create_connection() as connection:
+                    await connection.lxc_execute_script(vmid=vmid, content="\n".join(commands))
+            except Exception as error:  # noqa: BLE001
+                last_error = str(error)
+                await asyncio.sleep(3)
+            else:
+                return
+        raise TimeoutError(f"LXC {vmid} did not become ready before the {timeout}s deadline: {last_error}")
+
     async def agent_write_file(self, vmid: int, source: Path, destination: Path) -> None:
         resource = await self.get_compute_resource(vmid=vmid)
         params = {"content": source.read_text(), "file": str(destination)}
@@ -686,9 +726,14 @@ class Proxmox(ProxmoxBase):
         if await self.pool_exists(pool_id=pool_id):
             await self.delete(f"/pools/{pool_id}", model=None)
 
-    async def get_infrastructure_appliances(self) -> models.OrbitLabAppliances:
+    async def get_infrastructure_appliances(self, branch: str = "main") -> models.OrbitLabAppliances:
+        """Read and validate Appliances metadata from a user-selected Git branch."""
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._/-]{0,254}", branch) or branch.startswith("/") or ".." in branch:
+            raise ValueError("Appliances branch must be a normal Git branch name.")
         async with httpx.AsyncClient() as client:
-            response = await client.get("https://raw.githubusercontent.com/OrbitLab-OSS/Appliances/refs/heads/main/metadata/appliances.json")
+            response = await client.get(
+                f"https://raw.githubusercontent.com/OrbitLab-OSS/Appliances/refs/heads/{quote(branch, safe='/')}/metadata/appliances.json",
+            )
             response.raise_for_status()
         return models.OrbitLabAppliances.model_validate(response.json())
 

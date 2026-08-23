@@ -1,10 +1,7 @@
 """Data types and enumerations for OrbitLab."""
 
 from enum import StrEnum, auto
-from types import FunctionType
-from typing import Literal, TypedDict
-
-from reflex.event import EventCallback, EventHandler, EventSpec
+from typing import Any, Literal, TypedDict
 
 import base64
 import binascii
@@ -38,6 +35,17 @@ def _peer_list_str(peer_list: str) -> list[IPv4Address]:
 def _serialize_enum_list(enums: list[StrEnum]) -> list[str]:
     """Serialize a list of Enums to list of strings."""
     return [enum.value for enum in enums]
+
+
+def _pve_bool(value: bool | int | str) -> bool:
+    """Parse the 0/1 and boolean forms returned by the Proxmox REST API."""
+    if isinstance(value, bool):
+        return value
+    if value in (1, "1", "true", "True"):
+        return True
+    if value in (0, "0", "false", "False", ""):
+        return False
+    raise ValueError(f"Invalid Proxmox boolean: {value!r}")
 
 
 def _base64_to_str(data: str) -> str:
@@ -448,7 +456,7 @@ class WardLinkKeyPairs(TypedDict):
     client: WardLinkKeyPair
 
 
-type PveBool = Annotated[bool, PlainValidator(lambda v: v if isinstance(v, bool) else bool(v))]
+type PveBool = Annotated[bool, PlainValidator(_pve_bool)]
 type PveContentList = Annotated[
     list[StorageContentType],
     PlainValidator(func=_str_list_to_enum(enum=StorageContentType)),
@@ -457,12 +465,10 @@ type PveContentList = Annotated[
 type PeerList = Annotated[list[IPv4Address], PlainValidator(func=_peer_list_str), SerializeIPList]
 type PveStorageType = Annotated[StorageType, SerializeEnum]
 type CertificateData = Annotated[str, PlainValidator(_base64_to_str), PlainSerializer(_to_base64)]
-type FrontendEvents = (
-    EventCallback | EventHandler | EventSpec | list[EventCallback | EventHandler | EventSpec] | FunctionType
-)
+type FrontendEvents = Any
 type StreamEventData = tuple[bytes, dict[bytes, bytes]]
 type RedisStreamEvent = tuple[bytes, tuple[StreamEventData]]
-type EventReturn = EventHandler | EventSpec | list[EventHandler | EventSpec] | EventCallback
+type EventReturn = Any
 type OrbitLabApplianceType = Literal["backplane", "gateway", "datacore", "dockfs", "etcd", "conduit", "wardlink"]
 type ZoneType = Literal["internal", "external"]
 type InstanceType = Literal["lxc", "qemu"]

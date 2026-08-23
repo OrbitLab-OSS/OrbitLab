@@ -3,12 +3,10 @@ from ipaddress import IPv4Interface
 from typing import Annotated
 
 from orbitlab.data_types import ETCDStatus, SerializeIP
-from orbitlab.proxmox import Proxmox
+from orbitlab.proxmox import Proxmox, ProxmoxAdapter
 from orbitlab.proxmox.exceptions import PctExecError
 from orbitlab.redis.clients import BackplaneClient, ClusterClient, DNSClient, ETCDClient
 from orbitlab.redis.models import ARecord, ETCDMember, SRVRecord
-from orbitlab.web.global_state import ETCDState
-
 from .base import Workflow, WorkflowPayload
 
 
@@ -34,7 +32,6 @@ class UpgradeETCDClusterV1(Workflow):
     TYPE: str = "etcd.upgrade"
     SCHEMA: str = "v1"
     PAYLOAD_TYPE: type[EtcdPayload] = EtcdPayload
-    IDP_TOKEN: str = ETCD_SERVICE_NAME
     payload: EtcdPayload
 
     async def validate(self) -> None:
@@ -45,43 +42,50 @@ class UpgradeETCDClusterV1(Workflow):
             return await self.succeed("ETCD Cluster already on the latest version.")
 
         await client.set_status(status=ETCDStatus.UPGRADING)
-        await self.emit_reflex_events(ETCDState.cache_clear("status"))
 
     async def provision(self) -> None:
         """Provision replacement ETCD members."""
         client = ETCDClient()
         dns = DNSClient()
         proxmox = Proxmox()
+        adapter = ProxmoxAdapter(proxmox)
         
         for member in await client.list_members():
-            vmid = await proxmox.get_next_vmid()
-            params = await client.generate_create_params(vmid=vmid)
-            await asyncio.gather(
-                self.log(f"Creating {member.name} replacement with params: {self._redact_params(params)}"),
-                proxmox.create_instance(instance_type="lxc", params=params),
+            prepared: dict[str, object] = {}
+
+            async def parameters(vmid: int) -> dict:
+                new_member, params = await client.generate_create_params(vmid=vmid)
+                prepared["member"] = new_member
+                return params
+
+            guest = await adapter.create_managed_guest(
+                resource_id=f"etcd:{member.name}:replacement",
+                instance_type="lxc",
+                node="",
+                parameters=parameters,
             )
-            
-            new_member = await client.get_member_by_vmid(vmid=vmid)
+            new_member = prepared["member"]
+            await client.add_member(new_member)  # type: ignore[arg-type]
+            vmid = guest.vmid
             record = ARecord(ip=new_member.address.ip)
             await asyncio.gather(
                 self.log(f"Adding {new_member.name} DNS record"),
                 dns.add_backplane_a_records(new_member.name, record),
             )
             
+            await proxmox.start(vmid=vmid)
+            await self.log(f"Waiting for new member {new_member.name} readiness.")
+            try:
+                async with asyncio.timeout(300):
+                    while error := await check_member_healthy(member=new_member):
+                        await self.log(f"New member {new_member.name} is not ready: {error}", level="Debug")
+                        await asyncio.sleep(3)
+            except TimeoutError:
+                return await self.fail(f"ETCD member {new_member.name} did not become healthy before the deadline.")
             await asyncio.gather(
-                self.log(f"Giving new member {new_member.name} a 30 second warmup before checking health..."),
-                proxmox.start(vmid=vmid),
-                asyncio.sleep(30),
+                self.log(f"New member {new_member.name} healthy"),
+                dns.add_backplane_a_records("etcd", record),
             )
-            
-            await self.log("Checking health of new member.")
-            if error := await check_member_healthy(member=member):
-                return await self.fail(f"ETCD Member {new_member.name} unhealthy: {error}")
-            else:
-                await asyncio.gather(
-                    self.log(f"New member {new_member.name} healthy"),
-                    dns.add_backplane_a_records("etcd", record),
-                )
             
             async with await proxmox.create_connection() as connection:
                 await asyncio.gather(
@@ -111,7 +115,6 @@ class UpgradeETCDClusterV1(Workflow):
 
     async def on_succeed(self) -> None:
         await ETCDClient().set_status(status=ETCDStatus.AVAILABLE)
-        await self.emit_reflex_events(ETCDState.cache_clear("status"), ETCDState.cache_clear("version"))
 
 
 class FailoverPayload(EtcdPayload):
@@ -127,7 +130,6 @@ class ETCDMemberFailoverV1(Workflow):
     TYPE: str = "etcd.failover"
     SCHEMA: str = "v1"
     PAYLOAD_TYPE: type[FailoverPayload] = FailoverPayload
-    IDP_TOKEN: str = ETCD_SERVICE_NAME
     payload: FailoverPayload
 
     async def validate(self) -> None:
@@ -144,7 +146,6 @@ class ETCDMemberFailoverV1(Workflow):
                 self.log(f"ETCD Member {failing_member.name} unhealthy: {error}"),
                 client.set_status(status=ETCDStatus.DEGRADED),
             )
-            await self.emit_reflex_events(ETCDState.cache_clear("status"))
         else:
             await self.succeed(f"Member {self.payload.name} is healthy", notify=False)
 
@@ -192,13 +193,22 @@ class ETCDMemberFailoverV1(Workflow):
         client = ETCDClient()
         dns = DNSClient()
         proxmox = Proxmox()
-        
-        vmid = await proxmox.get_next_vmid()
-        params = await client.generate_create_params(vmid=vmid)
-        await self.log(f"Creating ETCD memeber node {vmid} with params: {self._redact_params(params)}")
-        await proxmox.create_instance(instance_type="lxc", params=params)
-        
-        member = await client.get_member_by_vmid(vmid=vmid)
+        prepared: dict[str, object] = {}
+
+        async def parameters(vmid: int) -> dict:
+            member, params = await client.generate_create_params(vmid=vmid)
+            prepared["member"] = member
+            return params
+
+        guest = await ProxmoxAdapter(proxmox).create_managed_guest(
+            resource_id=f"etcd:{self.payload.name}:replacement",
+            instance_type="lxc",
+            node="",
+            parameters=parameters,
+        )
+        vmid = guest.vmid
+        member = prepared["member"]
+        await client.add_member(member)  # type: ignore[arg-type]
         record = ARecord(ip=member.address.ip)
         await asyncio.gather(
             self.log("Creating A records"),
@@ -206,17 +216,15 @@ class ETCDMemberFailoverV1(Workflow):
             dns.add_backplane_a_records("etcd", record),
         )
         
-        await asyncio.gather(
-            self.log(f"Starting member {member} and starting 45 second warm-up"),
-            proxmox.start(vmid=vmid),
-            asyncio.sleep(45)
-        )
-        
-        if error := await check_member_healthy(member=member):
-            await self.fail(f"ETCD Member {member.name} unhealthy: {error}")
-        else:
-            await self.succeed(f"Member {member} is healthy.", notify=False)
+        await proxmox.start(vmid=vmid)
+        deadline = asyncio.get_running_loop().time() + 300
+        while asyncio.get_running_loop().time() < deadline:
+            if not (error := await check_member_healthy(member=member)):
+                await self.succeed(f"Member {member} is healthy.", notify=False)
+                return
+            await self.log(f"Replacement member {member.name} is not ready: {error}", level="Debug")
+            await asyncio.sleep(3)
+        await self.fail(f"ETCD Member {member.name} did not become healthy before the deadline.")
 
     async def on_succeed(self) -> None:
         await ETCDClient().set_status(status=ETCDStatus.AVAILABLE)
-        await self.emit_reflex_events(ETCDState.cache_clear("status"))

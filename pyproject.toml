@@ -12,8 +12,8 @@ dependencies = [
     "pydantic==2.12.3",
     "pydantic-settings==2.11.0",
     "PyYAML==6.0.3",
-    "reflex==0.9.6",
-    "reflex-vite-config-plugin==0.0.4",
+    "nicegui==3.7.0",
+    "redis==7.1.0",
     "uvicorn==0.40.0",
     "websockets==16.0"
 ]

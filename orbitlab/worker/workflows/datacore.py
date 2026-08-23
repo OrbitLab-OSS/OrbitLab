@@ -8,12 +8,10 @@ from typing import Annotated
 import backoff
 
 from orbitlab.data_types import DataCoreStatus, DataCoreEvent, DataCoreNodeRole, ETCDStatus, SerializeIP
-from orbitlab.proxmox import Proxmox
+from orbitlab.proxmox import Proxmox, ProxmoxAdapter
 from orbitlab.proxmox.exceptions import PctExecError
 from orbitlab.redis.clients import ClusterClient, DNSClient, DataCoreClient, ETCDClient, SectorClient
 from orbitlab.redis.models import ARecord
-from orbitlab.web.global_state import OrbitLabState
-
 from .base import Workflow, WorkflowPayload
 
 
@@ -38,12 +36,12 @@ class CreateDataCoreCluster(Workflow):
             return await self.fail(f"DataCore cluster {self.payload.id} does not exist")
         
         await DataCoreClient().set_cluster_status(id=self.payload.id, status=DataCoreStatus.PENDING)
-        await self.emit_reflex_events(OrbitLabState.cache_clear("datacores"))
 
     async def provision(self) -> None:
         """Provision DataCore cluster nodes and configuration."""
         client = DataCoreClient()
         proxmox = Proxmox()
+        adapter = ProxmoxAdapter(proxmox)
         dns = DNSClient()
         datacore = await client.get_datacore(id=self.payload.id)
 
@@ -68,22 +66,28 @@ class CreateDataCoreCluster(Workflow):
             )
             await connection.lxc_execute_script(vmid=etcd_member.vmid, content=f"etcd-mgr create-datacore {datacore.config.id} '{json.dumps(config)}'")
 
-        vmid = await proxmox.get_next_vmid()
-        params = await client.generate_node_params(id=self.payload.id, vmid=vmid)
-        await self.log(f"Creating DataCore node VMID {vmid} with params: {self._redact_params(params=params)}.")
-        await proxmox.create_instance(instance_type="lxc", params=params)
-        await proxmox.start(vmid=vmid)
+        for index in range(datacore.config.replicas + 1):
+            prepared: dict[str, object] = {}
 
-        for i in range(datacore.config.replicas):
-            await self.log(f"Creating DataCore replica {i + 1}")
-            vmid = await proxmox.get_next_vmid()
-            params = await client.generate_node_params(id=self.payload.id, vmid=vmid)
-            await self.log(f"Creating DataCore node VMID {vmid} with params: {self._redact_params(params=params)}.")
-            await proxmox.create_instance(instance_type="lxc", params=params)
-            await proxmox.start(vmid=vmid)
+            async def parameters(vmid: int) -> dict:
+                node, params = await client.generate_node_params(id=self.payload.id, vmid=vmid)
+                prepared["node"] = node
+                prepared["params"] = params
+                return params
+
+            guest = await adapter.create_managed_guest(
+                resource_id=f"{self.payload.id}:datacore:{index}",
+                instance_type="lxc",
+                node="",
+                parameters=parameters,
+            )
+            node = prepared["node"]
+            await client.add_node(id=self.payload.id, node=node)  # type: ignore[arg-type]
+            await self.log(f"Starting DataCore member {guest.vmid}.")
+            await proxmox.start(vmid=guest.vmid)
 
     async def configure(self) -> None:
-        await asyncio.gather(self.log("Starting 60 second cluster warmup..."), asyncio.sleep(60))
+        await self.log("Waiting for DataCore members to report healthy.")
         await self._wait_for_node_health()
         await self.succeed(f"Created DataCore {self.payload.id}")
 
@@ -94,7 +98,6 @@ class CreateDataCoreCluster(Workflow):
 
     async def on_succeed(self) -> None:
         await DataCoreClient().set_cluster_status(id=self.payload.id, status=DataCoreStatus.AVAILABLE)
-        await self.emit_reflex_events(OrbitLabState.cache_clear("datacores"))
 
 
 class DeleteDataCoreCluster(Workflow):
@@ -112,7 +115,6 @@ class DeleteDataCoreCluster(Workflow):
             return await self.succeed(f"DataCore cluster {self.payload.id} doesn't exist")
         
         await DataCoreClient().set_cluster_status(id=self.payload.id, status=DataCoreStatus.DELETING)
-        await self.emit_reflex_events(OrbitLabState.cache_clear("datacores"))
 
     async def provision(self) -> None:
         """Delete DataCore cluster nodes and configuration."""
@@ -154,11 +156,6 @@ class DeleteDataCoreCluster(Workflow):
         
         await self.succeed(f"Deleted DataCore {self.payload.id}")
 
-    async def on_succeed(self) -> None:
-        """Emit cache clear event on successful cluster deletion."""
-        return await self.emit_reflex_events(OrbitLabState.cache_clear("datacores"))
-
-
 class DataCoreEventPayload(DataCorePayload):
     """Payload for DataCore cluster Patroni events."""
 
@@ -189,7 +186,7 @@ class DataCoreClusterEvent(Workflow):
                 f"DataCore {self.payload.id} node {self.payload.node} online as {self.payload.role}.",
             )
 
-        if self.payload.event == DataCoreEvent.ON_STOP:
+        elif self.payload.event == DataCoreEvent.ON_STOP:
             datacore.state.nodes.set_node_offline(name=self.payload.node, role=self.payload.role)
             await client.update_nodes(id=self.payload.id, nodes=datacore.state.nodes)
             await self.log(
@@ -205,6 +202,3 @@ class DataCoreClusterEvent(Workflow):
         
         datacore = await client.get_datacore(id=self.payload.id)
         await self.succeed(f"DataCore {self.payload.id} is {datacore.state.status}", notify=False)
-
-    async def on_succeed(self) -> None:
-        await self.emit_reflex_events(OrbitLabState.cache_clear("datacores"))

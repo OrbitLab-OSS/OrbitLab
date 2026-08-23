@@ -5,7 +5,6 @@ import uuid
 from typing import Annotated, Literal, Self
 
 from pydantic import BaseModel, Field, PlainSerializer, field_validator
-from reflex.utils.serializers import serialize_uuid
 
 from orbitlab.data_types import EventStatus, RedisStreamEvent
 
@@ -14,8 +13,10 @@ class WorkflowEvent(BaseModel):
     """Represents a worfklow event in the OrbitLab system."""
     name: str
     version: str
-    job_id: Annotated[uuid.UUID, PlainSerializer(serialize_uuid)] = Field(default_factory=uuid.uuid4)
+    job_id: Annotated[uuid.UUID, PlainSerializer(str)] = Field(default_factory=uuid.uuid4)
     status: EventStatus = EventStatus.IN_PROGRESS
+    step: str = ""
+    phase: Literal["", "work", "commit"] = ""
 
     @property
     def workflow_id(self) -> str:

@@ -1,7 +1,6 @@
 """Proxmox Client Base Models."""
 
 from abc import ABC, abstractmethod
-from ast import Str
 from collections.abc import Iterator
 from datetime import datetime
 import ipaddress
@@ -164,7 +163,6 @@ class ProxmoxCluster(BaseModel):
 
     type: Literal["cluster"]
     name: str
-    quorate: data_types.PveBool
     quorate: bool
     version: int
     nodes: int
@@ -211,15 +209,20 @@ class ProxmoxVnet(BaseModel):
 
 
 class ProxmoxVnets(RootModel[list[ProxmoxVnet]]):
-    def get_used_tags(self) -> list[str]:
-        tags = []
+    def get_used_tags(self) -> list[int]:
+        """Return configured and pending VLAN tags reported by PVE."""
+        tags: list[int] = []
         for vnet in self.root:
             if vnet.tag:
                 tags.append(vnet.tag)
                 continue
             if vnet.pending and "tag" in vnet.pending:
-                tags.append(vnet.pending["tag"])
+                tags.append(int(vnet.pending["tag"]))
         return tags
+
+    def get_all_tags(self) -> list[int]:
+        """Compatibility name used by network allocation callers."""
+        return self.get_used_tags()
 
 
 class QemuConfig(BaseModel):

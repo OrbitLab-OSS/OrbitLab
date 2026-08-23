@@ -4,11 +4,9 @@ import asyncio
 from typing import Literal
 
 from orbitlab.data_types import TemplateWorkflowStatus
-from orbitlab.proxmox import Proxmox
+from orbitlab.proxmox import Proxmox, ProxmoxAdapter
 from orbitlab.redis.clients import ImagesClient, SecretsClient, SectorClient
 from orbitlab.redis.models import FileStep, ScriptStep
-from orbitlab.web.global_state import OrbitLabState
-
 from .base import Workflow, WorkflowPayload
 
 
@@ -28,8 +26,6 @@ class ImageDownloadV1(Workflow):
     async def validate(self) -> None:
         if not await ImagesClient().image_exists(image_type="base", id=self.payload.id):
             return await self.fail(f"Base Image {self.payload.id} does not exist")
-        await self.emit_reflex_events(OrbitLabState.cache_clear("base_images"))
-
     async def provision(self) -> None:
         client = ImagesClient()
         proxmox = Proxmox()
@@ -60,7 +56,6 @@ class ImageDownloadV1(Workflow):
         )
         await client.set_base_image_downloaded(id=self.payload.id, volume_id=volume_id)
         await self.succeed(f"Download of {self.payload.id} complete.")
-        await self.emit_reflex_events(OrbitLabState.cache_clear("base_images"))
 
 
 class ImageDeletePayload(ImagePayload):
@@ -95,13 +90,6 @@ class ImageDeleteV1(Workflow):
         )
         await self.succeed(f"Deleted {self.payload.image_type.capitalize()} image {self.payload.id}")
     
-    async def on_succeed(self) -> None:
-        if self.payload.image_type == "base":
-            await self.emit_reflex_events(OrbitLabState.cache_clear("base_images"))
-        else:
-            await self.emit_reflex_events(OrbitLabState.cache_clear("custom_images"))
-
-
 class CustomImagePayload(ImagePayload):
     """Payload for LXC workflows."""
 
@@ -123,26 +111,32 @@ class CreateCustomImageV1(Workflow):
             return await self.fail(f"Custom Image {self.payload.id} does not exist")
         
         await client.set_workflow_status(id=self.payload.id, workflow_status=TemplateWorkflowStatus.PENDING)
-        await self.emit_reflex_events(OrbitLabState.cache_clear("custom_images"))
 
     async def provision(self) -> None:
         """Provision the VM compute instance and ensure it's online."""
         client = ImagesClient()
         proxmox = Proxmox()
+        adapter = ProxmoxAdapter(proxmox)
         image = await client.get_image(image_type="custom", id=self.payload.id)
-        
-        self.payload.vmid = await proxmox.get_next_vmid()
-        await client.update_workflow_logs(id=self.payload.id, logs=[f"Creating VMID {self.payload.vmid}"], reset=True)
-        params = image.config.workflow_create_params(
-            vmid=self.payload.vmid,
-            password=SecretsClient.generate_random_password(),
-            sector_dns=(await SectorClient().get(id=image.config.sector)).config.dns_address.ip
+        sector_dns = (await SectorClient().get(id=image.config.sector)).config.dns_address.ip
+
+        async def parameters(vmid: int) -> dict:
+            params = image.config.workflow_create_params(
+                vmid=vmid,
+                password=SecretsClient.generate_random_password(),
+                sector_dns=sector_dns,
+            )
+            await self.log(f"Creating custom image candidate VMID {vmid}@{image.config.node} with params: {self._redact_params(params)}")
+            return params
+
+        guest = await adapter.create_managed_guest(
+            resource_id=f"image:{self.payload.id}:builder",
+            instance_type="qemu",
+            node=image.config.node,
+            parameters=parameters,
         )
-        
-        await asyncio.gather(
-            self.log(f"Creating {self.payload.vmid}@{image.config.node} with params: {params}"),
-            proxmox.create_instance(instance_type="qemu", params=params, node=image.config.node),
-        )
+        self.payload.vmid = guest.vmid
+        await client.update_workflow_logs(id=self.payload.id, logs=[f"Created VMID {self.payload.vmid}"], reset=True)
         
         await asyncio.gather(
             self.log(f"Resizing {self.payload.vmid}@{image.config.node} to {image.config.disk_size}G"),
@@ -153,7 +147,6 @@ class CreateCustomImageV1(Workflow):
         await asyncio.gather(
             self.log(f"Starting {self.payload.vmid}@{image.config.node}"),
             client.update_workflow_logs(id=self.payload.id, logs=[f"Starting {self.payload.vmid}"]),
-            self.emit_reflex_events(OrbitLabState.cache_clear("custom_images")),
             proxmox.start(vmid=self.payload.vmid),
         )
         
@@ -169,7 +162,6 @@ class CreateCustomImageV1(Workflow):
         image = await client.get_image(image_type="custom", id=self.payload.id)
 
         await client.set_workflow_status(id=self.payload.id, workflow_status=TemplateWorkflowStatus.RUNNING)
-        await self.emit_reflex_events(OrbitLabState.cache_clear("custom_images"))
 
         sysprep_commands = [
             "truncate -s 0 /etc/machine-id",
@@ -188,7 +180,7 @@ class CreateCustomImageV1(Workflow):
             if isinstance(step, FileStep):
                 for file in step.files:
                     await asyncio.gather(
-                        await client.update_workflow_logs(
+                        client.update_workflow_logs(
                             id=self.payload.id,
                             logs=[f"Pushing File: {file.source} to {file.destination}"],
                         ),
@@ -214,7 +206,6 @@ class CreateCustomImageV1(Workflow):
 
         await client.set_workflow_status(id=self.payload.id, workflow_status=TemplateWorkflowStatus.FINALIZING)
         await asyncio.gather(
-            self.emit_reflex_events(OrbitLabState.cache_clear("custom_images")),
             client.update_workflow_logs(id=self.payload.id, logs=[f"Generating image from VMID {self.payload.vmid}"]),
         )
         
@@ -232,9 +223,7 @@ class CreateCustomImageV1(Workflow):
     async def on_succeed(self) -> None:
         """Set the status to SUCCEEDED."""
         await ImagesClient().set_workflow_status(id=self.payload.id, workflow_status=TemplateWorkflowStatus.SUCCEEDED)
-        await self.emit_reflex_events(OrbitLabState.cache_clear("custom_images"))
 
     async def on_failure(self) -> None:
         """Set the status to FAILED."""
         await ImagesClient().set_workflow_status(id=self.payload.id, workflow_status=TemplateWorkflowStatus.FAILED)
-        await self.emit_reflex_events(OrbitLabState.cache_clear("custom_images"))

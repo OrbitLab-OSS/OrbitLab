@@ -6,11 +6,9 @@ from typing import get_args
 import backoff
 
 from orbitlab.data_types import OrbitLabApplianceType
-from orbitlab.proxmox import Proxmox
+from orbitlab.proxmox import Proxmox, ProxmoxAdapter
 from orbitlab.redis.clients import BackplaneClient, ClusterClient
 from orbitlab.redis.models import InfraAppliance
-from orbitlab.web.global_state import OrbitLabState
-
 from .base import Workflow, WorkflowPayload
 
 
@@ -24,13 +22,12 @@ class DownloadInfraApplianceV1(Workflow):
     TYPE: str = "infrastructure.download"
     SCHEMA: str = "v1"
     PAYLOAD_TYPE: type[InfraAppliancePayload] = InfraAppliancePayload
-    IDP_TOKEN: str = "ol:infrastructure:appliances"
     payload: InfraAppliancePayload
 
     async def validate(self) -> None:
         """Validate if appliance already exists and handle accordingly."""
         infra = await ClusterClient().get_infra_appliances()
-        latest = await Proxmox().get_infrastructure_appliances()
+        latest = await Proxmox().get_infrastructure_appliances(await ClusterClient().get_appliances_branch())
         
         if infra.version == latest.version:
             return await self.succeed(f"OrbitLab Infrastructure already at latest version: {latest.version}")
@@ -47,7 +44,7 @@ class DownloadInfraApplianceV1(Workflow):
             for old_appliance in infra.appliances.values()
         ])
 
-        appliances = await proxmox.get_infrastructure_appliances()
+        appliances = await proxmox.get_infrastructure_appliances(await client.get_appliances_branch())
         defaults = await client.get_defaults()
         for appliance_type in get_args(OrbitLabApplianceType.__value__):
             appliance = appliances.get_appliance(appliance_type=appliance_type)
@@ -86,7 +83,6 @@ class UpgradeBackplaneV1(Workflow):
     TYPE: str = "infrastructure.upgrade-backplane"
     SCHEMA: str = "v1"
     PAYLOAD_TYPE: type[UpgradeBackplancePayload] = UpgradeBackplancePayload
-    IDP_TOKEN: str = "ol:infrastructure:upgrade-backplane"
     payload: UpgradeBackplancePayload
 
     async def validate(self) -> None:
@@ -108,13 +104,13 @@ class UpgradeBackplaneV1(Workflow):
     async def provision(self) -> None:
         client = BackplaneClient()
         proxmox = Proxmox()
-        
-        vmid = await proxmox.get_next_vmid()
-        params = await client.generate_backplane_params(vmid=vmid)
-        await asyncio.gather(
-            self.log(f"Creating Backplane appliance with params: {self._redact_params(params)}"),
-            proxmox.create_instance(instance_type="lxc", params=params),
+        guest = await ProxmoxAdapter(proxmox).create_managed_guest(
+            resource_id="backplane",
+            instance_type="lxc",
+            node="",
+            parameters=client.generate_backplane_params,
         )
+        vmid = guest.vmid
 
         await asyncio.gather(
             self.log(f"Mounting Redis socket file to new Backplane appliance VMID {vmid}"),
@@ -135,23 +131,15 @@ class UpgradeBackplaneV1(Workflow):
         client = BackplaneClient()
         proxmox = Proxmox()
         
-        await asyncio.gather(
-            self.log(f"Waiting 15 second warmup before checking new backplane appliance health"),
-            asyncio.sleep(15)
-        )
-
-        async with await proxmox.create_connection() as connection:
-            commands = [
-                "systemctl is-active --quiet coredns || exit 1",
-                "systemctl is-active --quiet orbital-relay || exit 1",
-                "dig @127.0.0.1 ns.orbitlab.internal || exit 1",
-                f"curl -X POST http://127.0.0.1/infra/v1/probe --data '{{\"vmid\":{self.payload.vmid}}}' || exit 1"
-            ]
-            await asyncio.gather(
-                self.log(f"Checking new Backplane appliance VMID {self.payload.vmid} health"),
-                client.set_relay_ping(vmid=0),
-                connection.lxc_execute_script(vmid=self.payload.vmid, content="\n".join(commands)),
-            )
+        commands = [
+            "systemctl is-active --quiet coredns || exit 1",
+            "systemctl is-active --quiet orbital-relay || exit 1",
+            "dig @127.0.0.1 ns.orbitlab.internal || exit 1",
+            f"curl -X POST http://127.0.0.1/infra/v1/probe --data '{{\"vmid\":{self.payload.vmid}}}' || exit 1",
+        ]
+        await client.set_relay_ping(vmid=0)
+        await self.log(f"Waiting for Backplane appliance VMID {self.payload.vmid} readiness.")
+        await proxmox.wait_for_lxc_services(self.payload.vmid, commands)
         
         if not await self._wait_for_relay_probe_ping(vmid=self.payload.vmid):
             return await self.fail("Relay probe did not respond with a valid ping")
@@ -173,9 +161,6 @@ class UpgradeBackplaneV1(Workflow):
             client.set_vmid(vmid=self.payload.vmid),
             client.set_appliance_version(version=infra.version),
         )
-        await self.emit_reflex_events(OrbitLabState.cache_clear("backplane_version"))
-
-
 class ProbeRelayPayload(InfraAppliancePayload):
     vmid: int
 
@@ -186,7 +171,6 @@ class ProbeRelayV1(Workflow):
     TYPE: str = "infrastructure.probe-relay"
     SCHEMA: str = "v1"
     PAYLOAD_TYPE: type[ProbeRelayPayload] = ProbeRelayPayload
-    IDP_TOKEN: str = "ol:infrastructure:probe-relay"
     payload: ProbeRelayPayload
 
     async def validate(self) -> None:

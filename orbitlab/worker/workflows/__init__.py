@@ -4,6 +4,7 @@ Import the workflow and add it to the list below to enable workflow registration
 """
 
 from .appliances import ApplianceDeleteV1, ApplianceDownloadV1, CreateCustomApplianceV1
+from .bootstrap import BootstrapInitializeV1
 from .base import Workflow
 from .conduit import ConduitPoolCreateV1, ConduitEndpointCreateV1, ConduitHealthV1, ConduitPoolDeleteV1, ConduitDeleteV1
 from .datacore import CreateDataCoreCluster, DeleteDataCoreCluster, DataCoreClusterEvent
@@ -15,6 +16,7 @@ from .infra import DownloadInfraApplianceV1, UpgradeBackplaneV1, ProbeRelayV1
 from .instances import InstanceCreateV1, AquireInstanceIpAddress, InstanceStateChangeV1, InstanceDHCPChange
 
 workflows = [
+    BootstrapInitializeV1,
     ApplianceDownloadV1,
     ApplianceDeleteV1,
     CreateCustomApplianceV1,

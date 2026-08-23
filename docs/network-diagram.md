@@ -38,22 +38,29 @@ Below is the Proxmox resources created for a Sector:
   - **Peer Address List**: Taken from the Backplane EVPN Controller settings.
   - **MTU**: Taken from the Backplane MTU configuration.
 - **VNet**: Defines the virtual network attachable to compute instances. The VLAN Tag is set to the lowest available between 1001 - 9999.
-- **Sector Gateway**: Acts as the Default Gateway for the Sector and facilitates connectivity between the Sector and the Backplane.
-- **Sector DNS**: In-Sector hostname resolution.
+- **Sector Gateway**: A single LXC that acts as the Sector's default gateway
+  and provides its in-Sector network services: FRR/static routing and nftables
+  NAT between the Sector and Backplane, dnsmasq DHCP, and CoreDNS hostname
+  resolution for the Sector.
 
 > NOTE: Sector Gateway are stateful. This means all ingress/egress traffic is pinned to the same router instance.
 
 ### Resource Usage
 
-When creating a Sector in OrbitLab, a Sector Gateway (FRR/NFtables) LXC and a Sector DNS (CoreDNS) LXC are created. Since the Sector Gateway is performing static routing only (no BGP/OSPF/EVPN/VRFs), it should sufficiently run on **128 MiB**. The Sector DNS performs basic in-Sector hostname resolution which also sufficiently runs on **128 MiB** of memory. This results in a memory requirement of around **256 MiB**, which is sufficient enough to run even on resource constrained hardware.
+When creating a Sector, OrbitLab creates one Sector Gateway LXC. It bundles
+FRR, nftables, dnsmasq, and CoreDNS rather than deploying a separate Sector DNS
+guest. The current OrbitLab guest configuration allocates **512 MiB** of memory
+and **512 MiB** of swap to this appliance. Its routing remains static—no
+BGP/OSPF/EVPN/VRFs run inside the gateway—so it remains suitable for
+resource-constrained hardware.
 
-> NOTE: FRR in the Sector Gateway is used purely as a lightweight routing daemon. Dynamic protocols are intentionally disabled to keep Sector Gateways deterministic. Also, The Sector Gateway performs coarse DNAT ***ONLY***. If a home LAN resolvable endpoint is required, you must create a Sector Load Balancer (HAproxy) and attach the required VMs/LXCs to it.
+> NOTE: FRR in the Sector Gateway is used purely as a lightweight routing daemon. Dynamic protocols are intentionally disabled to keep Sector Gateways deterministic. Also, the Sector Gateway performs coarse DNAT ***ONLY***. If a home-LAN-resolvable endpoint is required, configure the Sector's Conduit appliance and attach the required VMs/LXCs to a Conduit pool.
 
 ### Sector Traffic Flow
 
 Traffic leaving the Backplane follows the Proxmox node’s default routing configuration.
 
-Since the traffic source originates from within the Sector, the network path-back is known. Traffic originating outside the Sector will not resolve to in-Sector resources unless specific ingress paths are created, e.g. a Sector Load Balancer (HAproxy).
+Since the traffic source originates from within the Sector, the network path-back is known. Traffic originating outside the Sector will not resolve to in-Sector resources unless a specific ingress path is created, such as the Sector's Conduit appliance.
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -178,4 +185,3 @@ end
 | `$SECTOR_GATEWAY_SECTOR_ADDRESS` | The default gateway of the Sector | `X.X.X.1/MASK` |
 | `$SECTOR_GATEWAY_BACKPLANE_ADDRESS` | The Backplane address of the Sector Gateway | Typically assigned from `10.200.0.0/16` |
 | `$BACKPLANE_DEFAULT_GATEWAY` | The default gateway of the Backplane | Typically `10.200.0.1` |
-
